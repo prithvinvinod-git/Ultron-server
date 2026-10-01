@@ -1,0 +1,45 @@
+# Keep the build context small and free of secrets / local state.
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/venv
+**/*.egg-info
+**/build
+**/dist
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+server/tests
+
+# Runtime data
+data
+logs
+workspaces
+models
+ms-playwright
+
+# Docs / assets not needed at runtime
+docs
+clients/orb
+README.md
+LICENSE
+tasks.md
+server_arc.md
