@@ -100,7 +100,7 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T010** `app/config/settings.py` — Pydantic v2 settings, nested sections, env-file resolution, no secrets defaults
 - [x] **T011** `app/observability/logging.py` — JSON structured logs, `request_id`/`task_id`/`agent_id` contextvars, redaction
 - [x] **T012** `app/core/errors.py` — typed exception hierarchy + error codes (incl. `LOCAL_MODEL_UNAVAILABLE`)
-- [ ] **T013** `app/database/session.py` — SQLAlchemy 2.0 async engine, session factory, declarative `Base`
+- [x] **T013** `app/database/session.py` — SQLAlchemy 2.0 async engine, session factory, declarative `Base`
 - [ ] **T014** `app/database/models/` — 16 tables from spec §23 (`users`, `sessions`, `agents`, `tasks`, `task_steps`, `tool_executions`, `events`, `conversations`, `messages`, `memories`, `projects`, `devices`, `device_events`, `agent_logs`, `model_usage`, `audit_logs`) + `schedules`
 - [ ] **T015** `app/database/repositories/` — repository pattern per aggregate
 - [ ] **T016** `server/migrations/` — Alembic init + async template, pgvector-aware, first revision
@@ -251,6 +251,59 @@ Design decisions taken here, so later phases build on them rather than re-decide
 >   22 sampled ones.
 > - `is_retryable()` had a duplicated `CancelledError` branch, and a `TypeVar`
 >   left over from converting `degrade` to PEP 695 syntax.
+
+**T013 delivered**
+
+`server/app/database/session.py` + `server/app/database/__init__.py` +
+`server/tests/unit/test_database_session.py`.
+
+- Nothing connects at import or construction, so the layer is testable before
+  PostgreSQL exists. `create_async_engine` is lazy and the driver check happens
+  at construction.
+- **No module-level engine.** Construction belongs to the composition root
+  (`app/container.py`, T019), so an import can never open a socket and a test
+  cannot mutate global state.
+- `expire_on_commit=False` is set deliberately. The default expires every
+  attribute at commit, so the next access triggers a lazy load, which in async
+  SQLAlchemy raises `MissingGreenlet` unless it happens to land in greenlet
+  context. `test_attributes_survive_a_commit` is that regression, pinned.
+- `autoflush=False`: a flush is a write, and a read that silently writes pending
+  changes is a surprise. Repositories flush explicitly.
+- `session_scope` is the unit of work for a write — commit on success, roll back
+  on *any* failure, so a handler that commits halfway cannot leave a partial
+  aggregate. `read_session_scope` always rolls back, so a read can never persist
+  even by accident.
+- **SQLAlchemy exceptions are deliberately not translated here.** A repository
+  has to tell `IntegrityError` (duplicate key) from `OperationalError` (server
+  went away) to decide whether to retry; a blanket translation destroys exactly
+  that. Wrapping happens in the adapter that understands the failure. `ping()`
+  is the exception, because nothing else is in the way and a bare
+  `OperationalError` would leak the DSN.
+- `aiosqlite` added as a **dev** dependency so transaction semantics are proved
+  against a real database on a bare checkout. It is a test double only;
+  PostgreSQL types (JSONB, pgvector) cannot be created there, so these tests
+  declare their own minimal models rather than reusing T014 ones.
+- `masked_url()` exists because a DSN reaches error messages constantly and a
+  DSN carries the password.
+
+> Issues found and fixed during T013:
+> - The `ck` naming convention used `%(constraint_name)s` while the comment
+>   claimed the opposite. Switching to `%(column_0_N_name)s` to match the comment
+>   was **also wrong**, and the test proved it: a check written as a string
+>   literal has no associated columns, so it produced `ck_unnamed_check_` — a
+>   trailing-underscore name that would collide for two unnamed checks on one
+>   table. Reverted to the explicit-name form, which fails loudly at import
+>   instead of shipping a constraint no migration can target. The trade-off is
+>   now documented in the code and pinned by
+>   `test_an_unnamed_check_fails_loudly`.
+> - A synchronous URL such as `postgresql://` reached SQLAlchemy as an opaque
+>   dialect error. Now refused with a `ConfigError` naming the fix.
+> - SQLite rejects `pool_size` and `max_overflow`, so the pool arguments are
+>   backend-dependent, and in-memory SQLite needs `StaticPool` or each connection
+>   gets its own empty database.
+> - Two test-only mistakes caught by the tests rather than assumed: a `unique`
+>   column produces a constraint and not an index, and an index lives in
+>   `table.indexes` rather than `table.constraints`.
 
 ---
 
@@ -551,9 +604,9 @@ Appended after each phase, per spec §51/§58.
 | Item | Result |
 |---|---|
 | Branch | `feature/phase-1-foundation` (from `develop` @ `d6fcb94`) |
-| Done | T010 configuration, T011 structured logging, T012 typed errors — 11 of 17 |
-| `scripts/lint` | Ruff clean, 53 files, mypy clean over `app` and `tests` |
-| `scripts/test` | 268 passed, integration and e2e deselected |
+| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer — 12 of 17 |
+| `scripts/lint` | Ruff clean, 55 files, mypy clean over `app` and `tests` |
+| `scripts/test` | 298 passed, integration and e2e deselected |
 | `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift |
-| Next | T013 database session, T014 models, T015 repositories, T016 Alembic |
+| Next | T014 models, T015 repositories, T016 Alembic |
 | Still blocked | T025/T026/T027 need Docker Desktop: no PostgreSQL, no Redis, no real migration yet. The phase gate cannot be claimed. |
