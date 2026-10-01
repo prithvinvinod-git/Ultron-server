@@ -1,3 +1,4 @@
+
 # ULTRON Error Catalogue
 
 Every error ULTRON raises deliberately is a subclass of `UltronError`
@@ -75,6 +76,7 @@ Derived from the implementation. `Retryable` marks codes also present in
 | `DatabaseError` | `DATABASE_ERROR` | 503 | yes | `RetryableError` |
 | `MigrationRequiredError` | `MIGRATION_REQUIRED` | 503 | no | `DatabaseError` |
 | `RedisError` | `REDIS_ERROR` | 503 | yes | `RetryableError` |
+| `LockUnavailableError` | `CONFLICT` | 409 | no | `PermanentError` |
 | `ModelError` | `PROVIDER_ERROR` | 502 | yes | `RetryableError` |
 | `LocalModelUnavailableError` | `LOCAL_MODEL_UNAVAILABLE` | 503 | yes | `ModelError` |
 | `ProviderNotConfiguredError` | `PROVIDER_NOT_CONFIGURED` | 503 | no | `ModelError` |
@@ -138,6 +140,16 @@ was rejected to explain why.
 **`ConfirmationRequiredError`** is the second stage of a denied action, distinct
 from a hard refusal: the operation is permitted but needs explicit approval. It
 uses 409 rather than 403 so a client can tell "ask again" from "no".
+
+**`LockUnavailableError`** shares `CONFLICT` with `ConflictError` rather than
+taking a new code, because to a client the two are the same answer — "someone else
+got there first" — and a new code means every consumer of the error enumeration has
+to learn about it. It stays a distinct type so a caller waiting on a lock can catch
+exactly this, and it is deliberately **not** retryable: a retry here means another
+worker still holds the lock, so a blanket "retry on failure" loop turns many waiters
+into a thundering herd against the resource they are waiting for. The retryable
+counterpart is `RedisError`, which is a fault in the dependency rather than
+contention.
 
 ## Adding an error
 

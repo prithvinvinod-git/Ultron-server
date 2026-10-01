@@ -25,6 +25,7 @@ from app.core.errors import (
     InvalidCredentialsError,
     InvalidInputError,
     LocalModelUnavailableError,
+    LockUnavailableError,
     MigrationRequiredError,
     ModelError,
     ModelTimeoutError,
@@ -35,6 +36,7 @@ from app.core.errors import (
     PermissionDeniedError,
     ProviderNotConfiguredError,
     RateLimitedError,
+    RedisError,
     RetryableError,
     ShuttingDownError,
     SsrfBlockedError,
@@ -65,6 +67,8 @@ SAMPLE_ERRORS: tuple[type[UltronError], ...] = (
     SsrfBlockedError,
     DatabaseError,
     MigrationRequiredError,
+    RedisError,
+    LockUnavailableError,
     LocalModelUnavailableError,
     ProviderNotConfiguredError,
     ModelTimeoutError,
@@ -96,6 +100,8 @@ SAMPLE_INSTANCES: tuple[UltronError, ...] = (
     SsrfBlockedError("169.254.169.254"),
     DatabaseError("select tasks"),
     MigrationRequiredError("head"),
+    RedisError("get cache:x"),
+    LockUnavailableError("job:1"),
     LocalModelUnavailableError("ollama"),
     ProviderNotConfiguredError("openai"),
     ModelTimeoutError("openai", timeout=60.0),
@@ -251,10 +257,32 @@ class TestRetryVerdict:
             NotFoundError("task", "t-1"),
             ProviderNotConfiguredError("openai"),
             CommandNotAllowedError("rm"),
+            LockUnavailableError("job:1"),
         ],
     )
     def test_permanent_failures_are_not_retryable(self, error: UltronError) -> None:
         assert is_retryable(error) is False
+
+    def test_a_redis_fault_is_retryable_but_lock_contention_is_not(self) -> None:
+        """The two Redis-shaped failures need opposite verdicts.
+
+        A dependency that is down will probably come back, so the request is worth
+        repeating. A contended lock is held by a peer, so repeating immediately
+        fails again and, done by every waiter at once, becomes a thundering herd
+        against the resource they are waiting for.
+        """
+        assert is_retryable(RedisError("get cache:x")) is True
+        assert is_retryable(LockUnavailableError("job:1")) is False
+
+    def test_a_lock_error_is_not_a_redis_error(self) -> None:
+        """Otherwise a blanket "retry on RedisError" would retry contention."""
+        assert not isinstance(LockUnavailableError("job:1"), RedisError)
+        assert LockUnavailableError("job:1").code is ErrorCode.CONFLICT
+        assert RedisError("get").code is ErrorCode.REDIS_ERROR
+
+    def test_a_lock_error_names_the_lock(self) -> None:
+        assert LockUnavailableError("job:1").name == "job:1"
+        assert "job:1" in LockUnavailableError("job:1").to_dict()["details"].values()
 
     def test_a_missing_key_is_not_retryable_in_place(self) -> None:
         """Retrying without a credential cannot succeed; fall back instead."""
@@ -327,6 +355,8 @@ class TestHttpStatus:
             (DependencyUnavailableError("redis"), 503),
             (ShuttingDownError(), 503),
             (CapabilityNotImplementedError("voice"), 501),
+            (RedisError("get cache:x"), 503),
+            (LockUnavailableError("job:1"), 409),
         ],
     )
     def test_statuses_match_the_failure(self, error: UltronError, status: int) -> None:
@@ -369,6 +399,23 @@ class TestErrorMessages:
 
     def test_an_ssrf_block_records_the_host(self) -> None:
         assert SsrfBlockedError("169.254.169.254").host == "169.254.169.254"
+
+    def test_a_redis_error_names_the_operation_and_never_the_dsn(self) -> None:
+        """The operation is the only diagnostic, so it has to be there.
+
+        redis-py puts the connection details into a connection error's text, so
+        the cause's type is kept and its message is not.
+        """
+        error = RedisError(
+            "get cache:x",
+            cause=OSError("Error 111 connecting to redis://ultron:hunter2@localhost:6379/0"),
+        )
+
+        assert error.operation == "get cache:x"
+        assert "get cache:x" in error.message
+        assert error.to_dict()["cause"] == "OSError"
+        assert "hunter2" not in str(error.to_dict())
+        assert "hunter2" not in str(error)
 
 
 class TestExitCodes:

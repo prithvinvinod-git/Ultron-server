@@ -73,7 +73,11 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "types-psutil>=7.0",
-    "fakeredis>=2.26",
+    # fakeredis runs Lua only when lupa is present. The `lua` extra is required,
+    # not optional: the distributed lock releases via a compare-and-delete
+    # script, and without it that safety-critical path is the one thing in
+    # redis_client.py the unit suite cannot exercise.
+    "fakeredis[lua]>=2.26",
     # In-memory SQLite, so session and transaction semantics can be tested on a
     # bare checkout with no PostgreSQL. Never used in production: PostgreSQL is
     # the authoritative store.

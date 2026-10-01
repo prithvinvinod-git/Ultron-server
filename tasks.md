@@ -104,7 +104,7 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T014** `app/database/models/` — 16 tables from spec §23 (`users`, `sessions`, `agents`, `tasks`, `task_steps`, `tool_executions`, `events`, `conversations`, `messages`, `memories`, `projects`, `devices`, `device_events`, `agent_logs`, `model_usage`, `audit_logs`) + `schedules`
 - [x] **T015** `app/database/repositories/` — repository pattern per aggregate
 - [x] **T016** `server/migrations/` — Alembic init + async template, pgvector-aware, first revision
-- [ ] **T017** `app/database/redis_client.py` — Redis wrapper (cache, locks, pubsub, transient state only)
+- [x] **T017** `app/database/redis_client.py` — Redis wrapper (cache, locks, pubsub, transient state only)
 - [ ] **T018** `app/observability/health.py` — health checks: PostgreSQL, Redis, Ollama, filesystem, agent runtime, event bus
 - [ ] **T019** `app/container.py` — hand-rolled DI composition root
 - [ ] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
@@ -768,9 +768,64 @@ Appended after each phase, per spec §51/§58.
 | Item | Result |
 |---|---|
 | Branch | `feature/phase-1-foundation` (from `develop` @ `d6fcb94`) |
-| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations — 15 of 17 |
-| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations`; mypy clean over `app` and `tests`, 82 files |
-| `scripts/test` | 609 passed, integration and e2e deselected |
-| `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift |
-| Next | T017 Redis wrapper |
+| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper — 16 of 18 |
+| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations`; mypy clean over `app` and `tests`, 85 files |
+| `scripts/test` | 712 passed, integration and e2e deselected |
+| `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift; now covers `LockUnavailableError` |
+| Next | T018 health checks |
 | Still blocked | T025/T026/T027 need Docker Desktop: no PostgreSQL, no Redis, no real migration yet. The phase gate cannot be claimed. |
+
+#### T017 delivery notes
+
+Scope is the four uses the task line names — cache, locks, pub/sub, transient
+state. Spec §24 lists six, and the other three arrive with their consumers rather
+than landing here unasked: queues with the event bus (T031), rate limiting with
+the security work, and WebSocket coordination with the connection manager (T023).
+All three are built on the primitives in this module.
+
+Four decisions were confirmed before implementation, because the spec is silent on
+each and every one is expensive to reverse later:
+
+- **Locks are token + compare-and-delete.** `SET NX PX` then `DEL` is wrong: a
+  holder that stalls past its lease frees the *next* holder's lock. Release and
+  extend are both Lua compare-and-act. No implicit renewal — a background renewal
+  task outlives the work that wanted the lock, so `extend` is the caller's call.
+- **A cache read raises by default.** `get_json` raises `RedisError`;
+  `get_or_none` is the separate, named cache-aside path that treats an outage as a
+  miss and logs it. Collapsing the two would turn a Redis outage into a silent
+  cold cache.
+- **Values are JSON, JSON-native or nothing.** A `datetime`, `UUID`, `Decimal`, or
+  `set` is refused at the write rather than coerced via `default=str`, because a
+  coerced value reads back as a string with no way to tell it was ever a datetime.
+  `tuple` → `list` is the one silent change, and it is pinned by a test.
+- **Keys and channels are namespaced under `ultron:`**, in separate segments, so a
+  cache key and a pub/sub channel of the same logical name cannot collide and a
+  shared instance can be swept safely.
+
+Two notes on the delivery:
+
+- `LockUnavailableError` was added to `app/core/errors.py`. It reuses
+  `ErrorCode.CONFLICT` rather than adding a code — to a client, "someone else got
+  there first" is the same answer — but is a distinct type, and is deliberately
+  **not** retryable: a blanket "retry on `RedisError`" is right for an outage and
+  a thundering herd for contention.
+- The dev dependency is now `fakeredis[lua]`, not `fakeredis`. The `lua` extra is
+  required, not optional: without it `fakeredis` answers `EVAL` with "unknown
+  command", leaving the lock's safety-critical path as the one thing in the module
+  the unit suite cannot exercise. A test asserts the capability is present so the
+  failure names the missing dependency instead of surfacing inside whichever lock
+  test runs first.
+
+Unit coverage is 86 tests. The lock tests deliberately let a lease expire
+underneath its holder and then assert the loser's release leaves the winner's lock
+intact — the failure mode a "acquire, release, key gone" test cannot see. Reverting
+the compare-and-delete to a bare `DEL` was confirmed to fail that test.
+
+`LockUnavailableError` and `RedisError` are now sampled by
+`tests/unit/test_core_errors.py` as well, so the T012 contract suite covers the
+retry/status/secret rules the two share. A cached-value detail is the reason: the
+retryable-code agreement test and the HTTP-status table are module-wide, so a new
+error class is checked automatically for *self-consistency* but nothing else had
+asserted the verdict that actually matters here — that a Redis outage is retryable
+while lock contention is not, and that the contention error is not a `RedisError`
+subclass that a blanket "retry on `RedisError`" would swallow.

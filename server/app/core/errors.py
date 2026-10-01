@@ -479,6 +479,34 @@ class RedisError(RetryableError):
         self.operation = operation
 
 
+class LockUnavailableError(PermanentError):
+    """A distributed lock is held by another worker.
+
+    Shares ``CONFLICT`` with :class:`ConflictError` rather than taking a new
+    code, because to a client the two are the same answer -- "someone else got
+    there first" -- and adding a code means every consumer of the error
+    enumeration has to learn about it. It is still a distinct type, so a caller
+    that wants to wait for a lock can catch exactly this and not a duplicate-key
+    conflict.
+
+    Not retryable, and deliberately so. A retry here means another worker still
+    holds the lock, and the one thing that makes contention worse is a blanket
+    "retry on failure" loop turning many waiters into a thundering herd against
+    the resource they are waiting for. A caller that can usefully wait asks for
+    the lock with a wait budget; one that cannot should shed the work.
+    """
+
+    code = ErrorCode.CONFLICT
+    http_status = 409
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"lock '{name}' is held by another worker",
+            details={"lock": name},
+        )
+        self.name = name
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
