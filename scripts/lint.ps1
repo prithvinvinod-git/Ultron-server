@@ -32,7 +32,7 @@ Invoke-UltronUv -Arguments @("ruff", "format", "--check", "app", "tests")
 if ($script:UltronExitCode -ne 0) { $failed = $true }
 
 Write-Host "ULTRON: mypy" -ForegroundColor Cyan
-Invoke-UltronUv -Arguments @("mypy", "app")
+Invoke-UltronUv -Arguments @("mypy", "app", "tests")
 if ($script:UltronExitCode -ne 0) { $failed = $true }
 
 if ($failed) {

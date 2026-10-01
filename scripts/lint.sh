@@ -25,6 +25,6 @@ if ! ultron_run ruff check app tests; then
 fi
 
 echo "ULTRON: mypy"
-ultron_run mypy app
+ultron_run mypy app tests
 
 echo "ULTRON: lint and type check clean"
