@@ -138,7 +138,10 @@ class Task(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         # rather than faked with a CASE expression here.
         Index("ix_tasks_dispatch", "status", "scheduled_for"),
         Index("ix_tasks_project_status", "project_id", "status"),
-        Index("ix_tasks_parent", "parent_task_id"),
+        # `parent_task_id` already carries `index=True` on the column above,
+        # which emits `ix_tasks_parent_task_id`. A second index here over the
+        # same single column was an exact duplicate: two identical structures
+        # doubling write amplification on the hot task table for no query gain.
     )
 
     @property
