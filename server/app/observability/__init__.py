@@ -1,1 +1,47 @@
-"""Structured logging, Prometheus metrics and health checks."""
+"""Observability: structured logging, health checks, metrics (spec section 32)."""
+
+from app.observability.logging import (
+    REDACTED,
+    STANDARD_FIELDS,
+    ConsoleFormatter,
+    JsonFormatter,
+    Timer,
+    agent_context,
+    configure_logging,
+    correlation,
+    current_context,
+    extract_extras,
+    get_agent_id,
+    get_logger,
+    get_request_id,
+    get_task_id,
+    log_operation,
+    new_id,
+    redact,
+    request_context,
+    scrub_text,
+    task_context,
+)
+
+__all__ = [
+    "REDACTED",
+    "STANDARD_FIELDS",
+    "ConsoleFormatter",
+    "JsonFormatter",
+    "Timer",
+    "agent_context",
+    "configure_logging",
+    "correlation",
+    "current_context",
+    "extract_extras",
+    "get_agent_id",
+    "get_logger",
+    "get_request_id",
+    "get_task_id",
+    "log_operation",
+    "new_id",
+    "redact",
+    "request_context",
+    "scrub_text",
+    "task_context",
+]
