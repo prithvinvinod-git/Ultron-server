@@ -101,8 +101,8 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T011** `app/observability/logging.py` — JSON structured logs, `request_id`/`task_id`/`agent_id` contextvars, redaction
 - [x] **T012** `app/core/errors.py` — typed exception hierarchy + error codes (incl. `LOCAL_MODEL_UNAVAILABLE`)
 - [x] **T013** `app/database/session.py` — SQLAlchemy 2.0 async engine, session factory, declarative `Base`
-- [ ] **T014** `app/database/models/` — 16 tables from spec §23 (`users`, `sessions`, `agents`, `tasks`, `task_steps`, `tool_executions`, `events`, `conversations`, `messages`, `memories`, `projects`, `devices`, `device_events`, `agent_logs`, `model_usage`, `audit_logs`) + `schedules`
-- [ ] **T015** `app/database/repositories/` — repository pattern per aggregate
+- [x] **T014** `app/database/models/` — 16 tables from spec §23 (`users`, `sessions`, `agents`, `tasks`, `task_steps`, `tool_executions`, `events`, `conversations`, `messages`, `memories`, `projects`, `devices`, `device_events`, `agent_logs`, `model_usage`, `audit_logs`) + `schedules`
+- [x] **T015** `app/database/repositories/` — repository pattern per aggregate
 - [ ] **T016** `server/migrations/` — Alembic init + async template, pgvector-aware, first revision
 - [ ] **T017** `app/database/redis_client.py` — Redis wrapper (cache, locks, pubsub, transient state only)
 - [ ] **T018** `app/observability/health.py` — health checks: PostgreSQL, Redis, Ollama, filesystem, agent runtime, event bus
@@ -304,6 +304,93 @@ Design decisions taken here, so later phases build on them rather than re-decide
 > - Two test-only mistakes caught by the tests rather than assumed: a `unique`
 >   column produces a constraint and not an index, and an index lives in
 >   `table.indexes` rather than `table.constraints`.
+
+**T014 delivered**
+
+`server/app/database/models/` (14 modules) + `server/tests/unit/test_database_models.py`.
+
+17 tables. `model_usage` and `audit_logs` are the two `§23` lists disagree on, and
+`devices` is the only table the spec gives two different field lists for.
+
+- **The spec specifies no columns for 14 of the 17 tables.** It names
+  `agents` (12 attributes, §6 L443-454), `tasks` (12 fields, §18 L917-928), and
+  `devices` (§26 L1205-1213). Everything else — every type, every primary key,
+  every index, every foreign key — is an engineering decision, marked as such in
+  each module docstring so it can be told apart from the three places the spec
+  actually spoke. Nothing was invented and presented as a requirement.
+- **UUID primary keys everywhere.** The spec exposes `/agents/{id}` (L1314) and
+  names ids `<entity>_id`, but never says the type. UUID because an id has to
+  exist before the first flush: an agent can be live in the runtime, or an event
+  emitted, before its row is written.
+- **`agents.task_id` rather than `tasks.agent_id`.** The spec lists `agent_id`
+  as a task field (L924), which reads as a contradiction. It is not: §7 requires
+  an agent to be paused and resumed, so a task outlives any single assignment.
+  The reverse reference keeps the history; a column on `tasks` would lose the
+  assignment the moment the agent was destroyed. `Task.current_agent_id` exposes
+  it for reads.
+- **`tasks.steps` is a relationship, not a column.** Spec §18 lists `steps`
+  among a task's fields (L926). Modelling them as rows in `task_steps` is what
+  makes the restart recovery §18 asks for (L949) possible — a JSON array on the
+  task dies with the process.
+- **`tool_executions.permission_level` and `.decision` are NOT NULL.** §15
+  requires every execution to be permission-checked and logged (L817-821).
+  Mandatory columns make an unchecked execution *unrepresentable* rather than
+  merely discouraged.
+- **`events.event_type` is a plain string, not an enum.** The spec's own event
+  lists disagree (`DEVICE_OFFLINE` at L2957 vs `DEVICE_DISCONNECTED` at L985),
+  and T030 has not yet fixed the canonical set. A database enum would reject
+  types the bus must carry. This is the one place the package deliberately does
+  *not* use its own enum convention.
+- **`PermissionLevel` carries its digit as a `StrEnum` value with a `.level`
+  property.** A member must be a string, but L797-814 makes the number
+  meaningful, so `allows()` compares `level` rather than a lookup table.
+- **`memories.embedding` follows `ENABLE_PGVECTOR`** — `Vector(768)` when on,
+  JSONB when off, so disabling the extension degrades semantic retrieval
+  instead of making the package unimportable. `vector_dimensions` is stored
+  redundantly so a wrong-width embedding is *detectable* rather than silently
+  unsearchable. `CREATE EXTENSION` is left to T016; an application role should
+  not hold that privilege.
+- **`model_usage.cost_usd` is `Numeric(12,8)`, never float.** Money must not
+  accumulate binary rounding error. `total_tokens` is computed, not stored, and
+  is `None` when only one side was recorded — a failed call can burn prompt
+  tokens, and reporting that as 0 would understate spend.
+- **`sessions` keeps only token hashes**, with refresh rotation and
+  `rotated_from` linking a replacement to what it supersedes. The old row is
+  revoked, never deleted: if a revoked token reappears the chain is the evidence
+  of reuse, and deleting it destroys exactly that.
+- **Collection relationships use `lazy="raise_on_sql"`**, so touching an
+  unloaded collection raises instead of silently issuing a query whose cost grows
+  with the table.
+- 100% line coverage on the package; ruff and mypy clean.
+
+> Issues found and fixed during T014:
+> - `lazy="noload"` is **deprecated in SQLAlchemy 2.1** and, meanwhile, returns
+>   `None` for related items — a relationship that silently reads as empty.
+>   `raise_on_sql` is the replacement, and 13 deprecation warnings became 0.
+> - `Memory.embedding_as_json` decoded a `memoryview` as **UTF-8**. That is
+>   wrong: an embedding provider returns a numpy array, so the buffer is flat
+>   float32, and decoding it as text cannot work. Now unpacked as little-endian
+>   float32 and checked against `vector_dimensions`; a buffer that is not a whole
+>   number of float32s is rejected rather than truncated, because a shortened
+>   embedding is unsearchable rather than obviously wrong.
+> - `DeviceEvent.is_offline_signal` matched `device_offline` and `disconnected`
+>   but missed `DEVICE_DISCONNECTED` — the name §19 actually uses (L985). The
+>   spec gives three spellings for one fact, so all three are recognised.
+> - `check_name_shape` is the guard for enum member names (SQLAlchemy persists
+>   the *name*), and its own test could not be written as a class body — a
+>   non-identifier member name is a `SyntaxError`. It is built through the
+>   functional `StrEnum(...)` API instead.
+> - `_embedding_type` was called with `None` "because the settings are fixed at
+>   import", which quietly hard-coded 768 and ignored `EMBEDDING_DIMENSIONS`
+>   entirely. Now resolves real settings with a documented fallback.
+> - `Schedule.is_due` returned `False` for a correctly-configured schedule,
+>   because column `default`s are applied by the database on INSERT, so an
+>   unflushed object has `status is None`. The test now sets `status`
+>   explicitly and says why; the predicate was left alone because a row read
+>   from the database always has it.
+> - Two test bugs caught by the tests: `unique=True` compiles to
+>   `CREATE UNIQUE INDEX`, not `CREATE INDEX`; and `tasks.error` is `Text`, not a
+>   JSON payload column, so it does not belong in the JSONB assertion table.
 
 ---
 

@@ -22,15 +22,17 @@ from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import CheckConstraint, String, Table, select, text
+from sqlalchemy import CheckConstraint, MetaData, String, Table, select, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import QueuePool, StaticPool
 
 from app.config import DatabaseSettings
 from app.core.errors import ConfigError, DatabaseError
+from app.database.models import Base as ModelsBase
 from app.database.session import (
+    _NAMING_CONVENTION,
     Base,
     create_engine,
     create_session_factory,
@@ -47,11 +49,32 @@ SQLITE_URL = "sqlite+aiosqlite://"
 POSTGRES_URL = "postgresql+asyncpg://ultron:pw@localhost:5432/ultron"
 
 
+class ProbeBase(DeclarativeBase):
+    """A private base for the throwaway models below.
+
+    These used to be declared on the production ``Base``, which registered
+    ``probe``/``sibling``/``checked`` into the live metadata for the whole test
+    session. That was invisible only because ``app.database.models`` happened to
+    define a *second* DeclarativeBase; once both packages were unified the
+    pollution became visible, and a test model leaking into
+    ``Base.metadata`` is a genuine hazard regardless -- Alembic autogenerate
+    reads that metadata, so a stray table here would show up as a migration
+    creating a table no application code owns.
+    """
+
+    metadata = MetaData(naming_convention=_NAMING_CONVENTION)
+
+    # The identity-only repr is the production behaviour under test, so it is
+    # borrowed rather than reimplemented -- a copy here could drift and the
+    # assertions below would keep passing against the copy.
+    __repr__ = Base.__repr__
+
+
 # Declared once at module level on purpose. A model declared inside a test
-# function is registered on the shared ``Base.metadata`` and stays there for
+# function is registered on the shared ``ProbeBase.metadata`` and stays there for
 # the rest of the session, so a second test defining the same name would fail
 # with "table is already defined".
-class Probe(Base):
+class Probe(ProbeBase):
     """A minimal model used to exercise the session machinery."""
 
     __tablename__ = "probe"
@@ -63,7 +86,7 @@ class Probe(Base):
     tag: Mapped[str] = mapped_column(String(32), default="", index=True)
 
 
-class Sibling(Base):
+class Sibling(ProbeBase):
     """Proves models share one metadata rather than each getting their own."""
 
     __tablename__ = "sibling"
@@ -71,7 +94,7 @@ class Sibling(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
 
-class Checked(Base):
+class Checked(ProbeBase):
     """Proves the naming convention produces a name a migration can act on."""
 
     __tablename__ = "checked"
@@ -93,7 +116,7 @@ async def engine() -> AsyncIterator[AsyncEngine]:
     """
     created = create_engine(_settings(SQLITE_URL))
     async with created.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(ProbeBase.metadata.create_all)
     try:
         yield created
     finally:
@@ -180,8 +203,24 @@ class TestMaskedUrl:
 
 class TestBase:
     def test_models_share_one_metadata(self) -> None:
-        assert {"probe", "sibling", "checked"} <= set(Base.metadata.tables)
-        assert Sibling.metadata is Base.metadata
+        assert {"probe", "sibling", "checked"} <= set(ProbeBase.metadata.tables)
+        assert Sibling.metadata is ProbeBase.metadata
+
+    def test_production_models_share_one_metadata(self) -> None:
+        """T014 and T013 must agree on the declarative base.
+
+        Two DeclarativeBase classes in one process means two `metadata`
+        registries: models register into whichever they imported, and the other
+        stays empty. Alembic's env.py targets ``app.database.session.Base``, so a
+        mismatch would not raise anywhere -- it would just make autogenerate
+        believe the database is empty and emit a migration dropping every table.
+        """
+        assert ModelsBase is Base
+        assert "users" in Base.metadata.tables
+
+    def test_throwaway_test_models_never_reach_the_production_metadata(self) -> None:
+        """A test model in the live metadata would become a migration's table."""
+        assert not {"probe", "sibling", "checked"} & set(Base.metadata.tables)
 
     def test_a_named_check_gets_the_convention_prefix(self) -> None:
         """A migration can only alter a constraint it can name."""
@@ -199,7 +238,7 @@ class TestBase:
         """
         with pytest.raises(InvalidRequestError, match="explicitly named"):
 
-            class Unnamed(Base):
+            class Unnamed(ProbeBase):
                 __tablename__ = "unnamed_check"
                 id: Mapped[int] = mapped_column(primary_key=True)
                 amount: Mapped[int] = mapped_column(default=0)
