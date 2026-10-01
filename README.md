@@ -31,7 +31,7 @@ live task log and [`server_arc.md`](server_arc.md) for the specification.
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Prerequisites and repository foundation | **complete** |
-| 1 | Foundation: config, logging, PostgreSQL, Redis, API, WebSocket | in progress |
+| 1 | Foundation: config, logging, PostgreSQL, Redis, API, WebSocket | in progress (3 of 17: config, logging, errors) |
 | 2 | Core: events, permissions, tools, tasks, agents, orchestrator | not started |
 | 3 | Model system: Ollama, OpenAI, Gemini, Anthropic, router | not started |
 | 4 | Coding agent: workspaces, OpenCode engine, verification | not started |

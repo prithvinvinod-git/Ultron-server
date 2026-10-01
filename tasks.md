@@ -98,8 +98,8 @@ phases that need them, and permanently in production on Ubuntu.
 ## Phase 1 — Foundation
 
 - [x] **T010** `app/config/settings.py` — Pydantic v2 settings, nested sections, env-file resolution, no secrets defaults
-- [ ] **T011** `app/observability/logging.py` — JSON structured logs, `request_id`/`task_id`/`agent_id` contextvars, redaction
-- [ ] **T012** `app/core/errors.py` — typed exception hierarchy + error codes (incl. `LOCAL_MODEL_UNAVAILABLE`)
+- [x] **T011** `app/observability/logging.py` — JSON structured logs, `request_id`/`task_id`/`agent_id` contextvars, redaction
+- [x] **T012** `app/core/errors.py` — typed exception hierarchy + error codes (incl. `LOCAL_MODEL_UNAVAILABLE`)
 - [ ] **T013** `app/database/session.py` — SQLAlchemy 2.0 async engine, session factory, declarative `Base`
 - [ ] **T014** `app/database/models/` — 16 tables from spec §23 (`users`, `sessions`, `agents`, `tasks`, `task_steps`, `tool_executions`, `events`, `conversations`, `messages`, `memories`, `projects`, `devices`, `device_events`, `agent_logs`, `model_usage`, `audit_logs`) + `schedules`
 - [ ] **T015** `app/database/repositories/` — repository pattern per aggregate
@@ -156,6 +156,101 @@ Design decisions taken here, so later phases build on them rather than re-decide
 > - `scripts/lint` ran `mypy app` only, so no test file had ever been type
 >   checked despite the `tests.*` override in `pyproject.toml`. Both `lint.ps1`
 >   and `lint.sh` now check `app` and `tests`: 49 files instead of 47.
+
+**T011 delivered**
+
+`server/app/observability/logging.py` + `server/app/observability/__init__.py` +
+`server/tests/unit/test_observability_logging.py`.
+
+- `JsonFormatter` emits one object per line; `ConsoleFormatter` is the same data
+  for a terminal. Both agree on attribution: a field set via `extra` wins over
+  the ambient `contextvars`, so a caller can override precisely.
+- Redaction is **key-based and recursive**, so a credential inside a nested
+  request body goes. `redact_keys` comes from `LoggingSettings`, so an operator
+  can extend the list without a code change.
+- `log_operation()` emits paired `start`/`end` records, uses `exc_info` so the
+  formatter decides how much to show, and stamps the context on both sides so a
+  failure is traceable to the operation that caused it.
+- `Timer` is the sync/`async` `contextmanager` used where a `log_operation` call
+  would be noisy; both honour the same context.
+
+> Issues found and fixed during T011:
+> - The console formatter did `getattr(record, field)` for correlation ids with
+>   no default and **raised `AttributeError` on any record that did not carry
+>   one** — meaning every console log line outside an active request crashed the
+>   handler. It now falls back to the ambient context.
+> - The console formatter mutated a clone's extras using the **unredacted**
+>   values, so `logger.info("x", extra={"api_key": ...})` leaked the secret to
+>   the terminal while the JSON output was clean. Extras are now redacted.
+> - `apiKey` and `x-api-key` were **not** matched: matching was a substring test
+>   against the raw key, so separators defeated it. Keys and configured names are
+>   now normalised to bare alphanumerics first.
+> - A secret interpolated into the **message** was never redacted, because
+>   key-based redaction has no key to look at. Added `scrub_text()` as a
+>   deliberately narrow second layer.
+> - The traceback was appended **after** redaction, so a driver exception
+>   carrying a DSN leaked `postgres://user:password@host`. A driver exception
+>   routinely contains the connection string it failed on. The traceback is now
+>   scrubbed, and a test pins it.
+> - `Authorization: Bearer <token>` was only half-redacted: the general
+>   `key=value` rule stopped at the first space, leaving the token's tail in the
+>   log. Pattern order is now most-specific-first so a bearer token is consumed
+>   whole.
+
+> On redaction breadth: an earlier version of the text patterns matched any
+> `sk-`-prefixed run of 6+ characters, which passed the tests and would have
+> mangled ordinary output containing a hyphenated word. The threshold is now 16
+> characters, matching real key formats, and `test_ordinary_hyphenated_text_is_not_mangled`
+> and `test_a_short_hyphenated_word_is_not_scrubbed` pin the narrowness. A test
+> fixture that used a 7-character fake token was corrected rather than the
+> pattern widened — a 7-character value is not a credential, and over-broad
+> scrubbing trains operators to ignore the markers.
+
+**T012 delivered**
+
+`server/app/core/errors.py` + `server/app/core/__init__.py` +
+`server/tests/unit/test_core_errors.py` + `docs/errors.md`.
+
+45 error classes over 43 codes, every one carrying a stable `ErrorCode`, an
+`http_status`, and a `retryable` verdict.
+
+- Retryability is stated **twice** — the class flag read by `is_retryable()`, and
+  `RETRYABLE_CODES` read by the model router's fallback chain. A test enforces
+  agreement in both directions across every concrete class, so neither can drift
+  from the other.
+- `MigrationRequiredError` subclasses `DatabaseError` but is **not** retryable:
+  a pending migration must be applied, not waited out.
+- `to_dict()` reports a cause's **type only**, never its text, because a driver
+  exception can embed a connection string with a password in it.
+- `degrade()` absorbs a `UltronError` and returns the fallback, but **re-raises**
+  a programming error, so a `TypeError` can never be disguised as a missing
+  service. The loss is logged as a warning; spec §33 forbids silently swallowing
+  an exception.
+- `docs/errors.md` catalogues every class and is verified against the running
+  code rather than hand-maintained.
+
+> Issues found and fixed during T012:
+> - `HEALTH_CHECK_FAILED` was **missing from `RETRYABLE_CODES`** while
+>   `HealthCheckFailedError` was marked retryable. The two sources disagreed, so
+>   the model router would have treated a startup health failure as permanent.
+>   Caught by adding the two-directional agreement test.
+> - `ModelTimeoutError` could not record the timeout budget, so a provider
+>   timeout lost the evidence an operation timeout kept. `timeout` is now a
+>   `ModelError` keyword argument.
+> - `NotFoundError` **required** an identifier, so a lookup that matched no row
+>   had nothing honest to pass. The id is now optional and omitted from
+>   `details` when unknown.
+> - The original contract test asserted every error was constructible from a
+>   single message. That was simply the wrong invariant: most errors derive
+>   their message from a resource name, provider, or tool, precisely because
+>   that is what makes it actionable. Replaced with one factory per type, plus a
+>   test that the sample list cannot drift from the type list.
+> - The first version of the retryable-code test ended in `or code in
+>   RETRYABLE_CODES`, which made it a tautology that could never fail. Rewritten
+>   to walk the real subclass tree, so it covers all 45 classes rather than the
+>   22 sampled ones.
+> - `is_retryable()` had a duplicated `CancelledError` branch, and a `TypeVar`
+>   left over from converting `degrade` to PEP 695 syntax.
 
 ---
 
@@ -408,8 +503,8 @@ Design decisions taken here, so later phases build on them rather than re-decide
 | 18 | Research Agent works | pending |
 | 19 | Memory works | pending |
 | 20 | Verification works | pending |
-| 21 | Logs work | pending |
-| 22 | Configuration works | pending |
+| 21 | Logs work | partial — T011 structured logging delivered; not yet exercised by a running server |
+| 22 | Configuration works | done (T010) |
 | 23 | Tests pass | pending |
 | 24 | Docker deployment works | pending |
 | 25 | Ubuntu deployment documented | pending |
@@ -450,3 +545,15 @@ Appended after each phase, per spec §51/§58.
 | Delivered | Monorepo tree, `pyproject.toml`, `.env.example` (spec §34 complete), Windows + Linux scripts, READMEs, LICENSE, `develop` branch |
 | Deliberately absent | No `app/main.py` yet, so `scripts/dev` and `scripts/start` cannot run. Expected: that is T020. |
 | Blocked elsewhere | No Docker Desktop, so PostgreSQL/Redis integration waits for T025/T026 |
+
+### Phase 1 — in progress
+
+| Item | Result |
+|---|---|
+| Branch | `feature/phase-1-foundation` (from `develop` @ `d6fcb94`) |
+| Done | T010 configuration, T011 structured logging, T012 typed errors — 11 of 17 |
+| `scripts/lint` | Ruff clean, 53 files, mypy clean over `app` and `tests` |
+| `scripts/test` | 268 passed, integration and e2e deselected |
+| `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift |
+| Next | T013 database session, T014 models, T015 repositories, T016 Alembic |
+| Still blocked | T025/T026/T027 need Docker Desktop: no PostgreSQL, no Redis, no real migration yet. The phase gate cannot be claimed. |
