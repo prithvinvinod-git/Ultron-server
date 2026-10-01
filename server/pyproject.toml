@@ -74,6 +74,10 @@ dev = [
     "mypy>=1.13",
     "types-psutil>=7.0",
     "fakeredis>=2.26",
+    # In-memory SQLite, so session and transaction semantics can be tested on a
+    # bare checkout with no PostgreSQL. Never used in production: PostgreSQL is
+    # the authoritative store.
+    "aiosqlite>=0.20",
 ]
 
 [project.scripts]
