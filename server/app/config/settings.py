@@ -163,10 +163,13 @@ class OllamaSettings(BaseModel):
     """Ollama settings (spec section 21).
 
     The host is configurable because Ollama is not assumed to run on localhost
-    in production.
+    in production, and the same setting reaches a hosted Ollama as readily as a
+    local one: both speak the Ollama HTTP API, so the only difference is that a
+    hosted instance authenticates. That is what ``api_key`` is for.
     """
 
     url: str = "http://localhost:11434"
+    api_key: SecretStr = SecretStr("")
     timeout: int = Field(default=120, ge=1)
     connect_timeout: int = Field(default=10, ge=1)
     keepalive: str = "5m"
@@ -190,6 +193,27 @@ class OllamaSettings(BaseModel):
     @property
     def is_configured(self) -> bool:
         return bool(self.url)
+
+    @property
+    def api_key_configured(self) -> bool:
+        """True when a token is present.
+
+        A hosted Ollama rejects an unauthenticated request, so this is the
+        difference between a reachable service and a 401.
+        """
+        return bool(self.api_key.get_secret_value().strip())
+
+    def auth_headers(self) -> dict[str, str]:
+        """Headers for an Ollama API call, including the bearer token if set.
+
+        A local Ollama needs no credential, so the header is omitted rather than
+        sent empty; a hosted one needs it, and the two differ by configuration
+        alone rather than by a code path.
+        """
+        headers = {"Accept": "application/json"}
+        if self.api_key_configured:
+            headers["Authorization"] = f"Bearer {self.api_key.get_secret_value()}"
+        return headers
 
 
 class ProviderSettings(BaseModel):
@@ -596,6 +620,7 @@ class Settings(BaseSettings):
     redis_event_bridge: Annotated[bool, Field(alias="REDIS_EVENT_BRIDGE")] = False
 
     ollama_url: Annotated[str, Field(alias="OLLAMA_URL")] = "http://localhost:11434"
+    ollama_api_key: Annotated[SecretStr, Field(alias="OLLAMA_API_KEY")] = SecretStr("")
     ollama_timeout: Annotated[int, Field(alias="OLLAMA_TIMEOUT")] = 120
     ollama_connect_timeout: Annotated[int, Field(alias="OLLAMA_CONNECT_TIMEOUT")] = 10
     ollama_keepalive: Annotated[str, Field(alias="OLLAMA_KEEPALIVE")] = "5m"
@@ -997,6 +1022,7 @@ class Settings(BaseSettings):
     def ollama(self) -> OllamaSettings:
         return OllamaSettings(
             url=self.ollama_url,
+            api_key=self.ollama_api_key,
             timeout=self.ollama_timeout,
             connect_timeout=self.ollama_connect_timeout,
             keepalive=self.ollama_keepalive,

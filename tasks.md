@@ -105,7 +105,7 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T015** `app/database/repositories/` — repository pattern per aggregate
 - [x] **T016** `server/migrations/` — Alembic init + async template, pgvector-aware, first revision
 - [x] **T017** `app/database/redis_client.py` — Redis wrapper (cache, locks, pubsub, transient state only)
-- [ ] **T018** `app/observability/health.py` — health checks: PostgreSQL, Redis, Ollama, filesystem, agent runtime, event bus
+- [x] **T018** `app/observability/health.py` — health checks: PostgreSQL, Redis, Ollama, filesystem, agent runtime, event bus
 - [ ] **T019** `app/container.py` — hand-rolled DI composition root
 - [ ] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
 - [ ] **T021** `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub
@@ -768,11 +768,11 @@ Appended after each phase, per spec §51/§58.
 | Item | Result |
 |---|---|
 | Branch | `feature/phase-1-foundation` (from `develop` @ `d6fcb94`) |
-| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper — 16 of 18 |
-| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations`; mypy clean over `app` and `tests`, 85 files |
-| `scripts/test` | 712 passed, integration and e2e deselected |
+| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper, T018 health checks — 17 of 18 |
+| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations`; mypy clean over `app` and `tests`, 87 files |
+| `scripts/test` | 767 passed, integration and e2e deselected |
 | `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift; now covers `LockUnavailableError` |
-| Next | T018 health checks |
+| Next | T019 DI composition root |
 | Still blocked | T025/T026/T027 need Docker Desktop: no PostgreSQL, no Redis, no real migration yet. The phase gate cannot be claimed. |
 
 #### T017 delivery notes
@@ -829,3 +829,68 @@ error class is checked automatically for *self-consistency* but nothing else had
 asserted the verdict that actually matters here — that a Redis outage is retryable
 while lock contention is not, and that the contention error is not a `RedisError`
 subclass that a blanket "retry on `RedisError`" would swallow.
+
+#### T018 delivery notes
+
+All six checks from the task line are present, but only four can be real today:
+`agent_runtime` (T044) and `event_bus` (T031) have no implementation to probe. They
+are registered as absent and reported as `skipped` rather than dropped, because a
+check that silently vanishes from the report is indistinguishable from one that
+passed. The report always carries the six names, so `/ready` can be diffed against
+a known list; T019 registers the four real ones at startup and the last two appear
+on their own when their subsystems land, with no edit here.
+
+Decisions worth writing down, because each is a judgement the spec does not make:
+
+- **Only PostgreSQL gates readiness.** Redis, Ollama and the filesystem are
+  optional and degrade. The authority chain already says this (PostgreSQL is the
+  store; Redis is cache, locks and pub/sub), and a readiness gate that restarts a
+  container because the cache is down trades a degraded service for no service.
+- **Liveness never touches a dependency.** `/health` answers "this process is
+  alive" and nothing else. A liveness probe that consulted PostgreSQL would restart
+  every replica during a database blip, turning one dependency's outage into an
+  outage of the whole fleet. That is why the two endpoints are separate methods
+  rather than one probe with a flag.
+- **The probes raise; the wrapper classifies.** `check_postgresql`, `check_redis`
+  and `check_ollama` let `DatabaseError`, `RedisError` and
+  `LocalModelUnavailableError` propagate instead of catching them into a status.
+  Those types carry a retry verdict and an HTTP status that a health check would
+  flatten away, and a caller using a check directly would otherwise get a
+  healthy-looking result from a failed database. Status assignment is the
+  wrapper's job, where required-vs-optional is known.
+- **`TimeoutError` is caught separately.** It is not a subclass of `OSError`, so
+  the `except OSError` net that turns an unreachable host into `failed` does not
+  see it. A silently unbounded probe is the failure mode that takes the whole
+  `/ready` endpoint down with it, so the budget is enforced per check and a
+  timed-out optional check degrades rather than failing.
+- **The filesystem check writes a real file.** `os.access(W_OK)` returns `True`
+  on paths that a read-only mount or a restrictive ACL still refuses, so it would
+  report a filesystem as writable that cannot accept the uploads the API takes.
+  The probe creates and deletes a temp file instead, and its leftovers are the
+  bug it was written to prevent.
+
+On the hosted Ollama: `OLLAMA_URL` was already configurable and the default stays
+`http://localhost:11434`. What was missing is that a hosted instance needs a
+credential, so `OLLAMA_API_KEY` was added (as a `SecretStr`, alongside the existing
+provider keys) and `OllamaSettings.auth_headers()` omits the header entirely when
+no key is set rather than sending an empty one. Local and hosted are then the same
+code path — `GET /api/tags` with an optional bearer — instead of two code paths
+that drift. No inference code was touched: T018 only answers whether the provider
+is reachable.
+
+Unit coverage is 55 tests, and the suite injects every dependency (fake engine,
+`Redis` double, fake HTTP client, `tmp_path`) so it runs on a bare checkout with
+no PostgreSQL, no Redis and no network. Four mutations were applied and reverted to
+confirm the tests actually bite, since a health report that is wrong in the
+permissive direction is worse than no report:
+
+| Mutation | Caught by |
+|---|---|
+| required set emptied, so PostgreSQL becomes optional | 6 tests, incl. a timed-out required check going ready |
+| expected checks omitted instead of reported `skipped` | 5 tests |
+| per-run lock removed | the concurrent-callers test (one run, many waiters) |
+| `asyncio.timeout` removed | the hung-check test, which then took 60s to fail |
+
+The last two are the ones a happy-path suite usually misses, and the lock in
+particular is the difference between one probe per TTL window and a thundering
+herd of probes against the pool that is already struggling.
