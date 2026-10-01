@@ -106,7 +106,7 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T016** `server/migrations/` — Alembic init + async template, pgvector-aware, first revision
 - [x] **T017** `app/database/redis_client.py` — Redis wrapper (cache, locks, pubsub, transient state only)
 - [x] **T018** `app/observability/health.py` — health checks: PostgreSQL, Redis, Ollama, filesystem, agent runtime, event bus
-- [ ] **T019** `app/container.py` — hand-rolled DI composition root
+- [x] **T019** `app/container.py` — hand-rolled DI composition root
 - [ ] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
 - [ ] **T021** `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub
 - [ ] **T022** `app/api/routes/health.py` — `/health`, `/ready`, `/metrics`
@@ -768,11 +768,11 @@ Appended after each phase, per spec §51/§58.
 | Item | Result |
 |---|---|
 | Branch | `feature/phase-1-foundation` (from `develop` @ `d6fcb94`) |
-| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper, T018 health checks — 17 of 18 |
+| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper, T018 health checks, T019 DI composition root — 18 of 18 |
 | `scripts/lint` | Ruff clean over `app`, `tests` and `migrations`; mypy clean over `app` and `tests`, 87 files |
 | `scripts/test` | 767 passed, integration and e2e deselected |
 | `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift; now covers `LockUnavailableError` |
-| Next | T019 DI composition root |
+| Next | T020 FastAPI factory + lifespan | 
 | Still blocked | T025/T026/T027 need Docker Desktop: no PostgreSQL, no Redis, no real migration yet. The phase gate cannot be claimed. |
 
 #### T017 delivery notes
@@ -894,3 +894,16 @@ permissive direction is worse than no report:
 The last two are the ones a happy-path suite usually misses, and the lock in
 particular is the difference between one probe per TTL window and a thundering
 herd of probes against the pool that is already struggling.
+
+
+#### T019 delivery notes
+
+The container holds the application's singletons: settings, engine, session factory, Redis client, and health service. It does not hold repository instances because they are bound to a session. Instead, it provides factory methods to create repositories given a session.
+
+Construction is lazy: the engine, session factory, and Redis client are built on first access. This allows the container to be instantiated without connecting to external services, making it testable on a bare checkout.
+
+The container registers the four health checks that are available today (PostgreSQL, Redis, Ollama, filesystem) using lambdas that capture the container's dependencies. The agent_runtime and event_bus checks are omitted and will be registered by their respective subsystems when implemented (T031, T044).
+
+The container provides async context managers for session scopes: `session_scope` for transactional writes and `read_session_scope` for read-only operations that always roll back.
+
+The container also includes startup and shutdown lifespan methods that ping the database and Redis, and dispose of resources.
