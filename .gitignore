@@ -41,6 +41,8 @@ ENV/
 .ruff_cache/
 .coverage
 .coverage.*
+.cov.json
+.coverage-*.json
 htmlcov/
 coverage.xml
 .hypothesis/
