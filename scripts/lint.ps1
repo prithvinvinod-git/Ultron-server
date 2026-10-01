@@ -15,12 +15,12 @@ param(
 $failed = $false
 
 Write-Host "ULTRON: ruff check" -ForegroundColor Cyan
-Invoke-UltronUv -Arguments @("ruff", "check", "app", "tests")
+Invoke-UltronUv -Arguments @("ruff", "check", "app", "tests", "migrations")
 if ($script:UltronExitCode -ne 0) {
     $failed = $true
     if ($Fix) {
         Write-Host "ULTRON: applying ruff fixes" -ForegroundColor Yellow
-        Invoke-UltronUv -Arguments @("ruff", "check", "--fix", "app", "tests")
+        Invoke-UltronUv -Arguments @("ruff", "check", "--fix", "app", "tests", "migrations")
     }
     else {
         Write-Host "ULTRON: run scripts\format.ps1, or scripts\lint.ps1 -Fix" -ForegroundColor Yellow
@@ -28,11 +28,14 @@ if ($script:UltronExitCode -ne 0) {
 }
 
 Write-Host "ULTRON: ruff format --check" -ForegroundColor Cyan
-Invoke-UltronUv -Arguments @("ruff", "format", "--check", "app", "tests")
+Invoke-UltronUv -Arguments @("ruff", "format", "--check", "app", "tests", "migrations")
 if ($script:UltronExitCode -ne 0) { $failed = $true }
 
+# `migrations/versions/` is excluded by pyproject: a revision imports helpers
+# from the models it is meant to predate, and mypy would then hold the migration
+# to whatever those helpers return today rather than to the schema it froze.
 Write-Host "ULTRON: mypy" -ForegroundColor Cyan
-Invoke-UltronUv -Arguments @("mypy", "app", "tests")
+Invoke-UltronUv -Arguments @("mypy", "app", "tests", "migrations/env.py")
 if ($script:UltronExitCode -ne 0) { $failed = $true }
 
 if ($failed) {
