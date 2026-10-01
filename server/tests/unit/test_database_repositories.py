@@ -254,9 +254,7 @@ class TestGenericRepository:
 
         assert str(missing) in str(caught.value)
 
-    async def test_a_malformed_id_is_a_value_error_not_a_not_found(
-        self, db: AsyncSession
-    ) -> None:
+    async def test_a_malformed_id_is_a_value_error_not_a_not_found(self, db: AsyncSession) -> None:
         """A bad id is the caller's mistake, so it must not read as 'no such row'."""
         with pytest.raises(ValueError, match="not a valid identifier"):
             await UserRepository(db).get_required("not-a-uuid")
@@ -543,20 +541,14 @@ class TestAgentRepository:
         which is precisely the case where the depth cap is never exercised.
         """
         agents = AgentRepository(db)
-        first = await agents.add(
-            Agent(agent_type="a", name="first", permissions=["one"])
-        )
-        second = await agents.add(
-            Agent(agent_type="b", name="second", permissions=["two"])
-        )
+        first = await agents.add(Agent(agent_type="a", name="first", permissions=["one"]))
+        second = await agents.add(Agent(agent_type="b", name="second", permissions=["two"]))
         first.parent_agent_id = second.id
         second.parent_agent_id = first.id
         await db.commit()
 
         # Terminates, and the walk stops at the cap rather than looping.
-        assert await agents.get_effective_permissions(first.id) == frozenset(
-            {"one", "two"}
-        )
+        assert await agents.get_effective_permissions(first.id) == frozenset({"one", "two"})
 
     async def test_claiming_a_second_task_is_refused(self, db: AsyncSession) -> None:
         agents = AgentRepository(db)
@@ -818,9 +810,7 @@ class TestToolExecutionRepository:
         assert table.columns["permission_level"].nullable is False
         assert table.columns["decision"].nullable is False
 
-    async def test_a_denial_is_kept_even_though_nothing_happened(
-        self, db: AsyncSession
-    ) -> None:
+    async def test_a_denial_is_kept_even_though_nothing_happened(self, db: AsyncSession) -> None:
         executions = ToolExecutionRepository(db)
         await executions.record_decision(
             tool_name="fs.rm",
@@ -952,18 +942,14 @@ class TestConversationRepository:
         conversations = ConversationRepository(db)
         owner = uuid.uuid4()
         other = uuid.uuid4()
-        conversation = await conversations.add(
-            Conversation(title="private", user_id=owner)
-        )
+        conversation = await conversations.add(Conversation(title="private", user_id=owner))
 
         assert await conversations.require_conversation(conversation.id, user_id=owner)
 
         with pytest.raises(NotFoundError):
             await conversations.require_conversation(conversation.id, user_id=other)
 
-    async def test_a_mismatch_is_reported_as_missing_not_forbidden(
-        self, db: AsyncSession
-    ) -> None:
+    async def test_a_mismatch_is_reported_as_missing_not_forbidden(self, db: AsyncSession) -> None:
         """Confirming an id exists elsewhere leaks the shape of the data."""
         conversations = ConversationRepository(db)
         conversation = await conversations.add(Conversation(title="t", user_id=uuid.uuid4()))
@@ -1288,9 +1274,7 @@ class TestProjectRepository:
 
     async def test_an_absolute_root_is_returned(self, db: AsyncSession) -> None:
         projects = ProjectRepository(db)
-        project = await projects.add(
-            Project(name="p", slug="p", root_path="/srv/projects/p")
-        )
+        project = await projects.add(Project(name="p", slug="p", root_path="/srv/projects/p"))
 
         assert await projects.require_root_path(project.id) == "/srv/projects/p"
 
@@ -1308,9 +1292,7 @@ class TestProjectRepository:
         projects = ProjectRepository(db)
         owner = uuid.uuid4()
         await projects.add(Project(name="live", slug="live", owner_id=owner))
-        await projects.add(
-            Project(name="closed", slug="closed", owner_id=owner, is_active=False)
-        )
+        await projects.add(Project(name="closed", slug="closed", owner_id=owner, is_active=False))
         await db.commit()
 
         assert [p.name for p in await projects.list_for_owner(owner)] == ["live"]
@@ -1355,9 +1337,7 @@ class TestDeviceRepository:
 
     async def test_an_offline_device_is_refused(self, db: AsyncSession) -> None:
         devices = DeviceRepository(db)
-        await devices.add(
-            Device(name="esp", auth_token_hash="hash-1", status=DeviceStatus.OFFLINE)
-        )
+        await devices.add(Device(name="esp", auth_token_hash="hash-1", status=DeviceStatus.OFFLINE))
         await db.commit()
 
         assert await devices.authenticate("hash-1") is None
@@ -1413,9 +1393,7 @@ class TestDeviceRepository:
         await devices.heartbeat(device.id, firmware_version="1.3.0")
         assert device.firmware_version == "1.3.0"
 
-    async def test_re_enabling_does_not_claim_the_device_is_online(
-        self, db: AsyncSession
-    ) -> None:
+    async def test_re_enabling_does_not_claim_the_device_is_online(self, db: AsyncSession) -> None:
         devices = DeviceRepository(db)
         device = await devices.add(Device(name="esp", status=DeviceStatus.DISABLED))
 
@@ -1571,9 +1549,7 @@ class TestModelUsageRepository:
             await usage.latency_percentile("m", since=datetime.now(UTC), percentile=95)
 
     async def test_percentile_of_an_unknown_model_is_none(self, db: AsyncSession) -> None:
-        value = await ModelUsageRepository(db).latency_percentile(
-            "nope", since=datetime.now(UTC)
-        )
+        value = await ModelUsageRepository(db).latency_percentile("nope", since=datetime.now(UTC))
         assert value is None
 
     async def test_percentile_picks_the_ninety_fifth(self, db: AsyncSession) -> None:

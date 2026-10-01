@@ -60,6 +60,7 @@ DEFAULT_LIMIT = 100
 #: without being explicit about how much.
 MAX_LIMIT = 1000
 
+
 def apply_limit[StatementT](statement: StatementT, limit: int | None = None) -> StatementT:
     """Return ``statement`` with a bounded ``LIMIT``, preserving its exact type.
 
@@ -220,11 +221,7 @@ class Repository[ModelT]:
 
     async def exists(self, identifier: Any) -> bool:
         """Report whether a row with this primary key exists."""
-        statement = (
-            select(func.count())
-            .select_from(self.model)
-            .where(self.model.id == identifier)
-        )
+        statement = select(func.count()).select_from(self.model).where(self.model.id == identifier)
         result = await self._session.execute(statement)
         return bool(result.scalar_one())
 
