@@ -53,22 +53,51 @@ phases that need them, and permanently in production on Ubuntu.
 
 ## Phase 0 — Prerequisites & repository foundation
 
-- [ ] **T001** Install Python 3.12 + `uv` via winget; create `server/.venv`; verify `python -V`, `uv -V`
-- [ ] **T002** Create full monorepo tree: `server/app`, `server/tests`, `server/migrations`, `clients/{desktop-node,orb,protocol}`, `deployment/{docker,compose,systemd,scripts}`, `docs`, `scripts`
-- [ ] **T003** `server/pyproject.toml`: deps, optional extras (`browser`, `voice`, `iot`, `providers`), ruff / mypy / pytest config
-- [ ] **T004** Root hygiene: `.gitignore`, `.editorconfig`, `.dockerignore`, `.gitattributes` (keep)
-- [ ] **T005** `.env.example` with every placeholder from spec §34 (no real secrets)
-- [ ] **T006** `scripts/{dev,test,lint,start,format}.ps1` + `.sh` counterparts (spec §36), pathlib-based, no hard-coded Windows paths
-- [ ] **T007** `README.md` (real content), `LICENSE`, `develop` branch, `.gitkeep` for empty dirs
-- [ ] **T008** Verify Phase 0: `uv sync` succeeds, `scripts/lint` clean, `.env.example` complete
+- [x] **T001** Install Python 3.12 + `uv` via winget; create `server/.venv`; verify `python -V`, `uv -V`
+- [x] **T002** Create full monorepo tree: `server/app`, `server/tests`, `server/migrations`, `clients/{desktop-node,orb,protocol}`, `deployment/{docker,compose,systemd,scripts}`, `docs`, `scripts`
+- [x] **T003** `server/pyproject.toml`: deps, optional extras (`browser`, `voice`, `iot`, `providers`), ruff / mypy / pytest config
+- [x] **T004** Root hygiene: `.gitignore`, `.editorconfig`, `.dockerignore`, `.gitattributes` (updated with per-type EOL rules)
+- [x] **T005** `.env.example` with every placeholder from spec §34 (no real secrets)
+- [x] **T006** `scripts/{setup,dev,test,lint,format,start}.ps1` + `.sh` counterparts (spec §36), pathlib-based, no hard-coded Windows paths
+- [x] **T007** `README.md` (real content), `server/README.md`, `LICENSE`, `develop` branch, `.gitkeep` for empty dirs
+- [x] **T008** Verify Phase 0: `uv sync` succeeds, `scripts/lint` clean, `.env.example` complete
 
-**Phase 0 gate:** `uv sync` succeeds · lint clean · tree matches spec §4
+**Phase 0 gate:** `uv sync` succeeds · lint clean · tree matches spec §4 — **PASSED**
+
+> Issues found and fixed during Phase 0:
+> - `readme = "../README.md"` is illegal for a build backend → added `server/README.md`.
+> - PowerShell 5.1 promotes native stderr to terminating errors under
+>   `$ErrorActionPreference = 'Stop'`. The bootstrap now relaxes it around native
+>   calls and takes the result from the exit code.
+> - `Invoke-UltronNative` returned stdout and the exit code as one array, so
+>   callers could not read the code. It now streams output through the pipeline
+>   and records the code in `$script:UltronExitCode`.
+> - `Set-Content -Encoding utf8` on PowerShell 5.1 emits a UTF-8 **BOM**, which
+>   ruff rejected, and whose diagnostic renderer panicked on Windows paths. All
+>   generated Python files are written as UTF-8 without BOM.
+> - `--all-extras` would have pulled the voice runtimes and Playwright onto the
+>   development machine. Sync is now core + `dev` by default; heavy stacks are
+>   opt-in via `-Extras` / `ULTRON_SYNC_EXTRAS`.
+
+**Environment as installed**
+
+| Tool | Version |
+|---|---|
+| Python | 3.12.10 |
+| uv | 0.12.21 |
+| ruff | 0.16.9 |
+| mypy | 2.3.1 |
+| pytest | 9.1.1 |
+| FastAPI | 0.142.2 |
+| SQLAlchemy | 2.1.1 (async) |
+| Pydantic | 2.13.5 |
+
 
 ---
 
 ## Phase 1 — Foundation
 
-- [ ] **T010** `app/config/settings.py` — Pydantic v2 settings, nested sections, env-file resolution, no secrets defaults
+- [x] **T010** `app/config/settings.py` — Pydantic v2 settings, nested sections, env-file resolution, no secrets defaults
 - [ ] **T011** `app/observability/logging.py` — JSON structured logs, `request_id`/`task_id`/`agent_id` contextvars, redaction
 - [ ] **T012** `app/core/errors.py` — typed exception hierarchy + error codes (incl. `LOCAL_MODEL_UNAVAILABLE`)
 - [ ] **T013** `app/database/session.py` — SQLAlchemy 2.0 async engine, session factory, declarative `Base`
@@ -88,6 +117,45 @@ phases that need them, and permanently in production on Ubuntu.
 - [ ] **T027** **PHASE 1 verification** — server starts, PostgreSQL connects, Redis connects, `/health` works, WebSocket works
 
 **Phase 1 gate (spec §51):** server starts successfully
+
+**T010 delivered**
+
+`server/app/config/settings.py` (24 sections) + `server/tests/conftest.py` +
+`server/tests/unit/test_config_settings.py` (46 tests).
+
+Design decisions taken here, so later phases build on them rather than re-decide:
+
+- Flat env vars are the ingestion layer; 24 typed section models hold every
+  range and vocabulary rule. `Settings.sections()` is called from a
+  `model_validator`, so an out-of-range value fails at construction instead of
+  at first use.
+- A subsystem depends on the slice it needs (`settings.database`), not the whole
+  object. `settings.startup_warnings()` reports misconfiguration at boot
+  without refusing to start, so a bad deployment is still observable on
+  `/health`.
+- `ULTRON_ENV_FILE` names an env file explicitly and **wins outright**; a named
+  file that does not exist is an error, not a silent fall back to defaults.
+- `is_disallowed_host()` is the SSRF guard from spec §31 and **fails closed**:
+  a host that cannot be proven public is refused.
+- Secrets are `SecretStr`; absent provider keys mean *unconfigured*, never
+  *working*. Nothing is faked to make a path appear available.
+- Terminal commands ship with an empty allow-list, so no shell execution is
+  possible until an operator opts in.
+
+> Issues found and fixed during T010:
+> - `LOG_LEVEL=debug` crashed the process: the normalising validator existed
+>   only on the section model, not on the flat field that reads the variable.
+>   `.env.example` shows uppercase, so this would have bitten an operator, not
+>   the tests. Now normalised on both.
+> - `API_PORT=70000` was accepted: the `ge`/`le` bounds were declared on
+>   `AppSettings` but omitted from the flat field. Same class of bug, and the
+>   reason `Settings.sections()` now runs on every construction.
+> - The test teardown rebuilt settings while the deliberately invalid variable
+>   was still set, turning expected failures into errors. Teardown now only
+>   clears the cache.
+> - `scripts/lint` ran `mypy app` only, so no test file had ever been type
+>   checked despite the `tests.*` override in `pyproject.toml`. Both `lint.ps1`
+>   and `lint.sh` now check `app` and `tests`: 49 files instead of 47.
 
 ---
 
@@ -356,10 +424,11 @@ phases that need them, and permanently in production on Ubuntu.
 | D002 | No local model during development; cloud providers for real calls | Avoids large model downloads on the laptop; Ollama is a production/host concern |
 | D003 | Full monorepo skeleton in Phase 0 | Matches spec §4; clients/ and deployment/ are first-class, not afterthoughts |
 | D004 | Hand-rolled DI container in `app/container.py` | Spec §57: prefer boring infrastructure over clever abstractions; avoids a DI framework dependency |
-| D005 | Extra packages `app/workspaces/` and `app/notifications/` beyond spec §4 tree | Required by spec §46 and §45; §4's tree is structural, not exhaustive |
+| D005 | Extra package `app/workspaces/` beyond spec §4 tree | Required by spec §46; §4's tree is structural, not exhaustive |
+| D005a | Notifications live in `app/tools/notifications/`, not `app/notifications/` | Notification delivery is a tool invoked through the tool pipeline (spec §45 with §16), so it belongs with its sibling tools rather than in a top-level package |
 | D006 | `clients/protocol/` holds shared node protocol schemas | Single source of truth for the Windows node ↔ server contract (spec §13, §28, §42) |
 | D007 | `server/pyproject.toml` per spec §4; tool config lives there | Keeps root free of Python packaging concerns |
-| D008 | Two packages added to §4 tree marked as deviations | See D005/D006; recorded so the deviation is intentional and traceable |
+| D008 | One package added to §4 tree marked as a deviation | See D005; recorded so the deviation is intentional and traceable |
 | D009 | Integration tests skip cleanly when PostgreSQL/Redis/Docker absent | Test suite must pass on a bare checkout without paid APIs or services |
 | D010 | Task DAG hand-rolled instead of `networkx` | Avoids a heavyweight dependency for a small, well-understood algorithm |
 
@@ -370,3 +439,14 @@ phases that need them, and permanently in production on Ubuntu.
 Appended after each phase, per spec §51/§58.
 
 <!-- PHASE STATUS BLOCKS BELOW -->
+
+### Phase 0 — complete
+
+| Item | Result |
+|---|---|
+| Branch | `develop` @ `d6fcb94` (`main` untouched at `dd50040`, not pushed) |
+| `uv sync` | Succeeded, core + `dev` only |
+| `scripts/lint` | Ruff clean, 46 files formatted, mypy clean |
+| Delivered | Monorepo tree, `pyproject.toml`, `.env.example` (spec §34 complete), Windows + Linux scripts, READMEs, LICENSE, `develop` branch |
+| Deliberately absent | No `app/main.py` yet, so `scripts/dev` and `scripts/start` cannot run. Expected: that is T020. |
+| Blocked elsewhere | No Docker Desktop, so PostgreSQL/Redis integration waits for T025/T026 |
