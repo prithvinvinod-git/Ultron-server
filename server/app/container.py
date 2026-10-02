@@ -203,6 +203,7 @@ class Container:
         async with session_scope(self.session_factory) as session:
             yield session
 
+    @asynccontextmanager
     async def read_session_scope(self) -> AsyncGenerator[AsyncSession, None]:
         """Yield a read-only session that is always rolled back."""
         async with read_session_scope(self.session_factory) as session:
@@ -235,7 +236,7 @@ class Container:
         # Filesystem check
         self.health.register(
             "filesystem",
-            lambda: check_filesystem([self.settings.workspace.resolved_root()]),
+            lambda: check_filesystem([self.settings.workspaces.resolved_root()]),
         )
 
     # --------------------------------------------------------------------- #

@@ -59,15 +59,16 @@ class AppSettings(BaseModel):
     name: str = "ULTRON"
     environment: Environment = "development"
     debug: bool = False
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # noqa: S104 - deliberate: LAN clients reach the server; production warns
     port: int = Field(default=8000, ge=1, le=65535)
     workers: int = Field(default=1, ge=1, le=64)
     reload: bool = False
     root_path: str = ""
     shutdown_timeout: int = Field(default=30, ge=0, le=600)
     cors_origins: list[str] = Field(default_factory=list)
+    allowed_hosts: list[str] = Field(default_factory=list)
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
     @classmethod
     def _split_origins(cls, value: Any) -> Any:
         """Accept a comma-separated string as well as a real list."""
@@ -578,7 +579,7 @@ class Settings(BaseSettings):
     metrics_include_in_log: Annotated[bool, Field(alias="METRICS_INCLUDE_IN_LOG")] = False
 
     # Binds every interface by default so a LAN client can reach the server.
-    api_host: Annotated[str, Field(alias="API_HOST")] = "0.0.0.0"
+    api_host: Annotated[str, Field(alias="API_HOST")] = "0.0.0.0"  # noqa: S104 - see AppSettings.host
     api_port: Annotated[int, Field(alias="API_PORT", ge=1, le=65535)] = 8000
     api_workers: Annotated[int, Field(alias="API_WORKERS", ge=1, le=64)] = 1
     api_reload: Annotated[bool, Field(alias="API_RELOAD")] = False
@@ -586,6 +587,7 @@ class Settings(BaseSettings):
     debug: Annotated[bool, Field(alias="DEBUG")] = False
     shutdown_timeout: Annotated[int, Field(alias="SHUTDOWN_TIMEOUT")] = 30
     cors_origins: Annotated[str, Field(alias="CORS_ORIGINS")] = ""
+    allowed_hosts: Annotated[str, Field(alias="ALLOWED_HOSTS")] = ""
 
     jwt_secret: Annotated[SecretStr, Field(alias="JWT_SECRET")] = SecretStr(
         "CHANGE_ME_generate_a_random_secret"
@@ -923,6 +925,18 @@ class Settings(BaseSettings):
                     "ADMIN_PASSWORD still holds its placeholder value. The "
                     "bootstrap administrator cannot be created as configured."
                 )
+            if self.api_host == "0.0.0.0":  # noqa: S104 - detecting this is the point
+                warnings.append(
+                    "API_HOST is 0.0.0.0 in production, so the API is reachable "
+                    "from every interface. Put it behind a reverse proxy and set "
+                    "ALLOWED_HOSTS, or bind to a single interface."
+                )
+            if not self.cors_origins:
+                warnings.append(
+                    "CORS_ORIGINS is empty, so browser clients on another origin "
+                    "will be blocked. This is the safe default; set it only if a "
+                    "separate front end needs access."
+                )
         if security.allow_anonymous:
             warnings.append("ALLOW_ANONYMOUS is enabled; the API accepts no token.")
         if not self.database.url.startswith("postgresql"):
@@ -967,6 +981,7 @@ class Settings(BaseSettings):
             root_path=self.api_root_path,
             shutdown_timeout=self.shutdown_timeout,
             cors_origins=self.cors_origins,
+            allowed_hosts=self.allowed_hosts,
         )
 
     @property

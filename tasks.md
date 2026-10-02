@@ -768,11 +768,11 @@ Appended after each phase, per spec §51/§58.
 | Item | Result |
 |---|---|
 | Branch | `feature/phase-1-foundation` (from `develop` @ `d6fcb94`) |
-| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper, T018 health checks, T019 DI composition root, T020 FastAPI factory — 19 of 18 |
-| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations`; mypy clean over `app` and `tests`, 88 files |
-| `scripts/test` | 767 passed, integration and e2e deselected |
+| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper, T018 health checks, T019 DI composition root, T020 FastAPI factory — 11 of 18 |
+| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations` (including the new `S`/bandit rules); mypy clean over `app`, 78 files |
+| `scripts/test` | 807 passed, integration and e2e deselected |
 | `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift; now covers `LockUnavailableError` |
-| Next | T020 FastAPI factory + lifespan | 
+| Next | T021 `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub |
 | Still blocked | T025/T026/T027 need Docker Desktop: no PostgreSQL, no Redis, no real migration yet. The phase gate cannot be claimed. |
 
 #### T017 delivery notes
@@ -912,19 +912,84 @@ The container also includes startup and shutdown lifespan methods that ping the 
 #### T020 delivery notes
 
 The application factory creates a FastAPI instance with:
-- The dependency injection container wired into the lifespan events (startup pings DB+Redis, shutdown disposes resources)
-- Comprehensive exception handling for all Ultron error types, mapping them to appropriate HTTP status codes:
-  * 400 Bad Request: InvalidInputError, ValidationError, SerializationError, SsrfBlockedError
-  * 401 Unauthorized: AuthError, InvalidCredentialsError
-  * 403 Forbidden: PermissionDeniedError
-  * 404 Not Found: NotFoundError, TaskNotFoundError, AgentNotFoundError, etc.
-  * 409 Conflict: ConflictError, LockUnavailableError
-  * 429 Too Many Requests: RateLimitedError
-  * 501 Not Implemented: CapabilityNotImplementedError
-  * 503 Service Unavailable: DependencyUnavailableError, OperationTimeoutError, HealthCheckFailedError, LocalModelUnavailableError, ProviderNotConfiguredError, ShuttingDownError
-  * 500 Internal Server Error: All other errors (default)
-- Middleware: CORS (allowing all origins in development) and TrustedHost (allowing all hosts in development)
-- Health endpoints: `/health` (liveness) and `/ready` (readiness placeholder - to be wired by T021)
+- The dependency injection container wired into a `lifespan` context manager
+  (startup pings DB+Redis, shutdown disposes resources)
+- Exception handling driven by each error's own `http_status` and `code`, so the
+  wire contract lives in exactly one place (`app/core/errors.py`)
+- Middleware configured from settings, not hardcoded: CORS origins and allowed
+  hosts both come from configuration and both default to *closed*
+- Health endpoints: `/health` (liveness) and `/ready` (readiness, answered by
+  `HealthService` and 503 when a required check fails)
 - Router mounting framework ready for T022–T024 (auth, connection manager, WS routes) and T036–T039 (agents, tasks, memories, conversations)
 
 The application is importable without external services: `from app.main import create_app` works on a bare checkout, enabling testing and Docker/CI usage without running PostgreSQL or Redis.
+
+#### T020 security hardening (spec §30, §31)
+
+A security audit against §1, §15–17, §29–31 and §40 found the factory itself
+was the weakest part of the code written so far. Six defects were real, not
+hypothetical, and four of them were in this task's own output:
+
+| Defect | Was | Now |
+|---|---|---|
+| CORS | `allow_origins=["*"]` with `allow_credentials=True` — the combination browsers reject, so it granted nothing while reading as permissive | Reads `CORS_ORIGINS`; empty means *disabled*; credentials only with explicit origins; mixing `*` with explicit origins is a startup `ConfigError` |
+| TrustedHost | `allowed_hosts=["*"]`, with no setting to change it | Reads the new `ALLOWED_HOSTS`; middleware is only installed when configured |
+| Error codes | `exc.error_code` — an attribute that does not exist, so every response was labelled `INTERNAL_ERROR` | `exc.code.value` |
+| Error statuses | A hand-written `isinstance` ladder that had drifted from `errors.py`: permission denials and `CommandNotAllowedError` returned **500** instead of 403, `SerializationError` returned 400 instead of 500, and `DatabaseError` had no branch at all | `exc.http_status`, asserted against the contract by a parametrized test |
+| Validation errors | `exc.errors()` straight into `JSONResponse`: `ctx` holds exception objects, so a client mistake became a 500 — and `input` would have reflected an attempted password back from `/auth` | Reduced to `loc`/`msg`/`type`, and JSON-encoded defensively |
+| Logging | `configure_logging()` was never called, so the redaction layer was inert and `logging.lastResort` printed raw records to stderr | Called first in `create_app`, before anything logs |
+| `/ready` | Hardcoded `{"status": "ready"}` — reported health the process did not have | Delegates to `HealthService`; 503 when a required check fails |
+| `/docs` | Served in every environment, cataloguing the whole route surface | Disabled when `ENVIRONMENT=production` |
+
+Two further defects were found in T019 code by the new tests:
+
+- `container.py` referenced `settings.workspace`; the property is `workspaces`.
+  The filesystem health check would have raised `AttributeError` at runtime, so
+  the workspace boundary was never actually being probed.
+- `Container.read_session_scope` had lost its `@asynccontextmanager` decorator,
+  so `async with container.read_session_scope()` failed at runtime.
+
+`ALLOWED_HOSTS` was added to `.env.example`, and `startup_warnings()` now also
+warns in production about a `0.0.0.0` bind and an empty `CORS_ORIGINS`. That
+function existed and was never called, so a deployment could run for weeks with
+a placeholder admin password and nothing would say so.
+
+Ruff now selects the `S` (flake8-bandit) rules, which is the family that flags
+`allow_origins=["*"]` combined with `allow_credentials=True` — the pair of
+checks that should have caught all of this the first time. Test files are
+exempt from the hardcoded-secret rules because their fixtures exist to prove
+redaction works.
+
+`tests/unit/test_main.py` adds 40 tests. The three security-critical
+behaviours were mutation-checked: restoring wildcard CORS fails 4 of them,
+reintroducing the `error_code` typo fails 5, and making `/ready` always answer
+200 fails 1.
+
+Still missing, and tracked as later tasks rather than fixed here: authentication
+itself (T021/T022), permission enforcement (T033), rate limiting (T035), the
+tool execution pipeline (T036), and WebSocket authentication (T024).
+
+#### Security audit: remaining gaps against §15/§16/§17/§30/§31
+
+The same audit confirmed that the *design* for these requirements is already in
+place; what is missing is the code that uses it. Nothing below is a surprise to
+the spec — it is a list of schemas, settings and error types with no caller.
+
+| Requirement | Ready | Missing | Task |
+|---|---|---|---|
+| Secure password handling | `users.password_hash` (Argon2id), `SecuritySettings` cost params | No hashing, no verification; `argon2-cffi` never imported | T022 |
+| Session / token architecture | `sessions` with `token_hash`, `refresh_token_hash`, rotation chain, reuse detection | No issuance or verification; `PyJWT` never imported | T022 |
+| API keys for machine clients | `users.is_service_account`, `api_key_hash` | No issue/revoke path | T022 |
+| Device authentication | `devices.auth_token_hash`, `ESP32_REQUIRE_AUTH` | Never read or checked | T024 |
+| Role / permission checks | `PermissionLevel` L0–L5 with `allows()` | Nothing consumes it; no role enum | T033 |
+| Audit log for sensitive operations | `AuditLogEntry`, `AuditOutcome`, `AuditLogRepository` | No row is ever written | T033 |
+| Rate limiting | `rate_limit_enabled`, `rate_limit_requests` | No middleware | T035 |
+| Schema validation (pipeline stage 1) | — | — | T035/T036 |
+| SSRF guard | `is_disallowed_host`, fails closed on unresolvable names and metadata IPs | Only stubbed; no caller | T036 |
+| Shell allow-list | `TerminalSettings.allowed_commands=[]` denies everything | No matcher | T036 |
+| Filesystem boundary | `WorkspaceSettings.allowed_paths()` | Unenforced outside the health check | T036 |
+| `/metrics` | `prometheus-client`, `metrics_path` | Never mounted | T022 |
+
+Two settings are also unused scaffolding and are worth wiring before Phase 1 is
+called done: `security.require_auth` (defaults to `True`, so the fail-closed
+intent is already there) and `startup_warnings()`'s output (now called).

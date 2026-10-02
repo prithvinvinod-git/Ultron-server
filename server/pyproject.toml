@@ -118,6 +118,7 @@ select = [
     "DTZ", # naive datetimes
     "ANN", # type annotations
     "PTH", # pathlib usage (spec section 36: no Windows-only paths)
+    "S",   # flake8-bandit (spec section 31: security defaults must fail closed)
 ]
 ignore = [
     "ANN401",  # Any is allowed at provider/protocol boundaries
@@ -128,7 +129,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN", "S101", "PLR2004", "ARG001"]
+# S101 (assert) and the hardcoded-secret rules are disabled in tests because the
+# secret fixtures there exist precisely to prove that redaction works. A test
+# that has to embed "hunter2" to assert it never reaches a log is not a finding.
+"tests/**" = ["ANN", "S101", "S104", "S105", "S106", "S107", "PLR2004", "ARG001"]
 "app/api/**" = ["B008"]
 "app/database/models/**" = ["ANN"]
 

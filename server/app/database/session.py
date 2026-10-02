@@ -101,7 +101,11 @@ def _parse_url(url: str) -> URL:
     try:
         return make_url(url)
     except ArgumentError as error:
-        raise ConfigError(f"DATABASE_URL is not a valid URL: {error}") from error
+        # The ArgumentError text echoes the URL that failed to parse, and a
+        # DATABASE_URL carries its password. Naming only the error type keeps
+        # the message useful without putting a credential in a log or an HTTP
+        # response; the operator has the failing value in their own environment.
+        raise ConfigError(f"DATABASE_URL is not a valid URL ({type(error).__name__})") from error
 
 
 def _require_async_driver(url: URL) -> None:
