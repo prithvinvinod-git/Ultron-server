@@ -52,6 +52,7 @@ if TYPE_CHECKING:
         SessionRepository,
         UserRepository,
     )
+    from app.observability.health import HealthService
 
     def _accepts_protocol(container: ContainerProtocol) -> None:
         """Signature only. Never defined at runtime."""
@@ -97,6 +98,16 @@ class ContainerProtocol(Protocol):
     def get_device_repository(self, session: AsyncSession) -> DeviceRepository: ...
 
     def get_audit_log_repository(self, session: AsyncSession) -> AuditLogRepository: ...
+
+    @property
+    def health(self) -> HealthService:
+        """The health service with its default checks registered.
+
+        Read by the probe routes (T022). It is here, rather than imported from
+        ``app.container``, so this module keeps no import-time dependency on the
+        wiring graph and a probe test can supply a stub.
+        """
+        ...
 
 
 def get_container(request: Request) -> ContainerProtocol:

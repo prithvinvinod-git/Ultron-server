@@ -111,24 +111,21 @@ copy that to the server).
 
 ## C. Code work still open
 
-### C1. T022 — `/health`, `/ready`, `/metrics`
+### C1. T022 — done: `/health`, `/ready`, `/metrics`
 
-The next task. The engine (`app/observability/health.py`, T018) is complete and
-tested; only the HTTP surface is missing.
+Committed. The engine (`app/observability/health.py`, T018) is complete and
+tested; T022 added the HTTP surface.
 
-Also in scope for T022, and the real item worth doing:
+The interesting part was not the routes. It was the `startup_warnings` gap:
+`settings.py` promises misconfiguration is *"observable through `/health`"*, and
+`/health` reported nothing. A production deploy with `ALLOW_ANONYMOUS=true` was
+logging one line at boot and then reporting healthy forever. Both probes now
+carry the warnings, and `/health` drops `status` to `degraded` — deliberately
+**not** a non-200, because a restart cannot fix configuration and a crash loop
+is the opposite of diagnosable.
 
-- `app/config/settings.py:940` emits `startup_warnings` for problems like
-  `ALLOW_ANONYMOUS=true` in production, and the docstring promises these are
-  *"observable through `/health`"*. **`/health` does not report them yet**, so a
-  misconfigured production deploy logs one line at boot and then looks healthy
-  forever. Surfacing them is what makes the existing design honest.
-- `.env.example` says `ALLOW_ANONYMOUS` "Must be false in production" and
-  nothing enforces it. The deliberate design is *warn, don't refuse to boot*, so
-  the fix is to make the warning visible in `/health` and `/ready`, not to add a
-  boot failure.
-- `/metrics` needs mounting. `prometheus-client` is already a core dependency and
-  installed, so no new package is needed.
+Still open, and only on the server: `/ready` against a **real** PostgreSQL.
+That is item B1 — see the top of this file.
 
 ### C2. Logout docstring disagrees with behaviour
 

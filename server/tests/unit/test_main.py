@@ -106,10 +106,20 @@ class _StubContainer:
 
     ``Container.health`` is a read-only property, so the whole container is
     substituted rather than patched attribute-wise.
+
+    ``settings`` is present because the probe routes report configuration
+    warnings (T022), which is how ``Settings.startup_warnings``' promise of being
+    "observable through /health" is kept. Real settings are used rather than a
+    stub so the warnings under test are the ones the settings module actually
+    produces.
     """
 
     def __init__(self, ready: bool) -> None:
         self.health = _StubHealth(ready=ready)
+
+    @property
+    def settings(self) -> Settings:
+        return reload_settings()
 
 
 def _app_with_stub(app: FastAPI, *, ready: bool) -> FastAPI:

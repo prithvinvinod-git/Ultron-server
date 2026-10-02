@@ -143,7 +143,7 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T019** `app/container.py` — hand-rolled DI composition root
 - [x] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
 - [x] **T021** `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub. Written: `app/security/{passwords,tokens,audit,authentication}.py`, `app/api/dependencies.py`, `app/api/routes/auth.py`, correlation-ID + access-log middleware in `app/main.py`, and unit tests for each. Route-level tests over `TestClient` are in place (35 tests) and the full gate passes. Also verified against a live PostgreSQL 17 instance with `ENABLE_PGVECTOR=false`: login, token authentication, refresh rotation and replay refusal all behave, and the audit trail carries `auth.login` / `auth.token_refresh` / `auth.token_reuse_detected`. See delivery notes below.
-- [ ] **T022** `app/api/routes/health.py` — `/health`, `/ready`, `/metrics`
+- [x] **T022** `app/api/routes/health.py` — `/health`, `/ready`, `/metrics` — **done.** Written: `app/api/routes/health.py`, `app/observability/metrics.py`, plus `ContainerProtocol.health`. `/health` is liveness via `HealthService.liveness()` and is deliberately **dependency-free** — it never opens a database connection, because a liveness probe that consulted PostgreSQL would restart a healthy process on every blip and turn one dependency's hiccup into an outage of every replica. `/ready` returns `503` unless a **required** check is `OK` (PostgreSQL only, §23); an optional failure degrades without removing the instance (§33). Both now carry `startup_warnings`, which keeps the promise in `Settings.startup_warnings` ("observable through `/health`") — before this those warnings were logged once at boot and then invisible. Warnings drop `status` to `degraded` but never fail the probe, because a restart cannot fix configuration and a crash loop is not diagnosable. `/metrics` uses `prometheus_client` (already a core dependency, no new package) behind a dedicated `CollectorRegistry` rather than the process-global default, which any import could collide with; status is **one-hot** (`{check,status}` label set to 1) rather than collapsed onto magic numbers. `404` when `METRICS_ENABLED=false`, because an empty body reads as "healthy, nothing to report". 16 new tests, 928 total.
 - [ ] **T023** `app/api/websocket/manager.py` + `/ws` — connection manager, topic subscription, heartbeat
 - [ ] **T024** `server/tests/` Phase 1 suite — config, logging, session, health, API smoke, WS connect
 - [ ] **T025** `deployment/docker/Dockerfile.dev` + root `docker-compose.yml` dev stack (`postgres`, `redis`, `ultron-api`) - `DEFERRED` - not a Phase 1 blocker. No Docker on the dev machine (spec 61); native PostgreSQL 17 serves tests and migrations instead.
@@ -1189,11 +1189,12 @@ the kind that unit tests written alongside the code tend to assume away.
   guard, so there was no bypass to close. Adding a `security.require_auth` now
   would be inventing a second switch for a decision one flag already makes.
 - The genuine related gap, tracked under T022: `ALLOW_ANONYMOUS` only produces a
-  `startup_warnings` entry, and `.env.example` says it "must be false in
-  production" without anything enforcing it. The settings docstring states the
-  intent - warnings rather than boot failures, *"so that a misconfigured
-  deployment is still observable through `/health`"* - but `/health` does not
-  report warnings yet, so that promise is currently unkept.
+    `startup_warnings` entry, and `.env.example` says it "must be false in
+    production" without anything enforcing it. **Closed by T022** — not by
+    failing the boot, but by making the warning visible: `/health` now reports
+    `status: degraded` and lists the warnings, so a misconfigured production
+    deploy is diagnosable instead of silently healthy. That is what the settings
+    docstring always intended by choosing warnings over boot failures.
 - Logout's docstring claims a malformed `Authorization` header is ignored, but
   only a *missing* header is; a non-empty malformed value still raises from
   `tokens.extract_bearer`. Low severity, but the doc and the behaviour should
