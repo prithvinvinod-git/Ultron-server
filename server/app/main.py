@@ -1,4 +1,4 @@
-﻿"""FastAPI application factory (T020).
+"""FastAPI application factory (T020).
 
 This module creates the ASGI application with:
 - Dependency injection container wired into the lifespan
@@ -184,10 +184,11 @@ def _include_routers(app: FastAPI) -> None:
     the complete list of routes the application exposes, and a missing entry is
     a visible omission instead of a silent one.
     """
-    from app.api.routes import auth, health
+    from app.api.routes import auth, events, health
 
     app.include_router(auth.router)
     app.include_router(health.router)
+    app.include_router(events.router)
 
 
 def _error_body(exc: UltronError) -> dict[str, Any]:
@@ -426,3 +427,7 @@ def create_app() -> FastAPI:
     # they are the ones with the health engine behind them.
 
     return app
+
+
+app = create_app()
+

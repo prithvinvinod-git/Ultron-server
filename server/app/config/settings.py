@@ -552,6 +552,23 @@ class ObservabilitySettings(BaseModel):
     healthcheck_cache_ttl: int = Field(default=5, ge=0)
 
 
+class EventsSettings(BaseModel):
+    """Event bus and client stream settings (spec §19, T023).
+
+    ``heartbeat_seconds`` must stay below the shortest idle timeout in the
+    deployment's proxy chain. A stream that goes quiet for longer than that gets
+    reaped as idle and every client reconnects forever, so this is a value to
+    check against the reverse proxy rather than tune for taste. 15s is under the
+    60s that nginx and most managed proxies default to.
+    """
+
+    heartbeat_seconds: float = Field(default=15.0, gt=0, le=120)
+    retry_milliseconds: int = Field(default=5000, ge=100, le=300000)
+    queue_size: int = Field(default=256, ge=1, le=100000)
+    replay_size: int = Field(default=128, ge=0, le=100000)
+    max_subscribers: int = Field(default=512, ge=1, le=100000)
+
+
 class Settings(BaseSettings):
     """The complete ULTRON configuration.
 
@@ -823,6 +840,15 @@ class Settings(BaseSettings):
     audit_log_retention_days: Annotated[int, Field(alias="AUDIT_LOG_RETENTION_DAYS")] = 180
     healthcheck_cache_ttl: Annotated[int, Field(alias="HEALTHCHECK_CACHE_TTL")] = 5
 
+    # Event stream (T023). Flat fields here, assembled into EventsSettings by the
+    # `events` property below -- see the note on `security` about model_copy and
+    # nested models.
+    event_heartbeat_seconds: Annotated[float, Field(alias="EVENT_HEARTBEAT_SECONDS")] = 15.0
+    event_retry_milliseconds: Annotated[int, Field(alias="EVENT_RETRY_MILLISECONDS")] = 5000
+    event_queue_size: Annotated[int, Field(alias="EVENT_QUEUE_SIZE")] = 256
+    event_replay_size: Annotated[int, Field(alias="EVENT_REPLAY_SIZE")] = 128
+    event_max_subscribers: Annotated[int, Field(alias="EVENT_MAX_SUBSCRIBERS")] = 512
+
     @field_validator("log_level", "notification_log_level", mode="before")
     @classmethod
     def _normalise_log_level(cls, value: Any) -> Any:
@@ -875,6 +901,7 @@ class Settings(BaseSettings):
             self.notifications,
             self.memory,
             self.observability,
+            self.events,
         )
 
     @classmethod
@@ -1277,6 +1304,16 @@ class Settings(BaseSettings):
             event_retention_days=self.event_retention_days,
             audit_log_retention_days=self.audit_log_retention_days,
             healthcheck_cache_ttl=self.healthcheck_cache_ttl,
+        )
+
+    @property
+    def events(self) -> EventsSettings:
+        return EventsSettings(
+            heartbeat_seconds=self.event_heartbeat_seconds,
+            retry_milliseconds=self.event_retry_milliseconds,
+            queue_size=self.event_queue_size,
+            replay_size=self.event_replay_size,
+            max_subscribers=self.event_max_subscribers,
         )
 
 

@@ -38,6 +38,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InvalidInputError
+from app.events.bus import EventBus
 from app.observability import get_request_id
 from app.security import tokens
 from app.security.audit import ACTOR_ANONYMOUS, AuditLogger
@@ -106,6 +107,17 @@ class ContainerProtocol(Protocol):
         Read by the probe routes (T022). It is here, rather than imported from
         ``app.container``, so this module keeps no import-time dependency on the
         wiring graph and a probe test can supply a stub.
+        """
+        ...
+
+    @property
+    def events(self) -> EventBus:
+        """The event bus.
+
+        Read by the client event stream (T023). Declared here for the same reason
+        as ``health``: the stream route needs the bus without importing the
+        composition root, so a test can supply its own bus and drive real events
+        through it.
         """
         ...
 

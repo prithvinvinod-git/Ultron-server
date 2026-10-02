@@ -11,6 +11,7 @@ The container holds:
 - Async SQLAlchemy engine and session factory
 - Redis client
 - Health service (with the four available checks registered)
+- Event bus (T023), which backs the client event stream
 - Repository factory methods
 
 It does not hold any repository instances because they are bound to a
@@ -60,6 +61,7 @@ from app.database.session import (
     read_session_scope,
     session_scope,
 )
+from app.events.bus import EventBus
 from app.observability.health import (
     HealthService,
     check_filesystem,
@@ -78,6 +80,7 @@ class Container:
         session_factory: The async session factory (built on demand).
         redis: The Redis client (built on demand).
         health: The health service with registered checks.
+        events: The in-process event bus backing the client stream (T023).
     """
 
     def __init__(
@@ -87,11 +90,13 @@ class Container:
         engine: AsyncEngine | None = None,
         redis: RedisClient | None = None,
         health: HealthService | None = None,
+        events: EventBus | None = None,
     ) -> None:
         self._settings = settings
         self._engine = engine
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._redis = redis
+        self._events = events
         self._health = health or HealthService()
         self._register_default_checks()
 
@@ -131,6 +136,23 @@ class Container:
         """Return the health service with the default checks registered."""
         return self._health
 
+    @property
+    def events(self) -> EventBus:
+        """Return the event bus, building it from settings on first access.
+
+        Built lazily for the same reason the engine is: constructing it here
+        would read settings at construction time, and the container is created
+        before tests have finished applying their environment.
+        """
+        if self._events is None:
+            config = self.settings.events
+            self._events = EventBus(
+                queue_size=config.queue_size,
+                replay_size=config.replay_size,
+                max_subscribers=config.max_subscribers,
+            )
+        return self._events
+
     # --------------------------------------------------------------------- #
     # Lifespan
     # --------------------------------------------------------------------- #
@@ -161,8 +183,12 @@ class Container:
     async def shutdown(self) -> None:
         """Dispose of the engine and close the Redis client.
 
-        This is called from the application lifespan shutdown hook.
+        This is called from the application lifespan shutdown hook. The event bus
+        is closed first so that any open ``/events`` stream wakes up and ends
+        instead of hanging until its client gives up.
         """
+        if self._events is not None:
+            self._events.close()
         await self.redis.aclose()
         await dispose(self.engine)
 
