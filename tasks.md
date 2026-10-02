@@ -2,6 +2,34 @@
 
 Source of truth for the build described in [`server_arc.md`](server_arc.md).
 
+> ## ⚠ DO NOT RUN ULTRON ON THIS WINDOWS MACHINE
+>
+> **This laptop is a build-and-test machine only. ULTRON is never run here.**
+>
+> Once the build is complete, ULTRON is **cloned to the author's own server and
+> run there**. Nothing on this machine is a deployment target.
+>
+> This is a deliberate safety boundary, not a limitation to work around:
+>
+> - **Do not** start the API server (`uvicorn`, `fastapi run`, `python -m app`, a
+>   packaged executable, or a Windows service).
+> - **Do not** run the web/desktop client, the Orb, a voice session, a device
+>   bridge, the scheduler, or any background worker that runs the real runtime.
+> - **Do not** enable `BROWSER_ENABLED`, `SCHEDULER_ENABLED`, `COMPUTER_NODES_ENABLED`,
+>   `DEVICES_ENABLED`, `VOICE_ENABLED` or `REDIS_EVENT_BRIDGE` on this host.
+> - **Do not** point the API at anything outside this machine.
+> - **Do not** bind `API_HOST` to anything other than `127.0.0.1`, even locally.
+>
+> **What *is* allowed here:** writing code, `ruff`, `mypy`, `pytest`, Alembic
+> migrations against the local PostgreSQL, and reading files. The local
+> PostgreSQL 17 service exists for tests and migrations only — it holds no real
+> user data and is loopback-only.
+>
+> Rationale: agent code executes tools, shells, and browsers (§14–§16). Running
+> it on the machine that also holds the author's own files, credentials, and
+> development environment risks that environment for no benefit, since the real
+> target is a server the author controls end to end. See spec §61.
+
 ## How to read this file
 
 | Marker | Meaning |
@@ -11,6 +39,10 @@ Source of truth for the build described in [`server_arc.md`](server_arc.md).
 | `[x]` | **done** — implemented, formatted, linted, type-checked, tests pass |
 | `[!]` | blocked — reason recorded inline |
 
+Status annotations for the online-first amendment (§59, §60): `DEFERRED`,
+`SKIP - PHASE 1`, `OPTIONAL`, `FUTURE`. These are **not** deletions — a deferred
+capability keeps its task and its spec section; only its timing changes.
+
 Rules (from spec §52, §53, §54, §57):
 
 1. A task is only `[x]` when it has a passing test, or is an honest documented
@@ -19,6 +51,8 @@ Rules (from spec §52, §53, §54, §57):
    interface, a safe stub, documentation, and a test.
 3. Before declaring a feature complete run:
    `format → lint → typecheck → unit tests → integration tests → build → health check`.
+   **Exception:** the health-check and run steps are performed on the author's
+   server, never on this machine (§61).
 4. Branch per slice: `feature/*` off `develop`, conventional commits, merge to
    `develop`, `main` reserved for releasable states.
 5. This file is updated after **every** task, never batched at the end of a phase.
@@ -30,13 +64,13 @@ Rules (from spec §52, §53, §54, §57):
 
 | Item | Value |
 |---|---|
-| Dev OS | Windows 10/11, VS Code, PowerShell |
-| Target OS | Ubuntu Server 26.x, headless, Ethernet, optional NVIDIA GPU |
+| Dev OS | Windows 10/11, VS Code, PowerShell — **build and test only, never run ULTRON here (§61)** |
+| Target OS | Ubuntu Server 26.x, headless, Ethernet — the actual runtime host |
 | Python | 3.12+ (installed via winget) |
 | Package manager | `uv` |
-| Local infra | Docker Desktop → `postgres`, `redis`, `ultron-api` only (8 GB budget) |
-| Local models | **none** — cloud providers used for real calls; Ollama adapter unit-tested |
-| Prod models | Ollama on the Ubuntu host |
+| Local infra | PostgreSQL 17 as a native Windows service — **tests and migrations only**; no Docker, no Redis |
+| Local models | **none** — online providers used for real calls (§59.7); no Ollama, Whisper, Piper, embeddings or vector store on this machine |
+| Runtime models | Online providers on the server; Ollama remains an optional offline fallback |
 | Repo name | `Ultron-server` (existing remote) |
 | Package root | `server/app` |
 
@@ -108,7 +142,7 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T018** `app/observability/health.py` — health checks: PostgreSQL, Redis, Ollama, filesystem, agent runtime, event bus
 - [x] **T019** `app/container.py` — hand-rolled DI composition root
 - [x] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
-- [ ] **T021** `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub
+- [x] **T021** `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub. Written: `app/security/{passwords,tokens,audit,authentication}.py`, `app/api/dependencies.py`, `app/api/routes/auth.py`, correlation-ID + access-log middleware in `app/main.py`, and unit tests for each. Route-level tests over `TestClient` are in place (35 tests) and the full gate passes. Also verified against a live PostgreSQL 17 instance with `ENABLE_PGVECTOR=false`: login, token authentication, refresh rotation and replay refusal all behave, and the audit trail carries `auth.login` / `auth.token_refresh` / `auth.token_reuse_detected`. See delivery notes below.
 - [ ] **T022** `app/api/routes/health.py` — `/health`, `/ready`, `/metrics`
 - [ ] **T023** `app/api/websocket/manager.py` + `/ws` — connection manager, topic subscription, heartbeat
 - [ ] **T024** `server/tests/` Phase 1 suite — config, logging, session, health, API smoke, WS connect
@@ -772,7 +806,7 @@ Appended after each phase, per spec §51/§58.
 | `scripts/lint` | Ruff clean over `app`, `tests` and `migrations` (including the new `S`/bandit rules); mypy clean over `app`, 78 files |
 | `scripts/test` | 807 passed, integration and e2e deselected |
 | `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift; now covers `LockUnavailableError` |
-| Next | T021 `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub |
+| Next | T021 `app/api/dependencies.py` — container access, correlation IDs, auth dependency. **In progress and uncommitted**: security primitives, the authenticator, the `/auth` routes and the correlation middleware are written and unit-tested; route-level tests, the gate and the commit remain. |
 | Still blocked | T025/T026/T027 need Docker Desktop: no PostgreSQL, no Redis, no real migration yet. The phase gate cannot be claimed. |
 
 #### T017 delivery notes
@@ -993,3 +1027,195 @@ the spec — it is a list of schemas, settings and error types with no caller.
 Two settings are also unused scaffolding and are worth wiring before Phase 1 is
 called done: `security.require_auth` (defaults to `True`, so the fail-closed
 intent is already there) and `startup_warnings()`'s output (now called).
+
+---
+
+## Capability extensions (spec §59, added after T020)
+
+Spec §59 is additive: it extends sections 1-58 rather than replacing them, and
+§59.1 maps every requested capability to the section it extends so nothing is
+built twice. Tasks are numbered T220+ to avoid colliding with the original
+sequence.
+
+**These are not next.** The build continues through Phase 1 (T022+) in order;
+this block records the work so it is not rediscovered later. Nothing here may be
+started before its dependency in §59.28.
+
+### Phase 3 additions — model system (§59.7-§59.9)
+
+- [ ] **T220** Model capability registry (§59.8) — per-model record: id, provider, context length, tool/reasoning/coding/vision support, resource class, discovered availability, `free`/`paid`. Dependency: T060. Blocks T221, T223.
+- [ ] **T221** `app/models/openrouter.py` (§59.7) — OpenRouter adapter, **free models only**. Refuses a non-free configured model at settings load with `ConfigError`; optional key; 429 mapped to `ModelRateLimited`, not an outage. Dependency: T220.
+- [ ] **T222** Model capability probe — refresh `availability` from the provider so a delisted free model degrades instead of failing. Dependency: T221.
+- [ ] **T223** Fallback chain + failure taxonomy (§59.9) — per-capability chain, bounded retries with exponential backoff, failures classified into the existing typed errors, **context overflow is not retried**, each hop recorded in `model_usage` (T067). Dependency: T221.
+- [ ] **T224** Degradation is visible — a fallback to Ollama is surfaced to the user and to observability, never a silent weaker answer. Dependency: T223.
+
+### Phase 5 additions — tool runtime (§59.3-§59.6)
+
+- [ ] **T230** Git tools as structured tools (§59.3) — one tool per operation, three tiers: SAFE (status/diff/log/branch/show), CONTROLLED (create/switch branch, commit, pull, stash), EXPLICIT AUTHORIZATION (push, force-push, `reset --hard`, `clean -fd`, `branch -D`, rebase, `filter-branch`). Level declared on the tool so §16 enforces it; **no shell fallback**. Dependency: T036.
+- [ ] **T231** Filesystem layer (§59.4) — real-path resolution (symlinks followed, `..` collapsed) **before** the `WorkspaceSettings.allowed_paths()` test; read/write/list/stat/search/move/copy/delete; delete and out-of-workspace write at least CONTROLLED. Dependency: T036.
+- [ ] **T232** Server management tools (§59.5) — cpu/ram/disk/temperature/processes/services/logs/ports/network/uptime/docker status; one structured tool per operation; every tool time-bounded; restart/stop at EXPLICIT AUTHORIZATION; `deploy` acts on an approved definition only. Dependency: T036.
+- [ ] **T233** Tool registry completeness (§59.6) — assert every registered tool declares name, description, `input_schema`, `permission_level`, `execute`, `verify`, timeout, logging, error mapping, audit flag; categories `filesystem git terminal process network server docker browser search database http notifications voice audio display automation`. Dependency: T035.
+- [ ] **T234** Audit an agent cannot bypass — a test proving a direct tool import (bypassing the Tool Router) fails the permission check. Dependency: T036.
+
+### Agent additions (§59.10-§59.12, §59.22)
+
+- [ ] **T240** Research citations (§59.10) — per-source extraction before synthesis; every claim bound to a collected source; unsupported claims omitted or marked; **model output is never a source**. Dependency: T036.
+- [ ] **T241** Decision-support agent (§59.11) — options / criteria / documented facts / tradeoffs / unknowns / missing constraints; presents rather than silently decides; recommendations labelled with reasoning and uncertainty; asks for missing constraints instead of assuming. Dependency: T047 (routing). Needs no tools, so it can be built early.
+- [ ] **T242** Health-information agent (§59.12) — informational only. **Boundaries enforced in the agent/tool layer, not by prompt**: no self-presentation as a doctor, no diagnosis with certainty, no dangerous treatment instructions, no autonomous high-stakes decisions. Informational framing only; routes to professional care; **not related to `HealthService`**. Dependency: T033.
+- [ ] **T243** Scoped context policy (§59.23) — context assembly is an explicit, auditable, testable step; narrowest-satisfying scope by default; cross-project memory reads are a boundary violation; voice session state cannot leak across sessions. Dependency: T046, T107.
+
+### Voice additions (§59.16-§59.20)
+
+- [ ] **T250** Local STT on the stated hardware (§59.17) — smallest viable `faster-whisper`, **no GPU assumption**, chunked/streaming where practical, partial vs final results, VAD and silence detection. Dependency: Phase 9 STT.
+- [ ] **T251** **Utterance-boundary rule** (§59.17) — a pause must not cause the preceding audio to be retransmitted as a new utterance; explicit boundaries + overlap policy, deduplicated, testable in isolation. Fixture: a mid-sentence pause yields one utterance with no duplicated text. Dependency: T250. **Design this before the STT adapter, not after.**
+- [ ] **T252** Local TTS interface + Piper (§59.18) — engine behind an interface, Piper default, priority order latency > RAM > CPU > naturalness > offline > chunked; sentence-level synthesis; voice configurable. Dependency: Phase 9 TTS.
+- [ ] **T253** Barge-in and cancellation (§59.19) — stop TTS immediately on user speech, cancel the in-flight response, discard queued synthesis; **a cancelled synthesis must actually stop filling its buffer**; interrupted partial turn marked, not silently dropped. Dependency: T250, T252.
+- [ ] **T254** LiveKit self-hosted transport (§59.16) — room/session orchestration for mic in and audio out; budgeted in the §48 RAM plan; **a room token is not a ULTRON credential** and a voice session still resolves to an authenticated principal before any agent runs. Dependency: T253.
+- [ ] **T255** Offline voice path (§59.20) — local STT + Ollama + Piper with no transport at all; capabilities the local model lacks are reported unavailable rather than answered more weakly. Dependency: T254.
+
+### Desktop additions (§59.13-§59.15)
+
+- [ ] **T260** Orb visual states (§59.13) — IDLE / LISTENING / THINKING / SPEAKING / PROCESSING / ERROR / NOTIFICATION, driven by server events over §28, **never predicted client-side**; ERROR and NOTIFICATION distinct from IDLE; gestures per §59.13; quick action configurable. Dependency: T028.
+- [ ] **T261** Desktop client shell (§59.14) — orb + voice + notifications + local tools; renders state and forwards intent only; **no agent logic and no model access on the client**, so §15 stays server-authoritative. Dependency: T260.
+- [ ] **T262** Windows tool bridge (§59.15) — launch app, active window, keyboard/mouse, screenshot, clipboard, browser automation, process management. **Outbound client connection only** (no inbound LAN listener, consistent with §31); every capability separately enable-able; per-request authorisation; **no unrestricted control exposed to any agent**. Dependency: T261, T033. **Highest blast radius — last.**
+
+### Cross-cutting
+
+- [ ] **T270** Observability additions (§59.24) — `authorization_level` (evaluated and granted; denials record the level refused at) and `token_usage` where reported, **absent rather than estimated**; correlatable with §15 audit rows and the request correlation id; never log §30 tokens. Dependency: T032.
+- [ ] **T271** Load-shedding order (§59.25) — unload local model -> drop LiveKit -> stop background agents/schedules -> reduce agent fan-out -> report degradation; observable; **correctness is never shedding material**, so pressure must never reduce a permission evaluation. Dependency: T031, T044.
+
+### Not yet decomposed
+
+- [ ] **T290** Extension test matrix (§59.26 phase G) — agent routing, tool permissions, Git safety, filesystem sandbox escape, server management safety, model fallback, OpenRouter free-model routing, Ollama fallback, STT accuracy, TTS latency, LiveKit latency, voice interruption, desktop/server communication, RAM usage.
+- [ ] **T291** Update §56 Definition of Done with the extension items, with honest notes for anything unverified.
+
+### Extension decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| D011 | OpenRouter is integrated free-models-only, and a non-free configured model is a startup `ConfigError` | The design must not depend on paid inference. Failing at startup is the only outcome that gets noticed, and free-tier 429s are handled as a routing condition (§59.9) rather than an outage |
+| D012 | Extension sections append to `server_arc.md` as §59 and map to the existing sections | Avoids a second source of truth. §59.1 records, per capability, whether it is new or an extension, so a reader can tell real work from restatement |
+| D013 | Extension tasks are T220+, appended as a separate block rather than renumbered into Phases 3/5/9 | The existing IDs are referenced from `tasks.md`, the Decision log and the phase status log. Renumbering would break those references for no benefit |
+| D014 | Extensions are recorded but **not scheduled ahead of Phase 1** | §53 and §57 require finishing the current phase in order. T025-T027 are still blocked on Docker, but skipping ahead would abandon the phase gate rather than work around it |
+| D015 | Utterance-boundary STT requirement is specified in §59.17, not left to the adapter | It is a named defect in the current voice behaviour ("every pause retranscribes the previous sentence as a new utterance"). A requirement stated at implementation time reads as a nicety; stated now it is testable |
+| D016 | Health-information boundaries are enforced in the agent/tool layer, not by prompt | A prompt is a preference that a capable model can be talked out of. A refusal at the layer holds regardless of what was asked, which is the only acceptable standard for this category |
+
+#### T021 delivery notes (in progress — not yet committed)
+
+Authentication is the last untouched piece of §30, and the gap table above says
+the *design* was already in place with no caller. This closes four of those rows.
+
+**Delivered so far**
+
+| File | Contents |
+|---|---|
+| `app/security/passwords.py` | Argon2id only; verify, `needs_rehash`, dummy-verify equaliser |
+| `app/security/tokens.py` | Opaque 256-bit tokens, SHA-256 digests, bearer extraction, prefixes |
+| `app/security/audit.py` | `AuditLogger` with `allowed`/`denied`/`confirm_required` |
+| `app/security/authentication.py` | login, token auth, refresh+rotation, logout, API keys, device auth, superuser guard |
+| `app/api/dependencies.py` | container access, per-request session, authenticator, `require_principal`, `require_superuser`, correlation id |
+| `app/api/routes/auth.py` | `POST /auth/login`, `/refresh`, `/logout`, `GET /auth/me`, `POST /auth/password` |
+| `app/main.py` | `RequestContextMiddleware` — correlation id + one access log line per request |
+
+**Decisions worth recording**
+
+- **Opaque tokens, not JWT.** The schema already models sessions with
+  `token_hash`, `refresh_token_hash`, a rotation chain and revocation, which is a
+  revocable-session design. A JWT would have to be reconciled against those
+  rows to be revocable at all, at which point it has bought nothing. `PyJWT`
+  stays unused. Tokens are 256 bits of `secrets` output; digests are SHA-256 so
+  the indexed `token_hash` lookup works.
+- **SHA-256 for tokens and API keys, Argon2id only for passwords.** An API key is
+  256 bits of random, so there is no dictionary to search and a slow KDF would
+  only add latency while making the indexed `api_key_hash` unusable. Argon2 is
+  reserved for the one credential that is low-entropy and human-chosen.
+- **One transaction per request.** `get_db_session` opens a `session_scope` for
+  the whole request and the repositories and audit logger are built from that one
+  session. Repositories never commit (§15/T013), so a login that creates a
+  session row and an audit row lands together or not at all — and a route cannot
+  commit while its audit entry rolls back.
+- **`get_container` returns a `Protocol`, not `object`.** `object` plus
+  `type: ignore` on every attribute access was hiding the wiring. The protocol is
+  structurally checked against the real `Container` at type-check time, so
+  changing the container shape now fails `mypy` instead of failing on the first
+  request that touches the changed member.
+- **The container is accessed via a protocol, not imported**, so the dependency
+  module has no import-time dependency on the wiring graph and tests can supply
+  a stub.
+- **A refusal that must change state uses its own transaction.** Denials end in a
+  raise, and the raise rolls the request transaction back. Audit rows therefore
+  go through `DurableAuditSink`, and reuse-detection's family revocation through
+  `DurableFamilyRevoker`. The rule is not "audit durably" but "anything whose
+  loss would leave a security decision unenforced writes durably" — an audit row
+  that vanishes is a blind spot, but a revoked session that comes back is a
+  compromise.
+
+**Defects the tests caught in this task's own code**
+
+These are recorded because each was a real bug, not a test artefact, and each is
+the kind that unit tests written alongside the code tend to assume away.
+
+| Defect | Why it mattered |
+|---|---|
+| `AuditLogger` caught only `DatabaseError` | Its contract says it never raises unless `strict`. A failure inside the append itself escaped and turned an audit write into an outage. Caught by a test using a non-`DatabaseError` failure |
+| `dummy_verify` cached one hash globally | Verified against whatever Argon2 parameters were configured *now*, so raising the cost at runtime reopened the timing gap it exists to close. Now keyed by the parameter tuple |
+| Refresh reuse detection was unreachable, and had a false positive | The revoked check was folded into `is_refreshable`, so a replayed token looked like an ordinary dead token — the exact case that must not be silent. The replacement test on `rotated_from` was worse: it is set on the *new* session, so it would have flagged the **second legitimate refresh** as reuse and revoked the family. Reuse now rests on the structural fact that `SessionRepository.get_by_refresh_token_hash`'s docstring already specifies: a consumed token resolves to an already-revoked session |
+| `session.revoke()` ignored the injected clock | Three call sites omitted `now=`, so revocation timestamps came from `datetime.now()` while everything else used the injected clock. A clock that is honoured everywhere except one path is worse than none, because tests cannot observe it |
+| `PermissionDeniedError(msg, details=...)` raised `TypeError` | The class builds its own `details`, so passing another one is a duplicate keyword. Found by the superuser-guard tests |
+| **Reuse detection revoked the session family in the transaction it then rolled back** | The one path where a *refusal* must still change durable state. It wrote the denial, revoked the family, then raised `AuthError` — and `session_scope` rolls back that raise, so the revocation was discarded while the audit row survived. Net effect: an alert with no effect, and the attacker kept a usable rotated-out session. Fixed with a `DurableFamilyRevoker` that revokes on its own connection (`RevokeFamily` protocol), the same treatment the audit denial already had |
+| **Test isolation did not cover import-time settings reads** | `memories.embedding`'s column type is chosen while the model module is *imported*, i.e. during collection, which happens before any `autouse` fixture runs. The developer's real `.env` therefore decided the schema while every test body observed default settings. Green on a machine with no `.env`, wrong on a machine with one. `ULTRON_ENV_FILE` is now installed at conftest *import* time, which is early enough for collection |
+
+**Closed on T021**
+
+- Route-level tests (`/auth/*` over `TestClient`, correlation-id echo and
+  sanitisation, anonymous-mode switch): **35 tests, passing.**
+- The full gate: **ruff clean, mypy clean (84 source files), 912 tests passing.**
+- Verified against a **live PostgreSQL 17** instance with
+  `ENABLE_PGVECTOR=false` (17 tables migrated, `memories.embedding` is `jsonb`):
+  login, token authentication, refresh rotation and replay refusal all behave,
+  and the audit trail carries `auth.login` / `auth.token_refresh` /
+  `auth.token_reuse_detected`. This is a scratch schema for tests and migrations;
+  ULTRON is never run on this machine (§61).
+- Committed and pushed.
+
+**Still open on T021**
+
+- `/metrics` is still unmounted (T022) and `security.require_auth` is still not
+  consulted by `require_principal`, which currently branches on
+  `allow_anonymous` alone.
+- Logout's docstring claims a malformed `Authorization` header is ignored, but
+  only a *missing* header is; a non-empty malformed value still raises from
+  `tokens.extract_bearer`. Low severity, but the doc and the behaviour should
+  agree.
+
+---
+
+## Managed identity and offline continuity (spec §60, added after T021)
+
+Raised after T021 to get ULTRON off self-hosted credentials and to keep the
+product useful when the server is off. Recorded as specified in `server_arc.md`
+§60, including the part that was **rejected** -- a Firestore copy of the whole
+database -- so the reasoning survives and the idea is not re-proposed later.
+Nothing here is Phase 1 work and no dependency or package follows from it.
+
+T300+ are numbered here to avoid colliding with the original plan and T220+.
+
+### Managed identity (spec §60.2) - FUTURE
+
+- [ ] **T300** Verify Firebase Auth pricing and quota against the free-only constraint (§59.7) - confirm the free tier is sufficient for the intended scale and identify the exact pay-as-you-go boundary. **Gates T301**: adopting an identity provider whose cost is unknown is adopting a bill.
+- [ ] **T301** `app/auth/providers/firebase.py` - verify a Firebase ID token against Google's cached JWKS: signature, `iss`, `aud`, `exp`, and clock skew. **Exchange only**: the ID token proves identity, it never becomes a ULTRON session, because an RS256 token cannot be revoked before it expires. Dependency: T300.
+- [ ] **T302** `POST /auth/firebase/exchange` - on a verified ID token, resolve the local `users` row and mint ULTRON's own opaque access + refresh pair through the existing §30 path. Reuses `Authenticator`; adds no new session type. Dependency: T301.
+- [ ] **T303** Account linking rules - one human arriving by password and by Google resolves to one `users` row. Specify `uid` uniqueness, whether an unverified email may link, and what happens to the local password hash on merge. **Must be written before T302 ships**; a guessed merge rule is how an account takeover gets in.
+- [ ] **T304** Firebase identity events are audited like any other - `auth.login` with the upstream UID recorded as the subject; login, refresh, logout and denial all produce their §31 rows. Dependency: T302.
+- [ ] **T305** Identity-provider outage behaviour - a JWKS refresh failure, an unreachable provider, and a stale cache are each given defined behaviour. A login path that fails when Google is down is a new availability dependency in the one place the product cannot afford one. Dependency: T301.
+
+### Offline continuity (spec §60.4) - FUTURE
+
+- [ ] **T306** Client-owned local cache - recent conversations, messages and project metadata in SQLite or IndexedDB on the client. **A cache, not a mirror**: overwritten rather than merged, so there is nothing to reconcile. Lives on the client, so it costs nothing on the 4 GB server and works when the server is down.
+- [ ] **T307** Bounded one-way outbox - client-to-server only, so there is no merge problem. Queue bounded by count and age, entries expire rather than grow, and every entry carries a client-generated idempotency key so a replay after an ambiguous failure cannot double-apply. **Optional**: skipped entirely if cross-device hand-off of queued work is not wanted, at no cost to the offline goal.
+- [ ] **T308** Offline is read-mostly and honest - cached data shows its age; a queued command is visibly pending, never optimistically reported as done (§59.25). Operations needing server authority - permissions, models, devices, anything destructive - queue or refuse offline rather than pretending to have succeeded.
+- [ ] **T309** Firestore security rules, reviewed as carefully as §31 - owner-scoped, deny-by-default, with the rule set treated as the authorisation layer for everything a client can write. A permissive rule set leaks the dataset regardless of what the server enforces. Dependency: T307.
+
+### Rejected - retained so it is not re-proposed
+
+- [x] **SKIP - Firestore as a full copy of the PostgreSQL database** (§60.3). Rejected because a mirror of the authoritative store is a permanent second source of truth with no specified reconciliation, and its failure modes are worse than having no mirror: a **revoked** session or consumed refresh token stays usable in the copy until it catches up, so the audit log shows the denial while the credential keeps working; `tasks`/`task_steps` replayed from a stale copy can double-execute; conflict resolution on `memories`/`messages` is undefined; client-writable data makes security rules the real authorisation layer; and it doubles write cost at the exact tier that needs the free tier. PostgreSQL stays the single source of truth (§23).
