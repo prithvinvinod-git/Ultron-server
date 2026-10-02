@@ -1,0 +1,18 @@
+{
+  // Recommended extensions for ULTRON development.
+  //
+  // Deliberately minimal: the toolchain is Python + mypy + ruff + pytest.
+  // Docker, Jupyter, and language-server extensions for languages this repo
+  // does not use are left out on purpose (spec §59, §61).
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "charliermarsh.ruff",
+    "ms-python.mypy-type-checker"
+  ],
+  "unwantedRecommendations": [
+    "ms-azuretools.vscode-docker",
+    "ms-python.black-formatter",
+    "esbenp.prettier-vscode"
+  ]
+}

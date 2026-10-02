@@ -1,0 +1,108 @@
+{
+  // ULTRON editor settings (shared, committed).
+  //
+  // Contains no secrets. Machine-specific paths stay in the local
+  // .vscode/settings.local.json, which is git-ignored.
+  //
+  // NOTE: this repository is a BUILD-AND-TEST machine (spec §61). ULTRON is
+  // never started here; do not add a launch.json that runs the API server.
+
+  // ---------------------------------------------------------------------------
+  // Type checking (Pylance / Pyright)
+  // ---------------------------------------------------------------------------
+  // The project enforces typing with mypy, not Pylance:
+  //   [tool.mypy] disallow_untyped_defs = true
+  //   warn_unused_ignores / warn_return_any / warn_redundant_casts = true
+  // and `mypy app` is the gate in CI, so mypy is the source of truth for types.
+  //
+  // "basic" gives real inference feedback in the editor without duplicating the
+  // mypy gate using a different engine. Set this to "strict" locally if you
+  // want Pyright to be strict as well - it will surface extra findings that mypy
+  // does not, mostly around third-party stubs.
+  "python.analysis.typeCheckingMode": "basic",
+
+  // Only report problems in files that are actually open. Workspace-wide
+  // diagnostics on a project this size are slow and mostly noise while editing.
+  "python.analysis.diagnosticMode": "openFilesOnly",
+
+  // ---------------------------------------------------------------------------
+  // Environment file
+  // ---------------------------------------------------------------------------
+  // Without this, a terminal started in VS Code does not see .env, so Alembic
+  // and the test suite cannot find DATABASE_URL. Defaults to
+  // ${workspaceFolder}/.env, which is where the repo keeps it (and which is
+  // git-ignored - never commit it).
+  "python.terminal.useEnvFile": true,
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": ["${workspaceFolder}/server"],
+
+  // Explicit ${workspaceFolder} + forward slashes. A bare relative path such as
+  // "server\.venv\Scripts\python.exe" fails to resolve: the backslashes are
+  // parsed as escapes and the path is resolved against the extension host's
+  // working directory rather than the workspace. This form resolves regardless
+  // of which folder VS Code happens to be opened from.
+  "python.defaultInterpreterPath": "${workspaceFolder}/server/.venv/Scripts/python.exe",
+
+  // ---------------------------------------------------------------------------
+  // Tests
+  // ---------------------------------------------------------------------------
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["server/tests"],
+
+  // ---------------------------------------------------------------------------
+  // Encoding and line endings
+  // ---------------------------------------------------------------------------
+  // server_arc.md and tasks.md are UTF-8 and contain arrows, em dashes and
+  // section marks. Windows defaults can mangle these or reintroduce a BOM, which
+  // has already caused churn on main.py, so pin the encoding explicitly.
+  "files.encoding": "utf8",
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  // ---------------------------------------------------------------------------
+  // Exclusions
+  // ---------------------------------------------------------------------------
+  // Keeps search and file watching responsive; none of this is source.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true,
+    "**/*.pyc": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/node_modules": true,
+    "**/.git": true,
+    "**/data": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/.git/**": true,
+    "**/data/**": true
+  },
+
+  // ---------------------------------------------------------------------------
+  // Ruff
+  // ---------------------------------------------------------------------------
+  // The project lints with `ruff check` / `ruff format` (server/pyproject.toml);
+  // the Ruff extension runs the same checks in the editor.
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "editor.rulers": [100],
+  "editor.renderWhitespace": "boundary",
+
+  // Markdown is documentation, not prose to reflow.
+  "[markdown]": {
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": { "other": false, "comments": false, "strings": false }
+  }
+}
