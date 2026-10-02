@@ -232,6 +232,42 @@ the response. Otherwise the docstring's claim regresses silently again.
 
 ---
 
+### C9. Add a settings-override test helper — a real footgun found in T022
+
+`Settings.security` and `Settings.observability` are **computed properties**
+assembled from flat fields. So `settings.model_copy(update={"security": ...})` is
+**silently discarded** — no error, no warning, the test just quietly asserts
+nothing and passes.
+
+This already cost time in T022. It will bite again, because every future test
+that needs a non-default setting is exposed to it. Add one helper in
+`tests/conftest.py` that overrides flat fields and asserts the override actually
+took effect, so a bad override fails loudly instead of passing vacuously.
+
+### C10. `/metrics` is unauthenticated — restrict it at the network layer
+
+All three probe routes take no token on purpose: an orchestrator cannot present
+one, and a probe that needs credentials is a probe that gets disabled. But that
+makes them **publicly readable**, and `/metrics` describes the deployment —
+dependency names, latency, version, warning count.
+
+`METRICS_ENABLED` defaults to false, which is the right first line, but enabled
+it must be reachable only from the monitoring network or behind the reverse
+proxy (T318/T319). Do not expose `/metrics` on the public interface. Note this
+when the reverse proxy is configured, or it will be forgotten.
+
+### C11. The Vercel client needs a server URL — and no secrets in its build
+
+The PWA has to be told where the ULTRON server is, and that URL must come from
+a **public** build-time variable (Vercel env var, `NEXT_PUBLIC_*`). Keep it
+strictly separate from the server's secrets: the client authenticates with the
+user's own opaque session token and holds no privileged credential (§63.5).
+
+Related trap: anything prefixed `NEXT_PUBLIC_` is **inlined into the JavaScript
+bundle** and is readable by anyone who opens devtools. The server URL is fine.
+A JWT secret, admin password, or a device token is not.
+
+---
 ## F. Deferred by policy — preserved, not deleted
 
 Recorded so they are not mistaken for oversights. Full rationale in
@@ -254,3 +290,49 @@ Recorded so they are not mistaken for oversights. Full rationale in
 | Firebase Auth as upstream IdP | `FUTURE`, gated on pricing (T300–T305) |
 | Firestore copy of the database | **`SKIP`** — rejected, see §60.3 |
 | Client-side offline cache + outbox | `FUTURE` (T306–T309) |
+
+## G. Decisions needed from the author before T023
+
+T023 (`/ws` — connection manager, topic subscription, heartbeat) has two forks I
+should not pick alone. Both change the client code as well as the server, so
+deciding after the client exists is more expensive than deciding now.
+
+### G1. Does the client need to *send* on the event stream, or only receive?
+
+This decides WS vs SSE, which is close to irreversible once the client exists.
+
+- **Receive-only → SSE.** Server-Sent Events reconnect on their own, survive
+  proxies, need no pinning or heartbeat bookkeeping, and every HTTP library
+  speaks them. Far less to get wrong. §27's orb and agent-window events are all
+  server→client, so SSE is genuinely plausible.
+- **Bidirectional → WebSocket.** Needed only if the client must *send* something
+  on that channel: acknowledging an event, cancelling work, streaming audio
+  frames, or live voice. Spec §27/§28 and T152 (ESP32 wake word) suggest at
+  least some of those exist eventually.
+
+Note the device transport (T162) is already WebSocket and is a separate channel
+between ESP32 and server — that is unaffected either way.
+
+### G2. How does a browser authenticate the WebSocket (or SSE) connection?
+
+A browser cannot set an `Authorization` header on a WebSocket handshake, so the
+opaque token has to travel some other way. Each option leaks differently:
+
+- **`?token=` in the query string** — simplest, and the token ends up in proxy
+  and access logs. Given §21 tokens are the only credential, that is a real
+  exposure and I lean against it.
+- **`Sec-WebSocket-Protocol` subprotocol** — the conventional trick. Not logged
+  by default, but the header is small and some proxies mangle it.
+- **First-message auth** — connect, then send the token as the first frame.
+  Cleanest for secrets, costs a small handshake step and a timeout for
+  unauthenticated sockets.
+
+My recommendation is **first-message auth** (or subprotocol if SSE makes the
+question moot), because ULTRON's tokens are long-lived opaque credentials and
+query-string logging is the one option that puts them in files.
+
+### G3. T023 now, or T024 (close out the Phase 1 suite) first?
+
+T024 finishes the Phase 1 test suite. Doing it first means the phase ends with
+its verification complete rather than trailing into the next phase; T023 is a
+bigger surface and benefits from being in a suite that is already complete.
