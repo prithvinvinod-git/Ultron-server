@@ -4254,12 +4254,20 @@ loading.
 **Load-shedding order.** When memory is short, shed in this order, and say so:
 
 ```text
-1. unload the local model                (biggest single win, §59.8)
-2. drop LiveKit                          (voice goes offline-first, §59.20)
-3. stop background agents and schedules  (§44)
-4. reduce concurrent agent fan-out       (§7, §41)
+1. unload the local model, if one is loaded   (§59.8; usually a no-op, since
+                                             inference is online by default)
+2. drop voice sessions                       (voice goes offline-first, §59.20)
+3. stop background agents and schedules       (§44)
+4. reduce concurrent agent fan-out            (§7, §41)
 5. report degraded capability to the user
 ```
+
+On the 4 GB server the dominant cost is almost never the model - there is not one
+by default. It is Python process size, database connection pools, browser
+sessions, and concurrent agent fan-out, so steps 3 and 4 are where the memory
+actually comes back. Step 1 is retained because self-hosted LiveKit (T254) and a
+local fallback model (T061) are still supported, but it must not be mistaken for
+the expected path.
 
 Shedding must be observable (§59.24) and must never silently reduce the quality
 of a security check or skip a permission evaluation. **Correctness is never
