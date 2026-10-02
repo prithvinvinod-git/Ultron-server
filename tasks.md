@@ -107,7 +107,7 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T017** `app/database/redis_client.py` — Redis wrapper (cache, locks, pubsub, transient state only)
 - [x] **T018** `app/observability/health.py` — health checks: PostgreSQL, Redis, Ollama, filesystem, agent runtime, event bus
 - [x] **T019** `app/container.py` — hand-rolled DI composition root
-- [ ] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
+- [x] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
 - [ ] **T021** `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub
 - [ ] **T022** `app/api/routes/health.py` — `/health`, `/ready`, `/metrics`
 - [ ] **T023** `app/api/websocket/manager.py` + `/ws` — connection manager, topic subscription, heartbeat
@@ -768,8 +768,8 @@ Appended after each phase, per spec §51/§58.
 | Item | Result |
 |---|---|
 | Branch | `feature/phase-1-foundation` (from `develop` @ `d6fcb94`) |
-| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper, T018 health checks, T019 DI composition root — 18 of 18 |
-| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations`; mypy clean over `app` and `tests`, 87 files |
+| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper, T018 health checks, T019 DI composition root, T020 FastAPI factory — 19 of 18 |
+| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations`; mypy clean over `app` and `tests`, 88 files |
 | `scripts/test` | 767 passed, integration and e2e deselected |
 | `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift; now covers `LockUnavailableError` |
 | Next | T020 FastAPI factory + lifespan | 
@@ -907,3 +907,24 @@ The container registers the four health checks that are available today (Postgre
 The container provides async context managers for session scopes: `session_scope` for transactional writes and `read_session_scope` for read-only operations that always roll back.
 
 The container also includes startup and shutdown lifespan methods that ping the database and Redis, and dispose of resources.
+
+
+#### T020 delivery notes
+
+The application factory creates a FastAPI instance with:
+- The dependency injection container wired into the lifespan events (startup pings DB+Redis, shutdown disposes resources)
+- Comprehensive exception handling for all Ultron error types, mapping them to appropriate HTTP status codes:
+  * 400 Bad Request: InvalidInputError, ValidationError, SerializationError, SsrfBlockedError
+  * 401 Unauthorized: AuthError, InvalidCredentialsError
+  * 403 Forbidden: PermissionDeniedError
+  * 404 Not Found: NotFoundError, TaskNotFoundError, AgentNotFoundError, etc.
+  * 409 Conflict: ConflictError, LockUnavailableError
+  * 429 Too Many Requests: RateLimitedError
+  * 501 Not Implemented: CapabilityNotImplementedError
+  * 503 Service Unavailable: DependencyUnavailableError, OperationTimeoutError, HealthCheckFailedError, LocalModelUnavailableError, ProviderNotConfiguredError, ShuttingDownError
+  * 500 Internal Server Error: All other errors (default)
+- Middleware: CORS (allowing all origins in development) and TrustedHost (allowing all hosts in development)
+- Health endpoints: `/health` (liveness) and `/ready` (readiness placeholder - to be wired by T021)
+- Router mounting framework ready for T022–T024 (auth, connection manager, WS routes) and T036–T039 (agents, tasks, memories, conversations)
+
+The application is importable without external services: `from app.main import create_app` works on a bare checkout, enabling testing and Docker/CI usage without running PostgreSQL or Redis.
