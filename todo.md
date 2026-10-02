@@ -4,7 +4,15 @@ Every known unfinished thing, in the order it should be dealt with. Nothing here
 is lost in `tasks.md` or `server_arc.md`; this file is the short list of what is
 *not done* and what only the author can do.
 
-Last updated after T021 (committed `0cadd45`, pushed `ca1335f`).
+Last updated after T021 (committed `0cadd45`, pushed `a5e7914`).
+
+## Platform, in one line
+
+The **server runs on Ubuntu Server OS** and nowhere else. The **application is
+installed and operated from Windows** (primary desktop client) and is **also
+used on mobile** (Android + iOS). Neither client needs WSL, Docker, Python, or a
+repository clone — that is §62, and it is why §61 ("never run ULTRON on this
+laptop") is about the *server* only, not a contradiction.
 
 ---
 
@@ -150,6 +158,20 @@ Not installed. Nothing in Phase 1 needs it (event bridge off, no queues), and
 the unit suite uses fakes. It should stay that way until a task genuinely
 requires it. **Do not install it speculatively.**
 
+### C6. Client framework is undecided — and it gates the client, not the server
+
+Windows (primary) + mobile from one codebase is the target (spec §62). The
+framework is still an open decision (**T310**): Tauri, Flutter, or React Native
+for one codebase, versus native per platform.
+
+This is cheap to decide now and expensive to decide late, because it determines
+the installer story (T311), the mobile story (T312), and whether the client fits
+in memory alongside the server on a 4 GB VM. **No server work is blocked on it**
+— it gates T261 and the client tasks, nothing in the API.
+
+Pick it before starting T261. If unsure, the constraint that matters most is
+*one codebase for Windows + Android + iOS*, which rules native out.
+
 ---
 
 ## D. Documentation debt
@@ -198,7 +220,9 @@ Recorded so they are not mistaken for oversights. Full rationale in
 | Local Ollama runtime | `FUTURE` — adapter kept as offline fallback (T061) |
 | Docker anywhere | `DEFERRED` — systemd is the deployment path (T194) |
 | Kubernetes, heavy observability | `FUTURE` |
-| Desktop client / Orb | `FUTURE`, after the API (T240+) |
+| Desktop client / Orb | `FUTURE`, after the API (T240+). **Windows is the primary desktop platform** (§62.3) |
+| Mobile client (Android + iOS) | `FUTURE`, a first-class target not an afterthought (§62.4, T312) |
+| Client framework choice | **OPEN** — blocks T261, not the API (§62.6, T310) |
 | Windows bridge | `FUTURE`, **last** — highest blast radius (§59.15) |
 | Firebase Auth as upstream IdP | `FUTURE`, gated on pricing (T300–T305) |
 | Firestore copy of the database | **`SKIP`** — rejected, see §60.3 |

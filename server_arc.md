@@ -4615,3 +4615,86 @@ The run-and-health-check steps of §53 apply **on the server**, not here. Local
 verification is `format → lint → typecheck → unit tests → integration tests →
 build`. This is a deviation from the literal §53 wording and is recorded in the
 Decision Log for that reason.
+
+---
+
+## 62. RUNTIME PLATFORM MATRIX - WHERE ULTRON RUNS
+
+### 62.1 Two halves, and why they are not the same thing
+
+ULTRON is a **server** plus **clients**. They run on different operating
+systems. Keeping them apart matters, because parts of this document reason about
+a Windows laptop and could easily be misread as Windows-first.
+
+| Component | Runs on | Never runs on |
+|---|---|---|
+| ULTRON server (API, workers, scheduler, database) | **Ubuntu Server OS** (Ubuntu Server 26.x, §37) | Windows, macOS, mobile |
+| ULTRON desktop client | **Windows** - the primary desktop platform | - |
+| ULTRON mobile client | Android and iOS | - |
+| ULTRON Orb | Windows, inside the desktop client | - |
+
+### 62.2 The server host is Ubuntu Server OS
+
+The server host is **Ubuntu Server OS**. Ubuntu Server 26.x is the only
+supported server platform (§37). This is restated explicitly because §61 and
+§59.25 both reason about the author's Windows machine, and a reader could
+reasonably conclude the repository is Windows-first. It is not. Windows appears
+in this project as a *development* host (§36) and as a *client* platform
+(§62.3); it is not a server platform.
+
+Nothing in the server is Windows-specific. No registry access, no Win32 APIs, no
+Windows path assumptions, no Windows service wrappers. The `.ps1` scripts in §36
+are a developer convenience on a platform that will never host the server.
+
+### 62.3 The application is installed and operated from Windows
+
+The installed application - the ULTRON client - **is installed on Windows and is
+operated from Windows**. Windows is the primary desktop platform for the
+product, and the ordinary case a user sees.
+
+### 62.4 The application is also used on mobile
+
+Mobile is a first-class client target, not a later afterthought. A mobile
+install talks to the same Ubuntu server over the same API and consumes the same
+event stream as the desktop client (§27, §43). Anything mobile cannot support is
+**reported unavailable** (§33), never silently hidden, so a capability gap stays
+honest rather than becoming a bug report.
+
+### 62.5 The client requires no Windows-specific operations
+
+Operating ULTRON on Windows must not require Windows-specific *server*
+operations. Installing and using the client must not require any of:
+
+```text
+WSL or WSL2
+Docker Desktop, or any container runtime
+a Python toolchain, virtualenv, or pip
+a Rust or Node toolchain, or a compiler
+cloning the repository
+administrator or elevated privileges
+a local PostgreSQL, Redis, or model runtime
+```
+
+The client is installed as an ordinary application and talks to the Ubuntu server
+over the network. The repository, Python toolchain, Alembic migrations, and test
+suite are **developer** concerns on a developer machine. They are never part of
+what a user installs.
+
+> **This resolves the apparent conflict with §61.** "The app runs on Windows"
+> and "ULTRON is never run on the author's Windows laptop" are **both correct**,
+> because they are statements about different components. The author's Windows
+> machine develops the server and is not a server host (§61). That same machine
+> will run the Windows client, once the client exists.
+
+### 62.6 Open decision: the client technology
+
+§62.3-62.5 constrain client **behaviour**, not implementation. The framework is
+not yet chosen, and the choice is not cosmetic: one codebase covering Windows,
+iOS, and Android argues for a cross-platform framework (Tauri, Flutter, React
+Native), whereas native-per-platform clients would triple the maintenance
+surface for a solo author - and §59.25 makes a heavy client toolchain a memory
+problem too.
+
+Tracked as **T310**. Until it is chosen, §43, §59.14, §27 and T261 stand as
+behavioural requirements that any client must satisfy. No server work is blocked
+on this decision; it gates the client, not the API.

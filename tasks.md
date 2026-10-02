@@ -1230,3 +1230,16 @@ T300+ are numbered here to avoid colliding with the original plan and T220+.
 ### Rejected - retained so it is not re-proposed
 
 - [x] **SKIP - Firestore as a full copy of the PostgreSQL database** (§60.3). Rejected because a mirror of the authoritative store is a permanent second source of truth with no specified reconciliation, and its failure modes are worse than having no mirror: a **revoked** session or consumed refresh token stays usable in the copy until it catches up, so the audit log shows the denial while the credential keeps working; `tasks`/`task_steps` replayed from a stale copy can double-execute; conflict resolution on `memories`/`messages` is undefined; client-writable data makes security rules the real authorisation layer; and it doubles write cost at the exact tier that needs the free tier. PostgreSQL stays the single source of truth (§23).
+
+### Runtime platform matrix (spec §62) - recorded, client work mostly FUTURE
+
+The platform split is now explicit: **the server runs on Ubuntu Server OS only;
+the application is installed and operated from Windows as the primary desktop
+client, and is also used on mobile.** Neither client requires Windows-specific
+server operations - no WSL, no Docker, no Python, no clone (§62.5).
+
+- [ ] **T310** Choose the client technology - Windows + iOS + Android from one codebase (Tauri, Flutter, React Native) versus native per platform. **Blocks T261**, costs nothing on the server side. Record the choice and its memory footprint against the 4 GB VM (§59.25)
+- [ ] **T311** Windows installer and first-run experience - ordinary application install, no admin rights, no WSL, no Docker, no Python, no repository clone (§62.5). Verify on a clean Windows machine, not a machine that already has the dev toolchain
+- [ ] **T312** Mobile client target - same API and same event stream as desktop (§27, §43); anything unsupported is reported unavailable per §33, never hidden
+- [ ] **T313** Pin the deployment target to Ubuntu Server OS in the deployment docs (§37) and publish the platform matrix (server / desktop / mobile) so it is not re-derived from this file
+- [ ] **T314** Client-to-server connectivity over a network - TLS, token refresh from the client, reconnect after sleep/network loss, and a clear "server unreachable" state rather than a spinner (§60.4 offline continuity assumes this exists)
