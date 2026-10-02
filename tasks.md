@@ -146,9 +146,9 @@ phases that need them, and permanently in production on Ubuntu.
 - [ ] **T022** `app/api/routes/health.py` — `/health`, `/ready`, `/metrics`
 - [ ] **T023** `app/api/websocket/manager.py` + `/ws` — connection manager, topic subscription, heartbeat
 - [ ] **T024** `server/tests/` Phase 1 suite — config, logging, session, health, API smoke, WS connect
-- [ ] **T025** `deployment/docker/Dockerfile.dev` + root `docker-compose.yml` dev stack (`postgres`, `redis`, `ultron-api`)
-- [ ] **T026** Migrate real PostgreSQL + create schema via Alembic
-- [ ] **T027** **PHASE 1 verification** — server starts, PostgreSQL connects, Redis connects, `/health` works, WebSocket works
+- [ ] **T025** `deployment/docker/Dockerfile.dev` + root `docker-compose.yml` dev stack (`postgres`, `redis`, `ultron-api`) - `DEFERRED` - not a Phase 1 blocker. No Docker on the dev machine (spec 61); native PostgreSQL 17 serves tests and migrations instead.
+- [ ] **T026** Migrate real PostgreSQL + create schema via Alembic - `DONE` on the dev machine - Alembic applied to native PostgreSQL 17 with `ENABLE_PGVECTOR=false`, 17 tables + `alembic_version`, `memories.embedding` is `jsonb`. Re-run on the server.
+- [ ] **T027** **PHASE 1 verification** — server starts, PostgreSQL connects, Redis connects, `/health` works, WebSocket works - `REVISED` - 'server starts' and 'WebSocket works' cannot be checked here (spec 61 forbids running ULTRON on this machine); they move to the server. Remaining local half: `/health` and `/ready` over `TestClient`, in T022.
 
 **Phase 1 gate (spec §51):** server starts successfully
 
@@ -539,7 +539,7 @@ no account of *why*, and this is the revision every later one is compared agains
 ## Phase 3 — Model system
 
 - [ ] **T060** `app/models/base.py` — `ModelProvider` ABC, message/response/tool-call types, streaming contract, capability model
-- [ ] **T061** `app/models/ollama.py` — configurable host, discovery, health, chat, NDJSON streaming, availability check, timeout, error mapping
+- [ ] **T061** `app/models/ollama.py` — configurable host, discovery, health, chat, NDJSON streaming, availability check, timeout, error mapping - `FUTURE` - adapter still wanted as an offline fallback, but **no local model runtime is installed or assumed** (spec 59). Not a Phase 1 dependency.
 - [ ] **T062** `app/models/openai.py` — optional adapter, lazy key check, unavailable when unconfigured
 - [ ] **T063** `app/models/gemini.py` — optional adapter
 - [ ] **T064** `app/models/anthropic.py` — optional adapter
@@ -548,7 +548,7 @@ no account of *why*, and this is the revision every later one is compared agains
 - [ ] **T067** Model usage recording → `model_usage` table
 - [ ] **T068** Wire model-driven tool-calling loop into the agent base
 - [ ] **T069** Phase 3 tests — adapter contract tests via `respx`, router selection matrix, streaming, `LOCAL_MODEL_UNAVAILABLE` path
-- [ ] **T070** **PHASE 3 verification** — system functions with only Ollama configured
+- [ ] **T070** **PHASE 3 verification** — system functions with only Ollama configured - `REVISED` - verification no longer requires a local model. It must pass with an online provider configured and `OLLAMA_URL` unreachable, proving spec 33 degradation.
 
 **Phase 3 gate:** works with only Ollama configured; no crash when unavailable
 
@@ -607,10 +607,10 @@ no account of *why*, and this is the revision every later one is compared agains
 - [ ] **T121** `short_term.py` — conversation/context memory, Redis TTL + PG
 - [ ] **T122** `long_term.py` — persistent user/project facts
 - [ ] **T123** `episodic.py` — what ULTRON did previously
-- [ ] **T124** `semantic.py` — embeddings + vector retrieval (pgvector)
+- [ ] **T124** `semantic.py` — embeddings + vector retrieval (pgvector) - `SKIP - PHASE 1` - pgvector is excluded by policy and absent from the stock Windows PostgreSQL build. Spec section 22 retained; semantic retrieval is Phase 7.
 - [ ] **T125** `project.py` — project-scoped memory
 - [ ] **T126** `manager.py` — facade, cross-layer retrieval
-- [ ] **T127** Embedding provider abstraction (Ollama embeddings, cloud, honest unavailable path)
+- [ ] **T127** Embedding provider abstraction (Ollama embeddings, cloud, honest unavailable path) - `REVISED` - keep the honest-unavailable path, drop the assumption that a local embedding provider exists. `EMBEDDING_PROVIDER=none` is valid and must degrade, not fail.
 - [ ] **T128** Wire memory into Core (context read/write, episode record on task completion)
 - [ ] **T129** Phase 7 tests — namespace isolation, retrieval ranking, persistence
 - [ ] **T130** **PHASE 7 verification**
@@ -637,8 +637,8 @@ no account of *why*, and this is the revision every later one is compared agains
 
 ## Phase 9 — Voice
 
-- [ ] **T150** `app/voice/stt/` — `STTEngine` ABC + faster-whisper adapter + availability probe
-- [ ] **T151** `app/voice/tts/` — `TTSEngine` ABC + Piper adapter + availability probe
+- [ ] **T150** `app/voice/stt/` — `STTEngine` ABC + faster-whisper adapter + availability probe - `DEFERRED` - voice phase. Cloud STT provider first; a local faster-whisper adapter is optional and never assumed (spec 59.17).
+- [ ] **T151** `app/voice/tts/` — `TTSEngine` ABC + Piper adapter + availability probe - `DEFERRED` - voice phase. Cloud TTS provider first; a local Piper adapter is optional and never assumed (spec 59.18).
 - [ ] **T152** `app/voice/wake/` — wake-word event handling from ESP32 → `WAKE_DETECTED`
 - [ ] **T153** `app/voice/manager.py` — voice sessions, STT→Core→Agent→TTS pipeline
 - [ ] **T154** Streaming/partial transcripts + interruption (barge-in) handling
@@ -693,11 +693,11 @@ no account of *why*, and this is the revision every later one is compared agains
 
 ## Phase 13 — Production deployment
 
-- [ ] **T190** `deployment/docker/Dockerfile` — multi-stage, non-root user, no dev deps
-- [ ] **T191** Root `docker-compose.yml` — `ultron-api`, `postgres`, `redis`, `ollama`; optional `prometheus`, `grafana`; explicit `depends_on` + healthchecks
-- [ ] **T192** `deployment/systemd/ultron-api.service`, `ultron-worker.service`
-- [ ] **T193** Ubuntu deployment docs — clone → prerequisites → `.env` → `docker compose up -d` → migrations → health check
-- [ ] **T194** Non-Docker / systemd deployment path
+- [ ] **T190** `deployment/docker/Dockerfile` — multi-stage, non-root user, no dev deps - `DEFERRED` - no Docker. The server path is non-Docker systemd (T194); keep this as a documented alternative.
+- [ ] **T191** Root `docker-compose.yml` — `ultron-api`, `postgres`, `redis`, `ollama`; optional `prometheus`, `grafana`; explicit `depends_on` + healthchecks - `DEFERRED` - no Docker Compose. Notably it also assumed `ollama` on the host, which the online-first policy excludes.
+- [ ] **T192** `deployment/systemd/ultron-api.service`, `ultron-worker.service` - `FUTURE` - the actual deployment path for the author's server. Needed before ULTRON runs anywhere.
+- [ ] **T193** Ubuntu deployment docs — clone → prerequisites → `.env` → `docker compose up -d` → migrations → health check - `REVISED` - the documented path is non-Docker systemd, not `docker compose up`. Written for the server, not this machine.
+- [ ] **T194** Non-Docker / systemd deployment path - `FUTURE` - **this is the deployment path**, superseding T190/T191/T193.
 - [ ] **T195** `deployment/scripts/` — backup, restore, migrate, health check
 - [ ] **T196** Security hardening — no public PostgreSQL/Redis/Ollama, non-root, secret handling
 - [ ] **T197** `/opt/ultron` server directory layout (spec §47) with persistent volumes
@@ -1070,8 +1070,8 @@ started before its dependency in §59.28.
 - [ ] **T251** **Utterance-boundary rule** (§59.17) — a pause must not cause the preceding audio to be retransmitted as a new utterance; explicit boundaries + overlap policy, deduplicated, testable in isolation. Fixture: a mid-sentence pause yields one utterance with no duplicated text. Dependency: T250. **Design this before the STT adapter, not after.**
 - [ ] **T252** Local TTS interface + Piper (§59.18) — engine behind an interface, Piper default, priority order latency > RAM > CPU > naturalness > offline > chunked; sentence-level synthesis; voice configurable. Dependency: Phase 9 TTS.
 - [ ] **T253** Barge-in and cancellation (§59.19) — stop TTS immediately on user speech, cancel the in-flight response, discard queued synthesis; **a cancelled synthesis must actually stop filling its buffer**; interrupted partial turn marked, not silently dropped. Dependency: T250, T252.
-- [ ] **T254** LiveKit self-hosted transport (§59.16) — room/session orchestration for mic in and audio out; budgeted in the §48 RAM plan; **a room token is not a ULTRON credential** and a voice session still resolves to an authenticated principal before any agent runs. Dependency: T253.
-- [ ] **T255** Offline voice path (§59.20) — local STT + Ollama + Piper with no transport at all; capabilities the local model lacks are reported unavailable rather than answered more weakly. Dependency: T254.
+- [ ] **T254** LiveKit self-hosted transport (§59.16) — room/session orchestration for mic in and audio out; budgeted in the §48 RAM plan; **a room token is not a ULTRON credential** and a voice session still resolves to an authenticated principal before any agent runs. Dependency: T253. - `REVISED` - cloud LiveKit is the default (spec 59.16). Self-hosting stays supported and stays deferred; no LiveKit server runs on the 4 GB VM or the 8 GB laptop.
+- [ ] **T255** Offline voice path (§59.20) — local STT + Ollama + Piper with no transport at all; capabilities the local model lacks are reported unavailable rather than answered more weakly. Dependency: T254. - `FUTURE` - fully offline voice remains supported but is explicitly out of scope until hardware allows it.
 
 ### Desktop additions (§59.13-§59.15)
 
@@ -1180,9 +1180,20 @@ the kind that unit tests written alongside the code tend to assume away.
 
 **Still open on T021**
 
-- `/metrics` is still unmounted (T022) and `security.require_auth` is still not
-  consulted by `require_principal`, which currently branches on
-  `allow_anonymous` alone.
+- ~~`security.require_auth` is not consulted by `require_principal`~~ —
+  **withdrawn, it was wrong.** There is no `security.require_auth`. The only
+  `require_auth` in settings is `devices.esp32_require_auth`
+  (`ESP32_REQUIRE_AUTH`, `settings.py:459`), a device-transport setting that has
+  nothing to do with HTTP auth. `require_principal` branches on
+  `security.allow_anonymous` (default `False`), which is the correct and only
+  guard, so there was no bypass to close. Adding a `security.require_auth` now
+  would be inventing a second switch for a decision one flag already makes.
+- The genuine related gap, tracked under T022: `ALLOW_ANONYMOUS` only produces a
+  `startup_warnings` entry, and `.env.example` says it "must be false in
+  production" without anything enforcing it. The settings docstring states the
+  intent - warnings rather than boot failures, *"so that a misconfigured
+  deployment is still observable through `/health`"* - but `/health` does not
+  report warnings yet, so that promise is currently unkept.
 - Logout's docstring claims a malformed `Authorization` header is ignored, but
   only a *missing* header is; a non-empty malformed value still raises from
   `tokens.extract_bearer`. Low severity, but the doc and the behaviour should

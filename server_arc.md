@@ -3922,34 +3922,40 @@ Rules, and they are the reason this is separate from §59.14:
 - Each capability is separately enable-able, so a deployment can offer
   notifications without offering keystrokes.
 
-## 59.16 VOICE — LIVESKIT TRANSPORT
+## 59.16 VOICE - LIVEKIT TRANSPORT
 
-Extends §25. **New: LiveKit as the real-time transport.**
+Extends §25. **LiveKit as the real-time transport, cloud-hosted.**
 
-LiveKit is **self-hosted**. It is the transport and orchestration layer for voice
-sessions, not a cloud dependency and not the STT or TTS engine.
+LiveKit is **cloud-hosted** (LiveKit Cloud). It is the transport and
+orchestration layer for voice sessions, not the STT or TTS engine. ULTRON also
+**supports** self-hosting LiveKit - the client speaks the LiveKit protocol, so a
+self-hosted deployment is a configuration change rather than a rewrite - but
+self-hosting is **deferred**: the development laptop is 8 GB and the server VM
+is 4 GB, and a self-hosted media server is the wrong thing to run on either.
+No LocalStack, no self-hosted LiveKit server, no bundled media service.
+
+> **Corrected after the first draft of §59.** This section originally read
+> "LiveKit is **self-hosted**", which contradicted both the stated hardware and
+> the online-first policy. Self-hosting is still supported and still has tasks
+> (T254); cloud hosting is the default.
 
 ```text
 Microphone
    |
-LiveKit            self-hosted transport, room/session orchestration
+LiveKit            cloud-hosted transport, room/session orchestration
    |
 Voice Agent
    |
-STT                local, §59.17
+STT                online provider, §59.17
    |
 LLM / Agent        §20, §59.8
    |
-TTS                local, §59.18
+TTS                online provider, §59.18
    |
 LiveKit
    |
 Speaker
 ```
-
-Required: real-time microphone input, interruption/barge-in (§59.19), streaming
-STT, streaming responses where the provider allows it, streaming TTS, low
-latency, and support for multiple voice agents over the same deployment.
 
 Constraints on this choice:
 
@@ -4215,10 +4221,27 @@ Rules carried over from §32:
   request correlation id, so one user action can be followed from the HTTP
   request through the tool call to the model call and back.
 
-## 59.25 RESOURCE MANAGEMENT — 8 GB RAM
+## 59.25 RESOURCE MANAGEMENT - 8 GB LAPTOP, 4 GB SERVER
 
-Reaffirms and extends §48. The development and server target is an **8 GB RAM
-Intel i5-1235U**. This is a design constraint, not a deployment detail.
+Reaffirms and extends §48. **The two machines are not the same size, and the
+difference changes the design.**
+
+| Machine | RAM | Role |
+|---|---|---|
+| Windows development laptop (Intel i5-1235U, Iris Xe, 512 GB SSD) | **8 GB** | Build and test only. ULTRON is **never run here** (§61). |
+| Ubuntu server VM | **4 GB** | The actual runtime host. |
+
+This is a design constraint, not a deployment detail. Note that §61 makes the
+laptop a non-runtime, so its 8 GB is a *budget for tests and tooling*, never a
+target to design towards - the number that constrains the architecture is 4 GB.
+
+Do not assume: a dedicated GPU, large local models, several large models at
+once, Kubernetes-style infrastructure, many containers, a huge database, or many
+background services.
+
+Do prefer: lightweight services, asynchronous workers, model unloading, **online
+inference rather than local inference**, CPU-friendly work, caching, queues,
+lazy loading.
 
 Do not assume: a dedicated GPU, large local models, several large models at
 once, Kubernetes-style infrastructure, many containers, a huge database, or many
