@@ -8,6 +8,7 @@ proves, and a green suite on one machine says nothing about another.
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -21,25 +22,44 @@ _SETTINGS_ENV_VARS = sorted(
     {str(field.alias or name).upper() for name, field in Settings.model_fields.items()}
 )
 
+# Isolation is installed at *import* time, not only in a fixture, and that
+# ordering matters.
+#
+# `app.database.models.memories` chooses the type of `memories.embedding` while
+# the module is being imported, by asking `get_settings()`. Test modules are
+# collected -- and therefore imported -- before any test-scoped fixture runs, so
+# an `autouse` fixture that clears the environment is already too late: the
+# column type would be decided by the developer's real `.env` while every test
+# body then observed default settings. The two disagreed, and the suite's result
+# depended on whether the developer happened to have a `.env`.
+#
+# A conftest module is imported before collection, so setting the variable here
+# covers both the import-time reads and the tests themselves. The empty file is
+# created eagerly rather than in `tmp_path_factory` because collection may need
+# it before any fixture exists.
+_ISOLATED_ENV_FILE = Path(tempfile.gettempdir()) / "ultron-tests-isolated.env"
+_ISOLATED_ENV_FILE.write_text("", encoding="utf-8")
+_PREVIOUS_ENV_FILE = os.environ.get("ULTRON_ENV_FILE")
+os.environ["ULTRON_ENV_FILE"] = str(_ISOLATED_ENV_FILE)
+
 
 @pytest.fixture(autouse=True, scope="session")
-def isolated_env_file(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
-    """Point ``$ULTRON_ENV_FILE`` at an empty file for the whole run.
+def isolated_env_file() -> Iterator[None]:
+    """Keep ``$ULTRON_ENV_FILE`` pointing at an empty file for the whole run.
 
     An explicit file takes precedence over the default ``.env`` lookup, so the
-    repository's own ``.env`` is never read by a test.
+    repository's own ``.env`` is never read during collection or by a test. The
+    variable is already set at import time (see above); this fixture exists to
+    restore whatever the developer had afterwards.
     """
-    env_file = tmp_path_factory.mktemp("ultron-env") / ".env"
-    env_file.write_text("", encoding="utf-8")
-    previous = os.environ.get("ULTRON_ENV_FILE")
-    os.environ["ULTRON_ENV_FILE"] = str(env_file)
+    os.environ["ULTRON_ENV_FILE"] = str(_ISOLATED_ENV_FILE)
     try:
         yield
     finally:
-        if previous is None:
+        if _PREVIOUS_ENV_FILE is None:
             os.environ.pop("ULTRON_ENV_FILE", None)
         else:
-            os.environ["ULTRON_ENV_FILE"] = previous
+            os.environ["ULTRON_ENV_FILE"] = _PREVIOUS_ENV_FILE
 
 
 @pytest.fixture(autouse=True)
