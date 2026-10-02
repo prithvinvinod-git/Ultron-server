@@ -1238,8 +1238,27 @@ the application is installed and operated from Windows as the primary desktop
 client, and is also used on mobile.** Neither client requires Windows-specific
 server operations - no WSL, no Docker, no Python, no clone (§62.5).
 
-- [ ] **T310** Choose the client technology - Windows + iOS + Android from one codebase (Tauri, Flutter, React Native) versus native per platform. **Blocks T261**, costs nothing on the server side. Record the choice and its memory footprint against the 4 GB VM (§59.25)
 - [ ] **T311** Windows installer and first-run experience - ordinary application install, no admin rights, no WSL, no Docker, no Python, no repository clone (§62.5). Verify on a clean Windows machine, not a machine that already has the dev toolchain
 - [ ] **T312** Mobile client target - same API and same event stream as desktop (§27, §43); anything unsupported is reported unavailable per §33, never hidden
 - [ ] **T313** Pin the deployment target to Ubuntu Server OS in the deployment docs (§37) and publish the platform matrix (server / desktop / mobile) so it is not re-derived from this file
 - [ ] **T314** Client-to-server connectivity over a network - TLS, token refresh from the client, reconnect after sleep/network loss, and a clear "server unreachable" state rather than a spinner (§60.4 offline continuity assumes this exists)
+
+### Client architecture (spec §63) - DECIDED: Next.js PWA on Vercel
+
+Mobile client and ESP32 control panel are **one Next.js PWA**, deployed to
+**Vercel** from GitHub. Installable, OS-independent, no app store. A native
+React app is **deferred**, not rejected - an additional client if the PWA ever
+genuinely cannot do something.
+
+The PWA takes its API calls **and its live event stream directly from the Ubuntu
+server**, not through Vercel. Vercel hosts the app shell only (§63.5).
+
+- [x] **T310** ~~Choose the client technology~~ - **DECIDED** (§63.1): Next.js PWA on Vercel. Superseded by T315-T320 below
+- [ ] **T315** `clients/web/` - Next.js PWA scaffold: installable manifest, service worker, HTTPS, app-shell caching. No ULTRON secrets in the client build. Vercel project wired to the GitHub repo so a merge deploys
+- [ ] **T316** Capability matrix on the client - server-driven, not hardcoded. Report the §63.3 revocations (Playwright, app launch, active window, keyboard/mouse, arbitrary screenshots, filesystem, shell, Web Serial/USB) as unavailable **with a reason**, greying out the UI. Never silently hide, never fail confusingly (§33, §15)
+- [ ] **T317** Separate ESP32 control-panel mode - own route/section in the same PWA. Read state, send commands, view telemetry, configure settings. **No firmware flashing.** Reaches the device through the server's existing JSON-over-WebSocket transport (T162); the device dials out, so no inbound ports and no LAN discovery are needed
+- [ ] **T318** HTTPS on the ULTRON server - a real domain and certificate behind a reverse proxy. **Blocking for every mobile client**: a browser refuses to let an HTTPS page call an `http://` server, so without this the PWA cannot talk to the server at all (§63.5)
+- [ ] **T319** CORS policy on the API - allow the production client origin, allow `Authorization` and `Content-Type`, deny everything else, and decide credentials deliberately. Do not open the API to arbitrary origins
+- [ ] **T320** Client reconnect and resync - the stream comes from the Ubuntu server over `/ws` (T023), so the client must reconnect with backoff, re-subscribe, and re-fetch state after any disconnect. Never treat a dropped socket as an idle system
+- [ ] **T321** ESP32 Wi-Fi provisioning as a **separate local flow**, explicitly out of the PWA's scope - an unprovisioned device cannot be reached from Vercel, and an HTTPS page cannot join a device SoftAP. Provision over the device access point or USB, then the control panel works (§63.4)
+- [ ] **T322** PWA offline behaviour per §60.4 - local cache for recent conversations, bounded one-way outbox, cached data shown with its age, queued commands visibly pending and never reported as completed

@@ -8,10 +8,11 @@ Last updated after T021 (committed `0cadd45`, pushed `a5e7914`).
 
 ## Platform, in one line
 
-The **server runs on Ubuntu Server OS** and nowhere else. The **application is
-installed and operated from Windows** (primary desktop client) and is **also
-used on mobile** (Android + iOS). Neither client needs WSL, Docker, Python, or a
-repository clone — that is §62, and it is why §61 ("never run ULTRON on this
+The **server runs on Ubuntu Server OS** and nowhere else. The **mobile and ESP32
+client is a Next.js PWA on Vercel**. A separate **Windows desktop client** is
+the primary desktop platform, and it is the only surface that can ever host the
+computer-control bridge. Neither client needs WSL, Docker, Python, or a
+repository clone — that is §62–§63, and it is why §61 ("never run ULTRON on this
 laptop") is about the *server* only, not a contradiction.
 
 ---
@@ -158,19 +159,47 @@ Not installed. Nothing in Phase 1 needs it (event bridge off, no queues), and
 the unit suite uses fakes. It should stay that way until a task genuinely
 requires it. **Do not install it speculatively.**
 
-### C6. Client framework is undecided — and it gates the client, not the server
+### C6. Client architecture: decided — Next.js PWA on Vercel
 
-Windows (primary) + mobile from one codebase is the target (spec §62). The
-framework is still an open decision (**T310**): Tauri, Flutter, or React Native
-for one codebase, versus native per platform.
+Recorded as §63 and T315–T322. Mobile and the ESP32 control panel are **one
+Next.js PWA**, deployed to Vercel from GitHub. A native React app is deferred,
+not rejected — only if the PWA genuinely cannot do something.
 
-This is cheap to decide now and expensive to decide late, because it determines
-the installer story (T311), the mobile story (T312), and whether the client fits
-in memory alongside the server on a 4 GB VM. **No server work is blocked on it**
-— it gates T261 and the client tasks, nothing in the API.
+Four things follow from Vercel hosting, and each one has server work behind it:
 
-Pick it before starting T261. If unsure, the constraint that matters most is
-*one codebase for Windows + Android + iOS*, which rules native out.
+1. **The Ubuntu server must be HTTPS.** Blocking for all mobile clients — a
+   browser refuses to let an HTTPS page call an `http://` server, so without TLS
+   the PWA cannot talk to the server at all. Needs a domain + cert + reverse
+   proxy (**T318**). Do this before any client work, or the client work is wasted.
+2. **CORS on the API** for the Vercel origin, tightly scoped (**T319**).
+3. **Do not route the live event stream through Vercel.** Vercel's WebSocket
+   support is public beta, closes at the function's duration limit (300s on
+   Hobby), and pins to one instance with no shared memory — bad for a 33-event
+   stream, and it would drag Redis back in just to fan out. The PWA talks
+   straight to the Ubuntu server instead (§63.5).
+4. **Client reconnect + resync** is mandatory, not optional polish (**T320**).
+
+### C7. What mobile cannot do — revoked, not faked
+
+The PWA cannot do Playwright, app launch, active-window detection, keyboard or
+mouse control, arbitrary screenshots, filesystem traversal, shell execution, or
+Web Serial/USB (§63.3). These are **reported unavailable with a reason**, never
+hidden. The Windows computer-control bridge stays **desktop-only and last**.
+
+This means the Windows desktop client is not redundant with mobile — they are
+genuinely different surfaces. The desktop client is the only place the
+computer-control bridge can ever live.
+
+### C8. ESP32 control panel: control only, no flashing
+
+The PWA has a dedicated ESP32 mode that reads state, sends commands, and shows
+telemetry — but **does not flash firmware**; Web Serial is desktop-only anyway.
+The device dials *out* to the server over the existing JSON-over-WebSocket
+transport (T162), so no inbound ports and no LAN discovery are needed.
+
+**Wi-Fi provisioning is a separate local flow**, deliberately outside the PWA: an
+unprovisioned device cannot be reached from Vercel, and an HTTPS page cannot
+join a device's SoftAP. Provision once over the device AP or USB (**T321**).
 
 ---
 
@@ -221,8 +250,9 @@ Recorded so they are not mistaken for oversights. Full rationale in
 | Docker anywhere | `DEFERRED` — systemd is the deployment path (T194) |
 | Kubernetes, heavy observability | `FUTURE` |
 | Desktop client / Orb | `FUTURE`, after the API (T240+). **Windows is the primary desktop platform** (§62.3) |
-| Mobile client (Android + iOS) | `FUTURE`, a first-class target not an afterthought (§62.4, T312) |
-| Client framework choice | **OPEN** — blocks T261, not the API (§62.6, T310) |
+| Mobile + ESP32 control panel | **DECIDED** — one Next.js PWA on Vercel (§63, T315–T322) |
+| Native React app | `DEFERRED` — only if the PWA cannot deliver something (§63.2) |
+| Computer-control bridge | `DESKTOP ONLY`, and still **last** (§63.3, §59.15) |
 | Windows bridge | `FUTURE`, **last** — highest blast radius (§59.15) |
 | Firebase Auth as upstream IdP | `FUTURE`, gated on pricing (T300–T305) |
 | Firestore copy of the database | **`SKIP`** — rejected, see §60.3 |

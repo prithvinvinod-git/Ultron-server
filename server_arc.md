@@ -4686,15 +4686,132 @@ what a user installs.
 > machine develops the server and is not a server host (§61). That same machine
 > will run the Windows client, once the client exists.
 
-### 62.6 Open decision: the client technology
+### 62.6 Client technology: decided — see §63
 
-§62.3-62.5 constrain client **behaviour**, not implementation. The framework is
-not yet chosen, and the choice is not cosmetic: one codebase covering Windows,
-iOS, and Android argues for a cross-platform framework (Tauri, Flutter, React
-Native), whereas native-per-platform clients would triple the maintenance
-surface for a solo author - and §59.25 makes a heavy client toolchain a memory
-problem too.
+The framework **is chosen**: a **Next.js PWA**, deployed to **Vercel** from the
+GitHub repository, serving both the mobile client and the ESP32 control panel
+(§63). §63 also records why a native React app is deferred, and the four
+platform constraints that follow from hosting on Vercel.
 
-Tracked as **T310**. Until it is chosen, §43, §59.14, §27 and T261 stand as
-behavioural requirements that any client must satisfy. No server work is blocked
-on this decision; it gates the client, not the API.
+§43, §59.14, §27 and T261 remain the behavioural requirements any client must
+satisfy.
+
+---
+
+## 63. CLIENT ARCHITECTURE - NEXT.JS PWA ON VERCEL
+
+### 63.1 The decision
+
+The mobile client and the ESP32 control panel are **one Next.js PWA**, deployed
+to **Vercel** automatically from the GitHub repository.
+
+| Decision | Choice |
+|---|---|
+| Mobile client form | **PWA** - installable to the home screen, OS-independent (§62.4) |
+| ESP32 interface | **the same PWA, in a separate control-panel mode** (§63.4) |
+| Framework | **Next.js** |
+| Deployment | **Vercel**, connected to GitHub so a merge deploys |
+| Native app | **Deferred.** A native React app only if the PWA proves insufficient |
+
+A PWA was chosen over a native app because it installs to the home screen,
+works from one codebase on Android and iOS, needs no app-store review, and
+ships by pushing to GitHub.
+
+### 63.2 A native React app is deferred, not rejected
+
+If a native React app is ever built, it is an **additional** client, not a
+replacement. The PWA remains the always-working baseline, because a native build
+adds signing, store review, and a per-platform release to a solo author's
+maintenance load (§59.25). Reconsider only if the PWA genuinely cannot deliver a
+capability, and record why.
+
+### 63.3 What "no Windows-specific operations" means on mobile
+
+The client installs as an ordinary application and needs no WSL, Docker, Python,
+compiler, repository clone, or administrator rights (§62.5). Beyond that, mobile
+has real platform limits that **must be revoked rather than faked**. A PWA runs
+in a sandboxed browser origin on someone else's phone, so these do not exist:
+
+| Capability | Windows desktop client | Mobile PWA | Why |
+|---|---|---|---|
+| Playwright / browser automation | yes | **revoked** | No process spawning, no separate browser profile |
+| Launch local applications | yes | **revoked** | Sandbox has no access to installed apps |
+| Active-window detection | yes | **revoked** | No concept of a foreground window |
+| Keyboard and mouse control | yes | **revoked** | No synthetic input outside the page |
+| Arbitrary screenshots | yes | **revoked** | Cannot capture other apps |
+| Local filesystem traversal | yes | **limited** | Sandboxed; OPFS only, no arbitrary paths |
+| Shell / CLI execution | yes | **revoked** | No subprocess access at all |
+| Web Serial / WebUSB | yes | **revoked** | Desktop Chromium only |
+| Local model inference | no (online-first, §59) | **revoked** | No compute budget worth using |
+| Sustained background work | yes | **limited** | OS suspends the tab |
+
+Every one of these must be **reported unavailable**, never silently hidden or
+left to fail confusingly (§33). The client's UI asks the server what it can do
+and greys out the rest with a reason - it does not ship a list and hope. This
+is the same honesty rule as §15 for security checks: never degrade silently.
+
+The Windows-specific computer-control bridge (§59.15) is therefore **desktop
+only**, and stays deferred and last (§59.15) - it cannot be the mobile client's
+answer to anything.
+
+### 63.4 The ESP32 mode is control-panel only
+
+The PWA has a **separate mode dedicated to the ESP32**. That mode is a
+**control panel**: read device state, send commands, see telemetry, configure
+settings.
+
+It is explicitly **not** a programming interface, and it does not flash
+firmware. Web Serial and WebUSB are desktop-only (§63.3), so a browser cannot
+drive a serial programmer anyway. The mode reaches the device the same way
+everything else does: the PWA → ULTRON server → the ESP32's existing
+JSON-over-WebSocket transport (T162). The device connects **out** to the server,
+so no inbound ports, no LAN discovery, and no local network access are required
+from the phone.
+
+**Wi-Fi provisioning is a separate, local flow** and is out of the PWA's scope.
+An ESP32 with no network cannot be reached from Vercel, and a Vercel page cannot
+join a device's SoftAP (mixed content, §63.5). Provision the device once, over
+its own access point or a USB cable, then the control panel works.
+
+### 63.5 Four consequences of hosting the client on Vercel
+
+These are the constraints that follow from the decision, and each one changes
+server work. They were checked against Vercel's current documentation rather
+than assumed.
+
+**1. The ULTRON server must be reachable over HTTPS.** The PWA is served over
+HTTPS from Vercel. A browser will refuse to let an HTTPS page call an `http://`
+server - mixed content, blocked, with no user-facing override. So the Ubuntu
+server **must** sit behind a real certificate and a domain name before any mobile
+client can work. This is not optional polish; without it the client cannot talk
+to the server at all. Tracked as T318.
+
+**2. The API needs an explicit CORS policy** for the Vercel origin. Allow the
+production client origin, allow `Authorization` and `Content-Type`, and use
+credentials deliberately. Everything else stays denied - this is server-to-server
+API surface, not a public one.
+
+**3. The live event stream must not be routed through Vercel.** Vercel supports
+WebSockets, but in **public beta**, with connections that close when the function
+hits its maximum duration (300s on Hobby) and that are **pinned to one
+instance**, meaning instances share no memory. That is a poor fit for ULTRON's
+33-event stream, and routing it through Vercel would drag Redis back in purely
+to fan out between instances.
+
+Instead: the PWA takes its API calls **and its live event stream directly from
+the Ubuntu server** (`/ws`, T023), and uses Vercel only for the app shell. This
+keeps chat content inside the author's own infrastructure instead of routing it
+through a third party, avoids a beta dependency, and avoids inventing a Redis
+requirement the rest of the project has deferred. The client **must** reconnect
+and re-fetch state after any disconnect, regardless (§60.4).
+
+**4. Deployment is a build concern only.** Vercel holds the client; it must never
+hold ULTRON secrets. The client speaks to the author's server with the user's
+own session token and holds no privileged credential.
+
+### 63.6 The PWA must work offline in the degraded way
+
+Installable implies it will be opened on bad networks. Per §60.4 the client owns
+a local cache (SQLite/IndexedDB) for recent conversations and a bounded one-way
+outbox for commands, shows cached data with its age, and marks queued commands
+as pending. It must never present queued work as completed.
