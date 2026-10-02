@@ -251,10 +251,17 @@ one, and a probe that needs credentials is a probe that gets disabled. But that
 makes them **publicly readable**, and `/metrics` describes the deployment —
 dependency names, latency, version, warning count.
 
-`METRICS_ENABLED` defaults to false, which is the right first line, but enabled
-it must be reachable only from the monitoring network or behind the reverse
-proxy (T318/T319). Do not expose `/metrics` on the public interface. Note this
-when the reverse proxy is configured, or it will be forgotten.
+`METRICS_ENABLED` now defaults to false — **but it did not until T024.** It was
+`true` in `Settings`, in `ObservabilitySettings`, and in `.env.example`, while
+this note and the T022 notes both claimed otherwise. The route tests passed the
+flag in explicitly, so the suite was green against an endpoint that shipped open.
+The code has been aligned with the documented intent and
+`test_metrics_default_to_disabled` now asserts the default itself.
+
+Enabling it means restricting it at the network layer: reachable only from the
+monitoring network or behind the reverse proxy (T318/T319). Do not expose
+`/metrics` on the public interface. Note this when the reverse proxy is
+configured, or it will be forgotten.
 
 ### C11. The Vercel client needs a server URL — and no secrets in its build
 
@@ -291,48 +298,46 @@ Recorded so they are not mistaken for oversights. Full rationale in
 | Firestore copy of the database | **`SKIP`** — rejected, see §60.3 |
 | Client-side offline cache + outbox | `FUTURE` (T306–T309) |
 
-## G. Decisions needed from the author before T023
+## G. Decisions from the author — G1/G3 answered, G2 has a contradiction
 
-T023 (`/ws` — connection manager, topic subscription, heartbeat) has two forks I
-should not pick alone. Both change the client code as well as the server, so
-deciding after the client exists is more expensive than deciding now.
+### G1. Receive-only — **ANSWERED: receive-only → SSE**
 
-### G1. Does the client need to *send* on the event stream, or only receive?
+The author chose **receive-only**. T023 is therefore an SSE endpoint, not
+`/ws`. §27's orb and agent-window events are all server→client, which makes this
+workable. Consequence to accept: with no client→server frames on this channel,
+"acknowledge an event", "cancel work", "stream audio" and "live voice" have
+**nowhere to go** on it. They need an explicit HTTP call, or they wait for a
+bidirectional stream later. Do not silently assume they are covered.
 
-This decides WS vs SSE, which is close to irreversible once the client exists.
+The device transport (T162) is already WebSocket and is a separate channel
+between ESP32 and server — unaffected.
 
-- **Receive-only → SSE.** Server-Sent Events reconnect on their own, survive
-  proxies, need no pinning or heartbeat bookkeeping, and every HTTP library
-  speaks them. Far less to get wrong. §27's orb and agent-window events are all
-  server→client, so SSE is genuinely plausible.
-- **Bidirectional → WebSocket.** Needed only if the client must *send* something
-  on that channel: acknowledging an event, cancelling work, streaming audio
-  frames, or live voice. Spec §27/§28 and T152 (ESP32 wake word) suggest at
-  least some of those exist eventually.
+### G2. Stream authentication — **ANSWERED, then CONTRADICTED. Needs one more call.**
 
-Note the device transport (T162) is already WebSocket and is a separate channel
-between ESP32 and server — that is unaffected either way.
+The author chose **first-message auth**. That answer is not implementable
+alongside G1: a receive-only stream has no first message, and `EventSource`
+cannot send an `Authorization` header *or* a body at all.
 
-### G2. How does a browser authenticate the WebSocket (or SSE) connection?
+This is the security question that should not be settled by picking whichever
+option is easiest, so it goes back to the author rather than being quietly
+converted. The options that actually exist for receive-only SSE:
 
-A browser cannot set an `Authorization` header on a WebSocket handshake, so the
-opaque token has to travel some other way. Each option leaks differently:
+- **`fetch()` + `ReadableStream` + `Authorization: Bearer` header.** Keeps the
+  token out of URLs and out of logs, which was the point of choosing first-message
+  auth. Costs writing the SSE frame parser and reconnect logic by hand, because
+  the browser gives you no `EventSource` conveniences on that path. **This is
+  what I recommend** — it preserves the intent of the original answer.
+- **`EventSource` + HttpOnly cookie.** Native `EventSource`, native reconnect,
+  but the cookie must be set by the same origin (so it needs a BFF/proxy on the
+  server, not a bare cross-origin API) and it is CSRF-exposed without care.
+- **`EventSource` + `?token=`.** Rejected. The token lands in proxy and access
+  logs, and §21 makes these the only credential.
 
-- **`?token=` in the query string** — simplest, and the token ends up in proxy
-  and access logs. Given §21 tokens are the only credential, that is a real
-  exposure and I lean against it.
-- **`Sec-WebSocket-Protocol` subprotocol** — the conventional trick. Not logged
-  by default, but the header is small and some proxies mangle it.
-- **First-message auth** — connect, then send the token as the first frame.
-  Cleanest for secrets, costs a small handshake step and a timeout for
-  unauthenticated sockets.
+Note that §21 tokens are long-lived opaque credentials, which is exactly why
+query-string auth was rejected. If the author wants native `EventSource`, that
+should be a deliberate trade for the cookie route, not a drift back to `?token=`.
 
-My recommendation is **first-message auth** (or subprotocol if SSE makes the
-question moot), because ULTRON's tokens are long-lived opaque credentials and
-query-string logging is the one option that puts them in files.
+### G3. **ANSWERED: T024 first**
 
-### G3. T023 now, or T024 (close out the Phase 1 suite) first?
-
-T024 finishes the Phase 1 test suite. Doing it first means the phase ends with
-its verification complete rather than trailing into the next phase; T023 is a
-bigger surface and benefits from being in a suite that is already complete.
+Done — the Phase 1 suite is now closed out at 942 tests, with the event-stream
+connect check deliberately left open for T023 rather than faked.

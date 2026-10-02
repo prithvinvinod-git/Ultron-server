@@ -46,6 +46,7 @@ class ErrorCode(enum.StrEnum):
     INTERNAL = "INTERNAL_ERROR"
     INVALID_INPUT = "INVALID_INPUT"
     NOT_FOUND = "NOT_FOUND"
+    METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
     CONFLICT = "CONFLICT"
     TIMEOUT = "TIMEOUT"
     CANCELLED = "CANCELLED"
@@ -216,6 +217,25 @@ class NotFoundError(PermanentError):
         super().__init__(message, details=details)
         self.resource = resource
         self.identifier = identifier
+
+
+class MethodNotAllowedError(PermanentError):
+    """The path exists but does not answer this method.
+
+    Raised by the framework-level handler so that a wrong verb produces the same
+    ``{"error": {...}}`` envelope as everything else. Retrying the identical
+    request cannot help, which is why this is permanent rather than retryable --
+    unlike the 503s it sits next to, where a client is expected to try again.
+    """
+
+    code = ErrorCode.METHOD_NOT_ALLOWED
+    http_status = 405
+
+    def __init__(self, method: str, path: str) -> None:
+        message = f"method {method} is not allowed on {path}"
+        super().__init__(message, details={"method": method, "path": path})
+        self.method = method
+        self.path = path
 
 
 class ConflictError(PermanentError):

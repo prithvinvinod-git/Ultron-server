@@ -538,7 +538,7 @@ class MemorySettings(BaseModel):
 class ObservabilitySettings(BaseModel):
     """Metrics, monitoring and health settings (spec section 32)."""
 
-    metrics_enabled: bool = True
+    metrics_enabled: bool = False
     metrics_path: str = "/metrics"
     resource_monitor_enabled: bool = True
     resource_monitor_interval: int = Field(default=30, ge=1)
@@ -810,7 +810,7 @@ class Settings(BaseSettings):
     memory_semantic_enabled: Annotated[bool, Field(alias="MEMORY_SEMANTIC_ENABLED")] = True
     memory_default_namespace: Annotated[str, Field(alias="MEMORY_DEFAULT_NAMESPACE")] = "user"
 
-    metrics_enabled: Annotated[bool, Field(alias="METRICS_ENABLED")] = True
+    metrics_enabled: Annotated[bool, Field(alias="METRICS_ENABLED")] = False
     metrics_path: Annotated[str, Field(alias="METRICS_PATH")] = "/metrics"
     resource_monitor_enabled: Annotated[bool, Field(alias="RESOURCE_MONITOR_ENABLED")] = True
     resource_monitor_interval: Annotated[int, Field(alias="RESOURCE_MONITOR_INTERVAL")] = 30

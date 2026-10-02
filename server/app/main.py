@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from starlette.datastructures import Headers
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import AppSettings, get_settings
 from app.container import Container
@@ -214,6 +215,22 @@ def _error_body(exc: UltronError) -> dict[str, Any]:
     return body
 
 
+_HTTP_ERROR_CODES: dict[int, ErrorCode] = {
+    status.HTTP_404_NOT_FOUND: ErrorCode.NOT_FOUND,
+    status.HTTP_405_METHOD_NOT_ALLOWED: ErrorCode.METHOD_NOT_ALLOWED,
+    status.HTTP_401_UNAUTHORIZED: ErrorCode.UNAUTHENTICATED,
+    status.HTTP_403_FORBIDDEN: ErrorCode.PERMISSION_DENIED,
+}
+"""Wire code for each framework-raised HTTP status.
+
+Starlette's router raises ``HTTPException`` directly for the statuses that mean
+"you asked for something that does not exist here", so those never pass through
+an ``UltronError`` constructor. Anything not listed falls back to ``INTERNAL``:
+the statuses left over are ones ULTRON does not emit on its own, and reporting
+them as an internal fault is the safer guess.
+"""
+
+
 def add_exception_handlers(app: FastAPI) -> None:
     """Add exception handlers for all Ultron errors.
 
@@ -226,6 +243,25 @@ def add_exception_handlers(app: FastAPI) -> None:
     async def ultron_error_handler(_: Request, exc: UltronError) -> JSONResponse:
         """Map Ultron errors to HTTP responses using their declared status."""
         return JSONResponse(status_code=exc.http_status, content=_error_body(exc))
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        """Map framework-raised HTTP errors into the ULTRON envelope.
+
+        A 404 from an unmatched path and a 405 from a wrong method are raised by
+        Starlette's router, not by ULTRON code, so they never become an
+        ``UltronError`` and bypass the handler above. They would otherwise answer
+        with FastAPI's bare ``{"detail": "Not Found"}`` while every other failure
+        answers ``{"error": {...}}`` -- two error shapes on one API, which forces
+        every client to special-case the second one. This was found by the T024
+        smoke test, which is the only place both shapes are visible side by side.
+        """
+        code = _HTTP_ERROR_CODES.get(exc.status_code, ErrorCode.INTERNAL)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": code.value, "message": str(exc.detail)}},
+            headers=getattr(exc, "headers", None),
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -379,31 +415,14 @@ def create_app() -> FastAPI:
     _add_request_context(app)
     _add_middleware(app, settings.app)
 
-    # Include routers
+# Include routers
     _include_routers(app)
 
-    # Health check endpoint (liveness probe)
-    @app.get("/health", tags=["monitoring"])
-    async def liveness(request: Request) -> dict[str, Any]:
-        """Liveness probe: is the process alive?"""
-        payload: dict[str, Any] = await request.app.state.container.health.liveness()
-        return payload
-
-    # Readiness probe endpoint
-    @app.get("/ready", tags=["monitoring"])
-    async def readiness(request: Request) -> JSONResponse:
-        """Readiness probe: are the required dependencies usable?
-
-        This delegates to the same :class:`HealthService` the rest of the system
-        uses, so the probe reports what the application can actually do rather
-        than a hardcoded 200. Only a failing *required* check makes the probe
-        fail â€” an unreachable Redis is reported as degraded but still ready,
-        because Redis is transient state and the service is designed to degrade.
-        """
-        report = await request.app.state.container.health.readiness()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK if report.ready else status.HTTP_503_SERVICE_UNAVAILABLE,
-            content=report.to_dict(),
-        )
+    # `/health`, `/ready` and `/metrics` are served by the health router mounted
+    # above. They used to also be defined inline here, after the mount -- which
+    # left the inline copies unreachable (an included router is matched first)
+    # while still appearing to be the real handlers. T024's smoke test found the
+    # duplicate; the router versions are the ones that should survive, because
+    # they are the ones with the health engine behind them.
 
     return app

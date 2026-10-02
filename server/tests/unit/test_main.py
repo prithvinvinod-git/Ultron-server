@@ -405,3 +405,16 @@ class TestSettingsSurfaceSecurityDefaults:
         reload_settings()
         warnings = Settings().startup_warnings()
         assert any("0.0.0.0" in warning for warning in warnings)
+
+    def test_metrics_default_to_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Assert the *default*, not a value forced by a fixture.
+
+        The route tests pass the flag in explicitly, so they stayed green while
+        the shipped default stayed ``True`` -- exposing dependency health and
+        resource levels on an unauthenticated endpoint. T024 found the split
+        between the code and the documented intent.
+        """
+        monkeypatch.delenv("METRICS_ENABLED", raising=False)
+        reload_settings()
+        assert Settings().metrics_enabled is False
+        assert Settings().observability.metrics_enabled is False

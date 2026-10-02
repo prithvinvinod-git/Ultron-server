@@ -136,8 +136,14 @@ def settings_warned() -> Any:
     ``ALLOW_ANONYMOUS`` is the cleanest lever: it produces a warning in every
     environment, so the test does not have to fake a production environment just
     to produce one warning.
+
+    ``metrics_enabled`` is set explicitly because this fixture is used to scrape
+    ``/metrics``. It used to rely on the shipped default being ``True``, which
+    meant the assertion was silently coupled to a default that was about to
+    change; T024 changed it to ``False`` and this test failed for the right
+    reason.
     """
-    return get_settings().model_copy(update={"allow_anonymous": True})
+    return get_settings().model_copy(update={"allow_anonymous": True, "metrics_enabled": True})
 
 
 @pytest.fixture

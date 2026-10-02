@@ -1344,6 +1344,13 @@ Example:
 /ws/devices/{device_id}
 ```
 
+> **Amended after §63 (T311/T320).** The *client-facing* stream is now
+> **receive-only SSE**, not `/ws`, so these paths describe the internal/optional
+> direction only. Per-channel subscription (`/ws/agents/{agent_id}` and friends)
+> is replaced by SSE `Last-Event-ID` filtering or distinct event paths. The
+> ESP32 device transport stays JSON-over-WebSocket (T162) and is unaffected.
+> Do not build the mobile/desktop client against `/ws`.
+
 ---
 
 # 30. AUTHENTICATION
@@ -4799,11 +4806,18 @@ instance**, meaning instances share no memory. That is a poor fit for ULTRON's
 to fan out between instances.
 
 Instead: the PWA takes its API calls **and its live event stream directly from
-the Ubuntu server** (`/ws`, T023), and uses Vercel only for the app shell. This
+the Ubuntu server** (receive-only **SSE**, T023 — see the T311 decision and
+`todo.md` §G), and uses Vercel only for the app shell. This
 keeps chat content inside the author's own infrastructure instead of routing it
 through a third party, avoids a beta dependency, and avoids inventing a Redis
 requirement the rest of the project has deferred. The client **must** reconnect
 and re-fetch state after any disconnect, regardless (§60.4).
+
+Authentication of that stream is **still open**: a receive-only SSE connection has
+no "first frame" to authenticate with, and `EventSource` cannot send headers. The
+recommended shape is `fetch()` + `ReadableStream` with an `Authorization` header
+and hand-written reconnect, which keeps the token out of URLs and access logs.
+Confirm before implementing.
 
 **4. Deployment is a build concern only.** Vercel holds the client; it must never
 hold ULTRON secrets. The client speaks to the author's server with the user's

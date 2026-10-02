@@ -144,8 +144,8 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
 - [x] **T021** `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub. Written: `app/security/{passwords,tokens,audit,authentication}.py`, `app/api/dependencies.py`, `app/api/routes/auth.py`, correlation-ID + access-log middleware in `app/main.py`, and unit tests for each. Route-level tests over `TestClient` are in place (35 tests) and the full gate passes. Also verified against a live PostgreSQL 17 instance with `ENABLE_PGVECTOR=false`: login, token authentication, refresh rotation and replay refusal all behave, and the audit trail carries `auth.login` / `auth.token_refresh` / `auth.token_reuse_detected`. See delivery notes below.
 - [x] **T022** `app/api/routes/health.py` — `/health`, `/ready`, `/metrics` — **done.** Written: `app/api/routes/health.py`, `app/observability/metrics.py`, plus `ContainerProtocol.health`. `/health` is liveness via `HealthService.liveness()` and is deliberately **dependency-free** — it never opens a database connection, because a liveness probe that consulted PostgreSQL would restart a healthy process on every blip and turn one dependency's hiccup into an outage of every replica. `/ready` returns `503` unless a **required** check is `OK` (PostgreSQL only, §23); an optional failure degrades without removing the instance (§33). Both now carry `startup_warnings`, which keeps the promise in `Settings.startup_warnings` ("observable through `/health`") — before this those warnings were logged once at boot and then invisible. Warnings drop `status` to `degraded` but never fail the probe, because a restart cannot fix configuration and a crash loop is not diagnosable. `/metrics` uses `prometheus_client` (already a core dependency, no new package) behind a dedicated `CollectorRegistry` rather than the process-global default, which any import could collide with; status is **one-hot** (`{check,status}` label set to 1) rather than collapsed onto magic numbers. `404` when `METRICS_ENABLED=false`, because an empty body reads as "healthy, nothing to report". 16 new tests, 928 total.
-- [ ] **T023** `app/api/websocket/manager.py` + `/ws` — connection manager, topic subscription, heartbeat
-- [ ] **T024** `server/tests/` Phase 1 suite — config, logging, session, health, API smoke, WS connect
+- [ ] **T023** event stream endpoint — **scope changed.** The original `app/api/websocket/manager.py` + `/ws` is replaced by an **authenticated, receive-only SSE** endpoint per the T311 decision. Note the constraint this creates: a receive-only stream has no first message, so "authenticate on the first frame" is impossible. Recommended resolution is `fetch()`-based streaming with an `Authorization` header and custom backoff; `EventSource` cannot send headers at all, so it would force a cookie or a query-string token. Confirm before writing code.
+- [x] **T024** `server/tests/` Phase 1 suite — config, logging, session, health, API smoke — **done except stream connect.** Most of the listed areas were already covered by unit tests (config 40, logging 51, session 32, health 71, repositories 132). The genuine gap was **API smoke**: no test exercised the *assembled* app, so nothing caught route-table drift. Added `tests/unit/test_api_smoke.py` (13 tests) covering the mounted surface, OpenAPI generation, the error envelope on 404/405, unauthenticated 401, correlation-ID middleware, and real-container construction. 942 total.
 - [ ] **T025** `deployment/docker/Dockerfile.dev` + root `docker-compose.yml` dev stack (`postgres`, `redis`, `ultron-api`) - `DEFERRED` - not a Phase 1 blocker. No Docker on the dev machine (spec 61); native PostgreSQL 17 serves tests and migrations instead.
 - [ ] **T026** Migrate real PostgreSQL + create schema via Alembic - `DONE` on the dev machine - Alembic applied to native PostgreSQL 17 with `ENABLE_PGVECTOR=false`, 17 tables + `alembic_version`, `memories.embedding` is `jsonb`. Re-run on the server.
 - [ ] **T027** **PHASE 1 verification** — server starts, PostgreSQL connects, Redis connects, `/health` works, WebSocket works - `REVISED` - 'server starts' and 'WebSocket works' cannot be checked here (spec 61 forbids running ULTRON on this machine); they move to the server. Remaining local half: `/health` and `/ready` over `TestClient`, in T022.
@@ -943,6 +943,55 @@ The container provides async context managers for session scopes: `session_scope
 The container also includes startup and shutdown lifespan methods that ping the database and Redis, and dispose of resources.
 
 
+#### T024 delivery notes — Phase 1 test suite
+
+The listed areas were already covered by unit tests, so the work was to find the
+gaps and to test the one thing no unit file could: the application *as wired*.
+
+`tests/unit/test_api_smoke.py` (13 tests) is the only test that builds the real
+app through `create_app()` and walks the whole route table. It found four real
+problems, three of which no existing test could see.
+
+**1. Two error shapes on one API.** A 404 from an unmatched path and a 405 from
+a wrong method are raised by Starlette's router, not by ULTRON code, so they
+never became an `UltronError` and bypassed the handler entirely. They answered
+with FastAPI's bare `{"detail": "Not Found"}` while every other failure answered
+`{"error": {...}}`. Every client would have needed a special case. Fixed with a
+`StarletteHTTPException` handler plus a `_HTTP_ERROR_CODES` table, and a new
+`ErrorCode.METHOD_NOT_ALLOWED` backed by `MethodNotAllowedError` (405 is
+permanent, not retryable — repeating the identical request cannot help).
+
+**2. `/health` and `/ready` were declared twice.** `create_app` mounted the
+health router *and* defined both endpoints inline, after the mount. The inline
+copies lost the match and were unreachable, while still reading as the real
+handlers — a maintenance trap pointing at dead code. The duplicates are removed;
+the router versions are authoritative. The OpenAPI schema **cannot** catch this:
+duplicate path/method pairs collapse into one entry. The smoke test detects it
+by asserting on the *shape of the live response* instead.
+
+**3. `METRICS_ENABLED` defaulted to `true` in three places** (`Settings`,
+`ObservabilitySettings`, `.env.example`) while the spec, `todo.md` C10 and the
+T022 notes all said metrics are off unless enabled. The route tests passed the
+flag in explicitly, so nothing ever exercised the shipped default — the tests
+were green and the endpoint was open. Aligned the code to the documented intent
+(`false`), and added `test_metrics_default_to_disabled` to assert the *default*
+rather than a fixture-forced value.
+
+**4. A latent test bug.** `settings_warned` in `test_health_routes.py` scraped
+`/metrics` while relying on the default being `true`. Changing the default broke
+it, which is the correct outcome — it had been asserting against a default
+rather than the behaviour it meant to test.
+
+Two things this file deliberately does not do: it does not enter the
+`TestClient` context, so the container lifespan never runs and no database or
+socket is opened; and it does not touch `/ready`, because readiness runs the
+health engine, which takes seconds to fail against a real PostgreSQL and Redis.
+`/health` is dependency-free and answers immediately.
+
+**Still open for T024:** the event-stream connect check. It cannot be written
+until T023 exists, and T023 is now SSE rather than WebSocket. Carried in the T023
+entry above.
+
 #### T020 delivery notes
 
 The application factory creates a FastAPI instance with:
@@ -953,7 +1002,9 @@ The application factory creates a FastAPI instance with:
 - Middleware configured from settings, not hardcoded: CORS origins and allowed
   hosts both come from configuration and both default to *closed*
 - Health endpoints: `/health` (liveness) and `/ready` (readiness, answered by
-  `HealthService` and 503 when a required check fails)
+  `HealthService` and 503 when a required check fails). Both are served by the
+  health router mounted in `_include_routers`; T024 removed the duplicate inline
+  definitions that used to sit alongside it in `create_app`
 - Router mounting framework ready for T022–T024 (auth, connection manager, WS routes) and T036–T039 (agents, tasks, memories, conversations)
 
 The application is importable without external services: `from app.main import create_app` works on a bare checkout, enabling testing and Docker/CI usage without running PostgreSQL or Redis.
@@ -1001,7 +1052,8 @@ reintroducing the `error_code` typo fails 5, and making `/ready` always answer
 
 Still missing, and tracked as later tasks rather than fixed here: authentication
 itself (T021/T022), permission enforcement (T033), rate limiting (T035), the
-tool execution pipeline (T036), and WebSocket authentication (T024).
+tool execution pipeline (T036), and event-stream authentication (T023 — the
+question is still open, see `todo.md` §G2).
 
 #### Security audit: remaining gaps against §15/§16/§17/§30/§31
 
@@ -1260,6 +1312,6 @@ server**, not through Vercel. Vercel hosts the app shell only (§63.5).
 - [ ] **T317** Separate ESP32 control-panel mode - own route/section in the same PWA. Read state, send commands, view telemetry, configure settings. **No firmware flashing.** Reaches the device through the server's existing JSON-over-WebSocket transport (T162); the device dials out, so no inbound ports and no LAN discovery are needed
 - [ ] **T318** HTTPS on the ULTRON server - a real domain and certificate behind a reverse proxy. **Blocking for every mobile client**: a browser refuses to let an HTTPS page call an `http://` server, so without this the PWA cannot talk to the server at all (§63.5)
 - [ ] **T319** CORS policy on the API - allow the production client origin, allow `Authorization` and `Content-Type`, deny everything else, and decide credentials deliberately. Do not open the API to arbitrary origins
-- [ ] **T320** Client reconnect and resync - the stream comes from the Ubuntu server over `/ws` (T023), so the client must reconnect with backoff, re-subscribe, and re-fetch state after any disconnect. Never treat a dropped socket as an idle system
+- [ ] **T320** Client reconnect and resync - the stream comes from the Ubuntu server as receive-only **SSE** (T023), not `/ws`. The client must reconnect with backoff, re-subscribe, and re-fetch state after any disconnect. Note that `EventSource` reconnects on its own but cannot send an `Authorization` header, so if T023 lands on the `fetch()`-stream shape this reconnect logic is hand-written instead. Never treat a dropped stream as an idle system
 - [ ] **T321** ESP32 Wi-Fi provisioning as a **separate local flow**, explicitly out of the PWA's scope - an unprovisioned device cannot be reached from Vercel, and an HTTPS page cannot join a device SoftAP. Provision over the device access point or USB, then the control panel works (§63.4)
 - [ ] **T322** PWA offline behaviour per §60.4 - local cache for recent conversations, bounded one-way outbox, cached data shown with its age, queued commands visibly pending and never reported as completed
