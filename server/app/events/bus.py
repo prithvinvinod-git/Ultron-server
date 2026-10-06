@@ -361,9 +361,7 @@ class EventBus:
         if self._closed:
             raise EventBusClosedError("the event bus is closed")
         if len(self._subscribers) >= self._max_subscribers:
-            raise EventBusFullError(
-                f"{self._max_subscribers} subscribers already connected"
-            )
+            raise EventBusFullError(f"{self._max_subscribers} subscribers already connected")
 
         wanted = frozenset(topics) if topics else frozenset({ALL_TOPICS})
         subscription = Subscription(self, wanted, self._queue_size)
@@ -383,9 +381,7 @@ class EventBus:
         )
         return subscription
 
-    def _replay_since(
-        self, last_event_id: int, topics: frozenset[str]
-    ) -> list[EventEnvelope]:
+    def _replay_since(self, last_event_id: int, topics: frozenset[str]) -> list[EventEnvelope]:
         """Events after ``last_event_id``, or a lag signal if that is impossible."""
         if last_event_id >= self._next_id:
             # Client claims to be ahead of the bus: a restarted process resets the
@@ -395,11 +391,7 @@ class EventBus:
         if self._replay and retained and retained[0].id > last_event_id + 1:
             # The events the client missed have aged out of the ring buffer.
             return [self._lag_envelope(last_event_id, reason="replay_evicted")]
-        wanted = [
-            e
-            for e in retained
-            if ALL_TOPICS in topics or e.topic in topics
-        ]
+        wanted = [e for e in retained if ALL_TOPICS in topics or e.topic in topics]
         if last_event_id and not wanted and self._dropped_between(last_event_id):
             return [self._lag_envelope(last_event_id, reason="replay_evicted")]
         return wanted

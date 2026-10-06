@@ -150,6 +150,12 @@ line-ending = "lf"
 # --------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
+# Tests live in a flat namespace with a conftest.py at two levels (root and
+# per-directory). Without these, mypy names both of them `conftest` and aborts
+# on the clash before checking anything; explicit bases make each file's module
+# name follow its path (`tests.conftest`, `tests.unit.conftest`) instead.
+explicit_package_bases = true
+mypy_path = ["."]
 # Overrides below are declared up front for optional dependencies that may not
 # be installed yet; an unused override is not a defect worth reporting.
 warn_unused_configs = false

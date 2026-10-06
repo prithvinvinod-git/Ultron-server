@@ -63,9 +63,7 @@ class TestTopicDerivation:
             ("USER_MESSAGE", SYSTEM_TOPIC),
         ],
     )
-    def test_each_spec_event_type_lands_on_a_topic(
-        self, event_type: str, topic: str
-    ) -> None:
+    def test_each_spec_event_type_lands_on_a_topic(self, event_type: str, topic: str) -> None:
         assert topic_for(event_type) == topic
 
     @pytest.mark.parametrize("event_type", ["CPU_HIGH", "RAM_HIGH", "DISK_LOW", "GPU_HIGH"])
@@ -229,9 +227,7 @@ class TestBackpressure:
         subscription = bus.subscribe()
 
         for index in range(50):
-            await asyncio.wait_for(
-                bus.publish("TASK_CREATED", {"i": index}), timeout=1
-            )
+            await asyncio.wait_for(bus.publish("TASK_CREATED", {"i": index}), timeout=1)
 
         assert subscription.dropped == 48
 

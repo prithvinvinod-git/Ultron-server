@@ -138,9 +138,7 @@ async def stream_events(
     stream_id = new_stream_id()
 
     try:
-        subscription = container.events.subscribe(
-            requested or None, last_event_id=resume_from
-        )
+        subscription = container.events.subscribe(requested or None, last_event_id=resume_from)
     except Exception as exc:  # surfaced as 503 below
         _LOGGER.warning(
             "stream refused",
@@ -191,10 +189,8 @@ async def stream_events(
                 # of holding the subscription until the next event arrives. On a
                 # quiet system there may not be a next event.
                 try:
-                    envelope = await asyncio.wait_for(
-                        subscription.get(), timeout=heartbeat
-                    )
-                except asyncio.TimeoutError:
+                    envelope = await asyncio.wait_for(subscription.get(), timeout=heartbeat)
+                except TimeoutError:
                     if await request.is_disconnected():
                         return
                     yield _keepalive(stream_id)

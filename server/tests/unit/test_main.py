@@ -10,6 +10,7 @@ unexposed.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 from starlette.requests import Request
+from starlette.responses import Response
 
 from app.config import Settings, reload_settings
 from app.core.errors import (
@@ -56,16 +58,26 @@ def _build(monkeypatch: pytest.MonkeyPatch, **env: str) -> FastAPI:
 
 def _cors_kwargs(app: FastAPI) -> dict[str, Any]:
     for middleware in app.user_middleware:
-        if middleware.cls.__name__ == "CORSMiddleware":
+        if getattr(middleware.cls, "__name__", "") == "CORSMiddleware":
             return dict(middleware.kwargs)
     raise AssertionError("CORSMiddleware is not installed")
 
 
 def _host_allowlist(app: FastAPI) -> list[str] | None:
     for middleware in app.user_middleware:
-        if middleware.cls.__name__ == "TrustedHostMiddleware":
-            return list(middleware.kwargs["allowed_hosts"])
+        if getattr(middleware.cls, "__name__", "") == "TrustedHostMiddleware":
+            hosts = middleware.kwargs["allowed_hosts"]
+            if not isinstance(hosts, list):
+                raise AssertionError("TrustedHostMiddleware has no allowed_hosts list")
+            return [str(host) for host in hosts]
     return None
+
+
+async def _resolve_handler(result: Response | Awaitable[Response]) -> Response:
+    """Exception handlers may answer directly or awaitably; normalize both."""
+    if isinstance(result, Response):
+        return result
+    return await result
 
 
 def _request() -> Request:
@@ -223,7 +235,7 @@ class TestErrorMappingUsesDeclaredStatus:
     ) -> None:
         app = _build(monkeypatch)
         handler = app.exception_handlers[UltronError]
-        response = await handler(_request(), exc)
+        response = await _resolve_handler(handler(_request(), exc))
         assert response.status_code == expected_status
         assert response.status_code == exc.http_status
 
@@ -247,8 +259,8 @@ class TestErrorMappingUsesDeclaredStatus:
 
         app = _build(monkeypatch)
         handler = app.exception_handlers[UltronError]
-        response = await handler(_request(), exc)
-        payload = json.loads(response.body)
+        response = await _resolve_handler(handler(_request(), exc))
+        payload = json.loads(bytes(response.body))
         assert payload["error"]["code"] == expected_code.value
 
     async def test_non_serializable_details_do_not_break_the_response(
@@ -265,9 +277,9 @@ class TestErrorMappingUsesDeclaredStatus:
         )
         app = _build(monkeypatch)
         handler = app.exception_handlers[UltronError]
-        response = await handler(_request(), exc)
+        response = await _resolve_handler(handler(_request(), exc))
         assert response.status_code == 500
-        encoded = json.loads(response.body)["error"]["details"]
+        encoded = json.loads(bytes(response.body))["error"]["details"]
         assert encoded["at"] == "2026-01-01T00:00:00+00:00"
 
 
@@ -321,12 +333,12 @@ class TestValidationErrorsDoNotEchoInput:
 
         app = _build(monkeypatch)
         handler = app.exception_handlers[RequestValidationError]
-        response = await handler(_request(), RequestValidationError(raw))
+        response = await _resolve_handler(handler(_request(), RequestValidationError(raw)))
         assert response.status_code == 422
-        payload = json.loads(response.body)
+        payload = json.loads(bytes(response.body))
         assert payload["error"]["code"] == ErrorCode.INVALID_INPUT.value
         # The submitted value is not reflected back to the caller.
-        assert "abc" not in response.body.decode()
+        assert "abc" not in bytes(response.body).decode()
 
 
 class TestProbesReportRealState:

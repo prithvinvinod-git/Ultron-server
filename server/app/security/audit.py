@@ -47,6 +47,7 @@ class AuditSink(Protocol):
 
     async def record(self, **fields: Any) -> None: ...
 
+
 #: Actor kinds. Kept as constants so a typo becomes an AttributeError at import
 #: rather than a row that can never be filtered.
 ACTOR_USER: str = "user"

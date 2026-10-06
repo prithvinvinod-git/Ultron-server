@@ -110,6 +110,8 @@ def test_every_expected_route_is_mounted(client: Any) -> None:
         "/auth/me",
         "/auth/password",
     } <= paths
+    # The event stream (T023) is part of the contract, not a side channel.
+    assert {"/events"} <= paths
 
 
 def test_probe_routes_are_served_by_the_health_router(client: Any) -> None:
@@ -194,6 +196,20 @@ def test_malformed_authorization_header_is_rejected(client: Any) -> None:
     """A non-empty but unparseable header must not be treated as anonymous."""
     response = client.get("/auth/me", headers={"Authorization": "Token abc"})
     assert response.status_code == 401
+
+
+def test_event_stream_refuses_an_anonymous_caller(client: Any) -> None:
+    """The stream is mounted on the real app and guarded there.
+
+    Carried from T024 as the stream-connect check. The happy path itself
+    cannot travel over ``TestClient`` -- the stream never ends and its
+    transport buffers to completion -- but the refusal is finite, and a
+    stream that answered an anonymous caller would leak every event on the
+    system. The full-stack happy path is covered by the T023 route tests.
+    """
+    response = client.get("/events")
+    assert response.status_code == 401
+    assert "error" in response.json()
 
 
 # --------------------------------------------------------------------------- #

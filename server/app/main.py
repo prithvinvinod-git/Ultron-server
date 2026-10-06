@@ -416,7 +416,7 @@ def create_app() -> FastAPI:
     _add_request_context(app)
     _add_middleware(app, settings.app)
 
-# Include routers
+    # Include routers
     _include_routers(app)
 
     # `/health`, `/ready` and `/metrics` are served by the health router mounted
@@ -430,4 +430,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-

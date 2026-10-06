@@ -42,6 +42,16 @@ _ISOLATED_ENV_FILE.write_text("", encoding="utf-8")
 _PREVIOUS_ENV_FILE = os.environ.get("ULTRON_ENV_FILE")
 os.environ["ULTRON_ENV_FILE"] = str(_ISOLATED_ENV_FILE)
 
+# The env file alone is not enough. An inherited shell variable - say
+# ENABLE_PGVECTOR=false exported for a manual migration - is still read while
+# test modules are collected, so `memories.embedding` picked JSON at import
+# while every test body, scrubbed by `clean_settings`, saw the default True.
+# Clearing the settings variables here makes the import-time read agree with
+# the test-time read, which is what the module docstring promises.
+for _name in _SETTINGS_ENV_VARS:
+    os.environ.pop(_name, None)
+reload_settings()
+
 
 @pytest.fixture(autouse=True, scope="session")
 def isolated_env_file() -> Iterator[None]:

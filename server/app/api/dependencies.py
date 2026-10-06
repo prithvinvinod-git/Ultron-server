@@ -66,6 +66,7 @@ if TYPE_CHECKING:
         # touch the changed member.
         _accepts_protocol(container)
 
+
 #: Header names accepted for a client-supplied correlation id, in order.
 #: ``X-Request-ID`` is the reverse-proxy convention, ``X-Correlation-ID`` the
 #: OpenTelemetry one; both are seen in the wild so both are honoured.

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import CORRELATION_HEADERS, MAX_CORRELATION_LENGTH
@@ -80,7 +81,8 @@ class StubContainer:
     @property
     def committed_audit_rows(self) -> list[dict[str, Any]]:
         """Audit rows that survived a commit."""
-        return self._repositories["audit"].rows
+        rows: list[dict[str, Any]] = self._repositories["audit"].rows
+        return rows
 
     def session_scope(self) -> Any:
         """Model the real scope, including that a rollback discards the work.
@@ -227,7 +229,7 @@ def _no_durable_sink(monkeypatch: Any) -> Iterator[None]:
 @pytest.fixture
 def account(users: Any, make_user: Any) -> User:
     """One seeded, active, non-privileged user with a known password."""
-    user = make_user()
+    user: User = make_user()
     users.users.append(user)
     return user
 
@@ -261,7 +263,11 @@ def test_only_the_five_intended_routes_are_mounted() -> None:
     Cheap to assert, and it is the assertion that fails when someone adds an
     endpoint as a "temporary" measure and it is still there a year later.
     """
-    paths = {(route.path, tuple(sorted(route.methods))) for route in auth_router.routes}
+    paths = {
+        (route.path, tuple(sorted(route.methods or ())))
+        for route in auth_router.routes
+        if isinstance(route, APIRoute)
+    }
     assert paths == {
         ("/auth/login", ("POST",)),
         ("/auth/refresh", ("POST",)),

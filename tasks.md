@@ -1292,6 +1292,7 @@ client, and is also used on mobile.** Neither client requires Windows-specific
 server operations - no WSL, no Docker, no Python, no clone (§62.5).
 
 - [ ] **T311** Windows installer and first-run experience - ordinary application install, no admin rights, no WSL, no Docker, no Python, no repository clone (§62.5). Verify on a clean Windows machine, not a machine that already has the dev toolchain
+  *Numbering note (D019): `server_arc.md` §29 and §63.5 cite "the T311 decision" as the authority for the receive-only SSE stream. That decision is `todo.md` §G1, which this file tracks as **T320**. This T311 is the Windows installer. The spec references are left as written and the mismatch is recorded rather than renumbered (D013/D019).*
 - [ ] **T312** Mobile client target - same API and same event stream as desktop (§27, §43); anything unsupported is reported unavailable per §33, never hidden
 - [ ] **T313** Pin the deployment target to Ubuntu Server OS in the deployment docs (§37) and publish the platform matrix (server / desktop / mobile) so it is not re-derived from this file
 - [ ] **T314** Client-to-server connectivity over a network - TLS, token refresh from the client, reconnect after sleep/network loss, and a clear "server unreachable" state rather than a spinner (§60.4 offline continuity assumes this exists)
@@ -1315,3 +1316,151 @@ server**, not through Vercel. Vercel hosts the app shell only (§63.5).
 - [ ] **T320** Client reconnect and resync - the stream comes from the Ubuntu server as receive-only **SSE** (T023), not `/ws`. The client must reconnect with backoff, re-subscribe, and re-fetch state after any disconnect. Note that `EventSource` reconnects on its own but cannot send an `Authorization` header, so if T023 lands on the `fetch()`-stream shape this reconnect logic is hand-written instead. Never treat a dropped stream as an idle system
 - [ ] **T321** ESP32 Wi-Fi provisioning as a **separate local flow**, explicitly out of the PWA's scope - an unprovisioned device cannot be reached from Vercel, and an HTTPS page cannot join a device SoftAP. Provision over the device access point or USB, then the control panel works (§63.4)
 - [ ] **T322** PWA offline behaviour per §60.4 - local cache for recent conversations, bounded one-way outbox, cached data shown with its age, queued commands visibly pending and never reported as completed
+
+---
+
+## Distributed node architecture (spec §64, added after T322)
+
+`server_arc.md` §64 is appended as an addendum after §63, following the D012/D013 precedent: existing sections, task IDs, phases and decision numbers are untouched, and nothing here is marked complete on the strength of a specification. §64.19 reconciles every apparent conflict with §1-§63; §64.21 maps the work onto the IDs below.
+
+### Requested → existing → verdict
+
+| Requested | Already covered by | Verdict |
+|---|---|---|
+| Core, Windows node, Ubuntu server, ESP32, mobile as one architecture | §5, §13, §26, §42, §62.1 (as separate pieces) | **Extended** - unified in §64.3-§64.9 |
+| Capability model | §59.6 tool fields, §63.3 revocation table | **Extended** - §64.10 adds node capabilities; T331 |
+| Node-targeted tool routing | §16 pipeline, T036 executor (single machine assumed) | **Extended** - a target-selection stage, §64.11; T334 |
+| Permissions | §15 LEVEL 0-5, T033 | **Unchanged scale**, scoped to (principal, node, tool, operation), §64.12; T353 |
+| Availability / offline | §26 `last_seen` for devices only | **New** for every node kind, §64.14; T333, T336 |
+| Events across nodes | §19 event bus, §27 orb events | **Additive** - §64.15 names; §19 not rewritten; T335 |
+| Windows-local execution | T140-T148, T261/T262, §59.15 Path B | **Extended** - Path A (local runtime) added alongside Path B; T340-T347 |
+| Server as a node | §62.2 (runs there, but is not registered) | **New** - advertised through the same registry; T348 |
+| Mobile directing node work | T315-T322, T316 capability matrix | **Extended** - targets authorised capabilities, holds none; T350-T351 |
+| ESP32 showing ULTRON states | T160-T167, T162 transport | **Extended** - §64.9/§64.15 states; T352 |
+
+### Architecture amendment (spec §64) - spec + server groundwork
+
+- [x] **T330** §64 written into `server_arc.md` - **spec-only, no code.** Core/client/node distinction (§64.3-§64.4), node inventory (§64.5), Windows/server/mobile/ESP32 nodes (§64.6-§64.9), capability model (§64.10), node-targeted execution (§64.11), permission scope (§64.12), identity (§64.13), availability (§64.14), events (§64.15), conflicts reconciled (§64.19), roadmap (§64.21)
+- [ ] **T331** Capability vocabulary in `clients/protocol/` and the tool registry - capability IDs exactly as listed in §64.10, a `targeted` flag extending the §59.6 tool fields, and one shared JSON schema for `/nodes` payloads, so server, Windows node and tests read the same definition
+- [ ] **T332** Node registry - **one table unifying T141 (computer-node gateway) and T161 (device registry)**: `node_id`, `name`, `kind` (`windows`/`server`/`esp32`), `capabilities`, `status`, `last_seen`, `protocol_version`. Endpoints `GET /nodes`, `GET /nodes/{id}`. Existing ESP32 device rows become `kind=esp32` node rows (D021) - no third registry
+- [ ] **T333** Heartbeat and availability - every node heartbeats on a fixed interval; server expires by TTL into `online` / `stale` / `offline` (§64.14); transitions emit `NODE_ONLINE` / `NODE_OFFLINE` (+ per-kind forms)
+- [ ] **T334** Node-targeted tool execution - a tool call carries a `node` target; the router dispatches over the existing transport after the unchanged §16 stages (schema validation, permission check, policy check), and the result returns through verification and events. Tools with no target run in the cloud server as today
+- [ ] **T335** Cross-node event protocol - add `NODE_*`, `LISTENING`/`THINKING`/`SPEAKING`, `ORB_SHOW`/`ORB_HIDE`, `AGENT_STOPPED` alongside §19's existing set; one event, one spelling (the §19 `DEVICE_DISCONNECTED` vs the §58 checklist `DEVICE_OFFLINE` mismatch is named in §64.9, not silently renamed)
+- [ ] **T336** Availability reporting to clients - expose per-node capability and state (`GET /capabilities` or equivalent) so clients grey out unavailable actions **with a reason** (§33 honesty rule); T316 consumes this instead of shipping its own list
+
+### Windows node (spec §64.6)
+
+- [ ] **T340** `clients/desktop-node/` Electron shell - main / preload / renderer split, no secrets and no tool execution in the renderer, lightweight per §59.13's rule. Dual role recorded as D019: client UI (§59.14) plus node runtime (§64.6.4)
+- [ ] **T341** Windows local runtime - authenticated listener accepting node-targeted tool calls from the server and executing them on Windows (**Path A**). §59.15's server-side bridge (**Path B**) is preserved; both use the same tool contract and permissions (§64.6.3)
+- [ ] **T342** Filesystem and Git tools on the node - workspace-scoped per §59.4; no arbitrary path traversal; server-side sandbox rules apply unchanged
+- [ ] **T343** PowerShell tool on the node - structured commands (never blind strings), timeouts, bounded output capture, required §15 level checked on the node before execution
+- [ ] **T344** Application and browser control on the node - launch/activate applications and Windows-local browser automation from §64.6.2's list, each as its own declared capability
+- [ ] **T345** Process and screenshot tools - bounded process list/termination and screen capture, both permission-checked; screenshots follow §59.15's consent rules
+- [ ] **T346** Registration and heartbeat from the Windows node - registers against T332 with per-node credentials (T353), heartbeats per T333, reconnects with backoff and re-registers after sleep or network loss
+- [ ] **T347** Windows node test suite - unit and contract tests against the T146 test double; **no live Windows node on the development laptop** (§61 unchanged, D017)
+
+### Server node (spec §64.7)
+
+- [ ] **T348** Advertise the server's own capabilities as `kind=server` - browser, filesystem, Git, terminal, system tools registered through T332 so routing is uniform: mobile and desktop target server work exactly the way they target Windows work
+
+### Mobile client (spec §64.8)
+
+- [ ] **T350** Mobile chat and agent UI in the PWA - consumes the T320 stream, shows node-targeted activity (§64.16), and directs **authorised** server/Windows capabilities while holding none itself (D022)
+- [ ] **T351** Mobile server-control actions - launch/stop and file/Git operations on the server node through T334, with availability-greying fed by T336
+
+### ESP32 node (spec §64.9)
+
+- [ ] **T352** Real-time ULTRON states on the ESP32 - `LISTENING`/`THINKING`/`SPEAKING` and node presence pushed over the existing T162 JSON WebSocket, driven by §64.15 events; device firmware stays a T160-T167 concern
+
+### Security (spec §64.12-§64.13)
+
+- [ ] **T353** Node identity and capability authorisation - per-node credentials issued at registration, server-side grants evaluated as (principal, node, tool, operation), and mandatory local re-validation on the executing node; the node enforces, it never decides policy (§64.12)
+
+### Testing (spec §64.21)
+
+- [ ] **T354** Cross-node test matrix - for each node kind: happy path, node offline mid-call, unknown capability, revoked permission, stale heartbeat, result delivery to every subscribed client. Extends T290's list rather than replacing it
+
+### Extension decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| D017 | §64 is appended to `server_arc.md` after §63; new tasks are T330+, appended as a separate block | Same precedent as D012/D013. Existing IDs are referenced from the phase status log, `todo.md` and the spec itself; renumbering would break those references for no benefit |
+| D018 | Windows operations execute **on Windows** (Path A) - the server is not in the execution path for Windows-local tools, only in the authorisation path | Keeps §61 true (the server never needs Windows), keeps latency out of the loop, and keeps the permission decision where it is auditable: server decides, node re-validates and executes |
+| D019 | The Electron app is **dual role**: client UI (§59.14) plus Windows node runtime (§64.6.4) - and records that `server_arc.md` §29/§63.5's "T311 decision" actually refers to `todo.md` §G1 (T320 here) | The single-process pairing is the point of Electron; the numbering mismatch is recorded rather than renumbered so both references stay resolvable |
+| D020 | §15's LEVEL 0-5 stays the **only** permission scale; nodes add a scope, not a scale | A second scale would create grants that map to each other ambiguously; (principal, node, tool, operation) makes the same level precise per node (§64.12) |
+| D021 | **One node registry** - T141 and T161 are the same table (T332), not a third registry beside them | ESP32 devices already model `capabilities`, `status` and `last_seen`; a parallel node registry would duplicate rows, double the heartbeat code, and guarantee drift |
+| D022 | The mobile client is granted **no Windows-local capability of its own** | §63.3's revocations describe the phone's sandbox and stay revoked (§63.3, unchanged); mobile may *direct* authorised node capabilities (§64.18.1) but never *holds* them - a second copy of a Windows tool on a phone is a security bug, not a feature |
+
+---
+
+## Telephony (spec §65, added after the §64 block)
+
+Phone calls as another ULTRON interface: a provider-abstracted telephony
+service under `server/app/voice/telephony/`, reusing the existing voice session
+manager, STT/TTS ABCs, agent runtime, event bus, permissions and scheduler.
+OpenClaw is architectural inspiration only - not a dependency (D025). One
+provider first; mocks only in tests. §65.1 records the audit result (what was
+found and what is reused).
+
+- [x] **T360** Audit the existing voice architecture before any change - **done during §65 authorship, no code written**: voice manager sessions (T153), `STTEngine`/`TTSEngine` ABCs (T150/T151), wake (T152), streaming/barge-in (T154), §59.16-§59.20, event bus (T030/T031), API conventions (§29), auth (T021/T022), permissions (T033), scheduler (T170-T175), memory (T120-T129), nodes (T330-T354). Findings tabulated in §65.1
+- [ ] **T361** Telephony service boundary - `app/voice/telephony/{service,provider,sessions,webhook}.py` + `providers/`; `service.py` is the only module that may import `providers/`; the service attaches calls to `voice/manager.py` sessions instead of forking them (D026)
+- [ ] **T362** `TelephonyProvider` ABC + configuration - `initiate_call`, `hangup`, `get_status`, `open_media_stream`, `parse_webhook`, `health`; `TELEPHONY_*` keys in `config/settings.py` and `.env.example`; fail-fast validation at startup including **rejecting a non-public `TELEPHONY_WEBHOOK_BASE_URL`** (D011 philosophy); `TELEPHONY_PROVIDER=off` disables the feature by default
+- [ ] **T363** Call session model - `call_sessions` table + Alembic migration (call_id, provider, direction, destination, status, created/connected/ended, session_id link, task_id link, agent_id, metadata); guarded monotonic state machine CREATING→RINGING→CONNECTED→{LISTENING,THINKING,SPEAKING}→ENDING→ENDED, any→FAILED; statuses mirror §59.13 orb states
+- [ ] **T364** Outbound call API - `POST /voice/calls`, `GET /voice/calls/{id}`, `POST /voice/calls/{id}/end` (§29 plural convention); existing auth + permission dependencies; returns ids/status only; no provider secrets in any response
+- [ ] **T365** First provider adapter (`providers/twilio.py`) - implements the ABC only; vendor types never cross into service/sessions/agents; Telnyx/Plivo remain future adapters that must not touch callers
+- [ ] **T366** Webhook intake + verification - `POST /voice/webhooks/{provider}`: provider signature check, timestamp/replay window, forged-callback rejection with audit row, provider event → call state transition mapping; unauthenticated route but never unverified
+- [ ] **T367** Call lifecycle and termination - transition guards, idempotent end, dial/answer timeouts, mid-call disconnect → ENDED/FAILED with reason, orphaned sessions after restart recovered to ENDED
+- [ ] **T368** Realtime audio bridge - provider media stream (WebSocket) ↔ ULTRON audio forwarding on the server node; lightweight, no local models; barge-in/partial transcripts follow §59.19/T154
+- [ ] **T369** STT/TTS/realtime providers for calls - cloud adapters through the existing `STTEngine`/`TTSEngine` ABCs (T150/T151) plus a swappable realtime-provider abstraction (OpenAI realtime / Gemini Live / others) selected by config; local engines optional (§59.20), never required (D027)
+- [ ] **T370** Voice session → agent runtime - call audio resolves to a normal voice session (T153) → orchestrator (T049) → existing router/agents/tools; **no Telephony Agent**; permissions and confirmations unchanged, call session recorded on the decision (§64.12 scope)
+- [ ] **T371** `VOICE_CALL_*` events - CREATED/RINGING/CONNECTED/LISTENING/THINKING/SPEAKING/ENDED/FAILED on the existing bus (T030/T031), additive names only (§65.15), fanned out over SSE (T023/T320) to Electron, mobile and ESP32
+- [ ] **T372** Call finalization + memory - on ENDED: metadata always; transcript/summary/actions per `TELEPHONY_TRANSCRIPT_POLICY` (`store_transcript`/`summary_only`/`none`); episode via T126/T128; no audio stored by default; no second memory store
+- [ ] **T373** Client integrations - mobile PWA call button + active-call card (T315+ block), Electron state (T261), ESP32 `CALLING` display over T162; all trigger/observe through Core, never carry the call (D024)
+- [ ] **T374** Telephony security hardening - authenticated + permissioned initiation, rate limiting on `/voice/calls` and webhook intake, numbers masked in logs/events/exceptions, secrets config-only, audit rows for start/end/permission/tool-under-call
+- [ ] **T375** Test suite with `MockTelephonyProvider` - ABC conformance, config validation (local URL rejected), creation, every state transition, webhook accept/reject/replay, provider failure, hangup, permission rejection, event emission, session cleanup. **No real calls in automated tests, ever; CI has no credentials**
+- [ ] **T376** Deployment - public HTTPS webhook ingress documented (reuses T318 + §63.5 reverse proxy; no hard-coded tunnel vendor), production secrets outside the repo, telephony readiness/health check, provider metrics in the existing Prometheus setup (T180/T181)
+- [ ] **T377** Inbound call architecture - **FUTURE**: webhook `incoming_call` event recorded now; full flow (validate → allow-listed numbers → create inbound session → agent) specified in §65.14; deny-by-default, no auto-answer to arbitrary callers
+
+### Telephony decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| D023 | Telephony is a service under `server/app/voice/telephony/` with a provider ABC; **one provider (Twilio) implemented first**, others later | Vendor isolation is the point of the abstraction; three adapters at once would add complexity with nothing to prove them against |
+| D024 | Calls are placed and held **server-side only**, never routed through the Windows node | The always-on Ubuntu server must call with Electron closed (§62.2, §64.7, §65.19); routing call media through a laptop would make the feature depend on a client being awake |
+| D025 | OpenClaw is **architectural reference only** - no install, import, gateway, service, or copied source; absent from the dependency graph | The requirement is a clean ULTRON-native shape (plugin + session + gateway + agent loop); any runtime coupling would import an unowned system into a security-sensitive path |
+| D026 | A call **is a ULTRON voice session** - telephony reuses `voice/manager.py`, the STT/TTS ABCs, events, tasks, memory; no parallel voice or session system | Two voice stacks would drift and double every future fix; §25's provider-independent rule is exactly what lets a second audio source attach |
+| D027 | **Cloud-first**: no local STT/TTS/realtime model is required to make calls work; realtime providers swap behind config; local stays optional | 4 GB server (§59.25); requiring Whisper/Piper on a call path would violate the resource model and make telephony undevelopable on current hardware |
+
+---
+
+## Capability integration (spec §66, added after the telephony block)
+
+Twenty requested capabilities mapped onto the architecture that exists
+(§66.1): five already delivered by §62-§65/§64, twelve extensions of a named
+subsystem, one formalized lifecycle, two genuinely new contracts (rollback,
+agent-to-agent). No V2 of anything (D029). New IDs are T380+; every other capability points at its existing tasks.
+
+- [ ] **T380** Context engine - extend T046 `app/core/context.py` to `collect/resolve/rank/compress/build_prompt_context/clear_expired_context` over conversation, task, agent, node, project, recent actions/tool calls, device state, preferences, memory, knowledge, background tasks, session, voice/call session, effective permissions; permission-filtered before ranking; one interface for agents, planner, voice, tools, UI (§66.3)
+- [ ] **T381** Execution lifecycle - implement §66.4 on T048 (planner), T049 (orchestrator), T050 (executor): goal→understand→context→plan→permission→agent→node→tool→observe→verify with retry/replan/escalate, confirmation, cancellation, pause/resume as graph operations on T040/T041 - not a separate planner runtime
+- [ ] **T382** Structured agent-to-agent messages - `AgentMessage` (task_id, sender, receiver, objective, input, result, evidence, confidence, errors, requested_next_action) passed through the orchestrator; chain executions (planner→research→coding→testing→review) stay under permissions and history; no free-form agent chat loops (§66.20)
+- [ ] **T383** Model router hardening - provider health tracking + temporary circuit breaking on the §59.9 fallback chains (T223/T224); selection inputs extended per §66.6 (task/agent type, capability, latency, cost, context size, availability, privacy, local/cloud); still one router (§20), no provider hard-coded
+- [ ] **T384** Event catalog additions - `CONTEXT_UPDATED`, `PLAN_CREATED/PLAN_UPDATED`, `NODE_CAPABILITIES_UPDATED` (`NODE_ONLINE/OFFLINE` already exist - T335), `VOICE_*`, `VOICE_CALL_*` (T371), `MODEL_SELECTED/MODEL_FAILED`, `PERMISSION_REQUESTED/GRANTED/DENIED`, `SYSTEM_ERROR` on the existing bus; existing names keep their spellings (with §64.15/T335); no broker (§66.8)
+- [ ] **T385** Capability-aware node selection - planner/executor resolve target node from the T332 registry + T336 availability at run time (which node can do this, online?, permitted?, better alternative?, offline fallback?) - no hard-coded node assumptions (§66.9)
+- [ ] **T386** Computer-use verification loop - act → screenshot again → confirm expected state → retry/escalate, on the Windows node tool set (T143-T145, T344/T345); closes the §17 gap for "click/type/window" actions (§66.10)
+- [ ] **T387** Background agent lifecycle - long-running agents on T170-T172 scheduler + T044 manager: pause/resume/cancel/timeout/resource limits/logs/results/notifications, bounded by max-iteration and §66.4 plan shape; runaway detected via events and stopped by T391 (§66.11)
+- [ ] **T388** Memory type expansion - preference/task/device/agent memory as **scopes on T120-T126** (not new stores); ranking, dedupe, importance, decay, source tracking, confidence; extraction stays intentional, conversation messages not memorized by default (§66.12)
+- [ ] **T389** Knowledge ingestion - source→ingest→parse→chunk→embed→index into the **existing** pgvector store (`memories.embedding`, `ENABLE_PGVECTOR`, D030); permission-scoped retrieval and reranking feeding the context engine; extends T124/T127 (§66.13)
+- [ ] **T390** Tool registry hardening - add `output_schema`, `node_requirements`, `risk_level`, `availability`, `version`, `reversibility` to the §59.6 fields (T230-T232); plugins stay isolated behind the tool interface; telephony is just another registry entry (§66.14)
+- [ ] **T391** Self-diagnostics and bounded recovery - health matrix (server, agents, nodes, SSE/WS, API, DB, AI providers, tool providers, voice, telephony, ESP32, jobs) on T180-T183; recovery menu: reconnect, retry+backoff, provider switch (§59.9), worker restart, interrupted-task resume - each emitting an event + audit row, none granting new capabilities (§66.15)
+- [ ] **T392** Queryable action history - view joining user request → plan → agents → tools → nodes → permission decisions → results → errors → timestamps → model/provider → verification, correlated by request id over existing `tool_executions`/audit/T041 events; a view, not a new logger (§66.16)
+- [ ] **T393** Reversibility and rollback - tools declare `reversible/partially_reversible/irreversible` (T390 field); snapshot-before-execute for file and Git operations; irreversible → stronger confirmation path; **no universal undo claimed** (§66.17)
+- [ ] **T394** Cross-capability integration test - one goal→plan→execute→verify journey spanning two nodes with permission checks, event assertions, context injection and history rows; extends T290/T354 lists rather than replacing them (§66.24)
+
+### Capability-integration decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| D028 | §66 appends after §65; new tasks are T380+, appended as a separate block | D012/D013/D017 precedent - existing IDs, phases and status logs stay intact |
+| D029 | **No V2 systems**: each of the twenty features extends the subsystem named in §66.1, and §66.1 is the authority when a later reader wonders whether something is new or extended | The request's central constraint; a duplicate subsystem would guarantee drift between two memories/two buses/two runtimes, which is how a single system becomes a collection of unrelated applications |
+| D030 | Knowledge/RAG uses the **existing** PostgreSQL/pgvector store (`memories.embedding`, `ENABLE_PGVECTOR`) - no second vector database | Retrieval already exists (T124); only ingestion is missing; a second store would duplicate embeddings, permissions and cost for no capability gain |
+| D031 | The requested PHASE 0-21 ordering is **mapped onto** the existing Phase 1-13 structure plus the T220+/T300+/T330+/T360+/T380+ blocks, not adopted as new phase numbers | tasks.md's phases are referenced by the phase status log, Definition of Done and completed-task history; renumbering would break those references while expressing nothing the dependency notes in §66.24 do not |

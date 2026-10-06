@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.api.routes.health import router as health_router
@@ -177,7 +178,7 @@ def test_exactly_three_routes_are_mounted() -> None:
     ``/docs`` and ``/openapi.json`` to every app, and those are not ULTRON
     health routes.
     """
-    paths = {route.path for route in health_router.routes}
+    paths = {route.path for route in health_router.routes if isinstance(route, APIRoute)}
     assert paths == {"/health", "/ready", "/metrics"}
 
 

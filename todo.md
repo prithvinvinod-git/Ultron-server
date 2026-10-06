@@ -4,7 +4,8 @@ Every known unfinished thing, in the order it should be dealt with. Nothing here
 is lost in `tasks.md` or `server_arc.md`; this file is the short list of what is
 *not done* and what only the author can do.
 
-Last updated after T021 (committed `0cadd45`, pushed `a5e7914`).
+Last updated during the T023 gate pass: the §64/§65/§66 blocks are appended to
+`server_arc.md` + `tasks.md` (T330–T394, D017–D031, cross-checked, uncommitted).
 
 ## Platform, in one line
 
@@ -78,8 +79,8 @@ only the server can close:
 | `/health` returning healthy for a **real** PostgreSQL | testable here with doubles, which proves the 200/503 logic but not that it reports `true` against a live store |
 | `/ready` degraded path for a **real** unreachable Redis/Ollama | no Redis or Ollama is installed, by policy |
 | Uvicorn / ASGI server startup, signal handling, graceful shutdown | needs a bound port |
-| WebSocket `/ws` (T023) end to end | needs a bound port |
-| T027 "server starts", "WebSocket works" | same |
+| `/events` SSE stream (T023) end to end — code exists (`277aac0`), never served live | needs a bound port |
+| T027 "server starts", event stream works | same |
 | Agent runtime, scheduler, browser tool, device bridge | each starts real workers or drivers |
 | Rate limiting under real concurrency | needs a socket and real timing |
 
@@ -138,7 +139,8 @@ and the behaviour must agree.
 
 Everything sits on `feature/phase-1-foundation`, pushed but not merged. Repo
 convention (spec §52) is slice → `feature/*` → `develop`, with `main` reserved
-for releasable states. Worth doing before the branch gets long.
+for releasable states. Worth doing before the branch gets long. Currently
+uncommitted on top: the §64–§66 documentation and the T023 gate fixes (C12).
 
 ### C4. `.env.example` still needs a review pass
 
@@ -274,6 +276,45 @@ Related trap: anything prefixed `NEXT_PUBLIC_` is **inlined into the JavaScript
 bundle** and is readable by anyone who opens devtools. The server URL is fine.
 A JWT secret, admin password, or a device token is not.
 
+### C12. T023 — gate GREEN, ready to mark `[x]`
+
+Closed on this pass. The receive-only SSE endpoint (`server/app/api/routes/events.py`,
+committed `277aac0`) shipped without ever running a gate. Now:
+
+- `scripts/lint.ps1` clean over 108 files (ruff check, ruff format, mypy)
+- `scripts/test.ps1` = **1021 passed in ~39s** (smoke suite 14)
+- fixes along the way: ruff reformat + `asyncio.TimeoutError` → `TimeoutError`;
+  mypy duplicate-`conftest` clash via `explicit_package_bases`; 26 typing errors
+  across 5 test files; `ENABLE_PGVECTOR` conftest isolation (import-time env
+  scrub); TestClient SSE hang (see C13).
+
+Remaining: mark T023 `[x]` in tasks.md with this evidence and add its delivery
+notes.
+
+### C13. Errors and todos found during the T023 gate
+
+1. **Starlette deprecation warning on every run**: starlette 1.7 deprecates
+   `httpx` inside `TestClient` ("install `httpx2` instead"). Cosmetic for now;
+   decide when `httpx` is next touched — not a test failure.
+2. **`TestClient` cannot stream.** starlette 1.7's transport runs the app to
+   completion and buffers the whole response, so any *successful* endless
+   stream (`client.stream`, context manager or not) hangs forever; only finite
+   responses (401/422/503) survive the round trip. The 11 open-stream tests in
+   `test_event_stream_routes.py` now call `stream_events` directly through a
+   typed `open_stream()` helper. Anyone adding an SSE test must use that path,
+   not `client.get("/events")`, except for refusals.
+3. **T026 checkbox mismatch**: the task text says `DONE` on the dev machine
+   (Alembic applied, 17 tables) but the box is still `[ ]` — either mark it or
+   record why the box stays open ("re-run on the server").
+4. **G3 test count is stale** ("942 tests", connect check "left open"): the
+   suite is now 1021 and the connect check landed with T023 (smoke:
+   `/events` in the mounted-surface assertion + anonymous 401).
+5. **Uncommitted work has grown** (feeds C3): gate fixes, the two test rewrites,
+   the new smoke test, `server_arc.md`, `tasks.md` and this file.
+6. **Next tasks**: T025 stays `DEFERRED` (no Docker on this machine), T026 as
+   in (3), T027 phase gate blocked on server-side halves — nothing runnable
+   here blocks on them.
+
 ---
 ## F. Deferred by policy — preserved, not deleted
 
@@ -297,8 +338,10 @@ Recorded so they are not mistaken for oversights. Full rationale in
 | Firebase Auth as upstream IdP | `FUTURE`, gated on pricing (T300–T305) |
 | Firestore copy of the database | **`SKIP`** — rejected, see §60.3 |
 | Client-side offline cache + outbox | `FUTURE` (T306–T309) |
+| OpenClaw as a runtime dependency | **`REJECTED`** — architectural reference only (D025) |
+| Inbound phone calls | `FUTURE` (T377) — `incoming_call` webhook recorded now, deny-by-default |
 
-## G. Decisions from the author — G1/G3 answered, G2 has a contradiction
+## G. Decisions from the author — G1, G2, G3 all answered
 
 ### G1. Receive-only — **ANSWERED: receive-only → SSE**
 
@@ -312,30 +355,19 @@ bidirectional stream later. Do not silently assume they are covered.
 The device transport (T162) is already WebSocket and is a separate channel
 between ESP32 and server — unaffected.
 
-### G2. Stream authentication — **ANSWERED, then CONTRADICTED. Needs one more call.**
+### G2. Stream authentication — **RESOLVED IN CODE: `fetch()` + `Authorization` header**
 
-The author chose **first-message auth**. That answer is not implementable
-alongside G1: a receive-only stream has no first message, and `EventSource`
-cannot send an `Authorization` header *or* a body at all.
+First-message auth was not implementable alongside G1: a receive-only stream
+has no first message, and `EventSource` cannot send an `Authorization` header
+*or* a body at all. Implemented T023 follows the recommended option —
+`fetch()`-based streaming with a `Bearer` header and hand-written backoff
+(`server/app/api/routes/events.py`) — so the token stays out of URLs and out of
+proxy logs, which was why query-string auth was rejected.
 
-This is the security question that should not be settled by picking whichever
-option is easiest, so it goes back to the author rather than being quietly
-converted. The options that actually exist for receive-only SSE:
-
-- **`fetch()` + `ReadableStream` + `Authorization: Bearer` header.** Keeps the
-  token out of URLs and out of logs, which was the point of choosing first-message
-  auth. Costs writing the SSE frame parser and reconnect logic by hand, because
-  the browser gives you no `EventSource` conveniences on that path. **This is
-  what I recommend** — it preserves the intent of the original answer.
-- **`EventSource` + HttpOnly cookie.** Native `EventSource`, native reconnect,
-  but the cookie must be set by the same origin (so it needs a BFF/proxy on the
-  server, not a bare cross-origin API) and it is CSRF-exposed without care.
-- **`EventSource` + `?token=`.** Rejected. The token lands in proxy and access
-  logs, and §21 makes these the only credential.
-
-Note that §21 tokens are long-lived opaque credentials, which is exactly why
-query-string auth was rejected. If the author wants native `EventSource`, that
-should be a deliberate trade for the cookie route, not a drift back to `?token=`.
+Revisit only if native `EventSource` is wanted: that path needs a same-origin
+HttpOnly cookie (a BFF/proxy on the server, not a bare cross-origin API) and is
+CSRF-exposed without care. `?token=` stays rejected — §21 makes these
+long-lived opaque credentials.
 
 ### G3. **ANSWERED: T024 first**
 

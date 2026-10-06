@@ -173,9 +173,7 @@ class Authenticator:
             await self._record_failed_login(
                 username,
                 reason=(
-                    "no usable password on this account"
-                    if user is not None
-                    else "unknown username"
+                    "no usable password on this account" if user is not None else "unknown username"
                 ),
                 ip_address=ip_address,
             )
@@ -225,7 +223,8 @@ class Authenticator:
         way. Recording the *why* while returning a single *what* is what makes
         the trail useful without making it an oracle.
         """
-        await self._audit.denied(durable=True,
+        await self._audit.denied(
+            durable=True,
             actor_type=ACTOR_USER,
             actor_id=actor_id,
             action=AUTH_LOGIN_FAILED,
@@ -250,7 +249,8 @@ class Authenticator:
         if user.password_hash is None or not verify_password(
             current_password, user.password_hash, self._settings
         ):
-            await self._audit.denied(durable=True,
+            await self._audit.denied(
+                durable=True,
                 actor_type=ACTOR_USER,
                 actor_id=str(user.id),
                 action="auth.password_change",
@@ -321,7 +321,8 @@ class Authenticator:
         """
         session = await self._sessions.get_by_token_hash(tokens.digest(access_token))
         if session is None or not session.is_valid(now=self._now()):
-            await self._audit.denied(durable=True,
+            await self._audit.denied(
+                durable=True,
                 actor_type=ACTOR_ANONYMOUS,
                 action=AUTH_LOGIN_FAILED,
                 reason="unknown, revoked or expired access token",
@@ -334,7 +335,8 @@ class Authenticator:
             # Deleted or disabled while the token was still inside its lifetime.
             # Revoking stops the token lingering until it expires on its own.
             session.revoke(reason="account is no longer active", now=self._now())
-            await self._audit.denied(durable=True,
+            await self._audit.denied(
+                durable=True,
                 actor_type=ACTOR_USER,
                 actor_id=str(session.user_id),
                 action=AUTH_LOGIN_FAILED,
@@ -371,9 +373,7 @@ class Authenticator:
         the replay detectable at all -- deleting it would erase the only
         evidence that the token was ever spent.
         """
-        session = await self._sessions.get_by_refresh_token_hash(
-            tokens.digest(refresh_token)
-        )
+        session = await self._sessions.get_by_refresh_token_hash(tokens.digest(refresh_token))
         if session is None:
             raise AuthError("invalid refresh token")
 
@@ -382,7 +382,8 @@ class Authenticator:
         # like an ordinary dead token, which is precisely the case that must not
         # be silent.
         if session.revoked_at is not None:
-            await self._audit.denied(durable=True,
+            await self._audit.denied(
+                durable=True,
                 actor_type=ACTOR_USER,
                 actor_id=str(session.user_id),
                 action=AUTH_TOKEN_REUSE,
@@ -392,9 +393,7 @@ class Authenticator:
                 ip_address=ip_address,
             )
             revoked = (
-                await self._revoke_family(
-                    session.user_id, "refresh token reuse detected"
-                )
+                await self._revoke_family(session.user_id, "refresh token reuse detected")
                 if self._revoke_family is not None
                 else await self._sessions.revoke_all_for_user(
                     session.user_id,
@@ -497,7 +496,8 @@ class Authenticator:
         candidate = tokens.decode_api_key(api_key)
         user = await self._users.get_by_api_key_hash(tokens.digest(candidate))
         if user is None or not user.is_active:
-            await self._audit.denied(durable=True,
+            await self._audit.denied(
+                durable=True,
                 actor_type=ACTOR_ANONYMOUS,
                 action=AUTH_LOGIN_FAILED,
                 reason="unknown API key",
@@ -546,7 +546,8 @@ class Authenticator:
 
         device = await self._devices.authenticate(tokens.digest(device_token))
         if device is None:
-            await self._audit.denied(durable=True,
+            await self._audit.denied(
+                durable=True,
                 actor_type=ACTOR_ANONYMOUS,
                 action=AUTH_LOGIN_FAILED,
                 reason="unknown device token",

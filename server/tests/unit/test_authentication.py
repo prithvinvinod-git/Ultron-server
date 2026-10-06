@@ -250,7 +250,7 @@ async def test_refresh_reuse_revokes_the_family_outside_the_request_transaction(
     service = Authenticator(
         users=users,  # type: ignore[arg-type]
         sessions=request_sessions,  # type: ignore[arg-type]
-        audit=AuditLogger(audit_sink),  # type: ignore[arg-type]
+        audit=AuditLogger(audit_sink),
         settings=security,
         now=lambda: FIXED_NOW,
         revoke_family=lambda user_id, reason: durable_sessions.revoke_all_for_user(

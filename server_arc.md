@@ -89,6 +89,13 @@ Never make a specific agent framework the foundation of the entire architecture.
 
 Every external engine must be accessed through an adapter/interface.
 
+> **Amended after §63 (added with §64):** the diagram above is the logical
+> view. Physically, Core runs on the Ubuntu server (§64.4) while parts of the
+> tool layer execute on other machines - the Windows node (§64.6), the server
+> node (§64.7), the ESP32 (§64.9). The principles are unchanged: everything
+> still reaches the OS through adapters, and no node bypasses Core's
+> permission and event systems (§64.16).
+
 ---
 
 # 2. PRIMARY OBJECTIVES
@@ -431,6 +438,12 @@ RESPOND
 
 Do not allow agents to bypass the Core's permission and event systems.
 
+> **Amended after §63 (added with §64):** Core describes *what* the
+> orchestrator does, not *where* it runs. Core always runs in the cloud server
+> (§64.4); Windows, mobile, and ESP32 never host it. Nodes register their
+> capabilities with Core and execute tool calls it routes to them (§64.10,
+> §64.11) - they do not become orchestrators.
+
 ---
 
 # 6. AGENT RUNTIME
@@ -517,6 +530,13 @@ All can execute concurrently.
 Use asyncio/task management appropriately.
 
 Do not block the entire server because one agent is running.
+
+> **Amended after §65 (added with §66):** §66.5/§66.20 add the orchestration
+> contract on top of this runtime - selection, sequential/parallel invocation,
+> structured `AgentMessage` results between agents, per-invocation permission
+> checks and an execution history. The runtime itself (registry, manager,
+> lifecycle) is unchanged; agents still never bypass the Core's permission and
+> event systems.
 
 ---
 
@@ -737,6 +757,12 @@ The Windows node will later expose controlled capabilities such as:
 
 The server should issue structured commands rather than blindly executing arbitrary commands.
 
+> **Amended after §63 (added with §64):** this Computer Node diagram is now
+> normative rather than "later". It is the Windows node of §64.6, registered in
+> the single node registry of §64.5 with an explicit capability list (§64.10),
+> reachable through node-targeted tool execution (§64.11). The capability list
+> above matches §64.6.2; nothing new was added here.
+
 ---
 
 # 14. TOOL SYSTEM
@@ -820,6 +846,13 @@ Every execution is checked by Permission Manager.
 
 Every execution is logged.
 
+> **Amended after §63 (added with §64):** LEVEL 0 - LEVEL 5 remains the only
+> permission scale (D020). What §64.12 adds is *scope*: a grant is evaluated as
+> (principal, node, tool, operation), so a LEVEL 3 permission granted for the
+> server node does not silently authorise the same tool on the Windows node.
+> Client-side "capabilities" (§63.3) are a separate, non-security reporting
+> concern and never substitute for this check.
+
 ---
 
 # 16. TOOL EXECUTION PIPELINE
@@ -853,6 +886,13 @@ Event
  ↓
 LLM
 ```
+
+> **Amended after §63 (added with §64):** one pipeline stage sits between
+> Policy Check and Execution: **target selection** (§64.11). A tool call
+> carries a `node` target; the router dispatches it to the Windows node, the
+> server node, or an ESP32-capable handler, and the result returns through the
+> same Verification/Event stages. Tools that do not declare a node run where
+> they always ran - in the cloud server.
 
 ---
 
@@ -904,6 +944,14 @@ PARTIAL
 FAILED
 UNVERIFIED
 ```
+
+> **Amended after §65 (added with §66):** §66.4 writes the full
+> goal→plan→execute→verify lifecycle around this section -
+> UNDERSTAND → CONTEXT → PLAN → PERMISSION → AGENT → NODE → TOOL → OBSERVE →
+> VERIFY → complete | retry | replan | escalate - implemented by the existing
+> planner/orchestrator/executor tasks (T048-T050) on the task DAG (T040/T041).
+> This section's verification mechanisms remain the authority for *how* a
+> result is checked.
 
 ---
 
@@ -1000,6 +1048,12 @@ SCHEDULE_TRIGGERED
 
 Support asynchronous subscribers.
 
+> **Amended after §64 (added with §65):** telephony adds `VOICE_CALL_*` events
+> (CREATED/RINGING/CONNECTED/LISTENING/THINKING/SPEAKING/ENDED/FAILED) to this
+> bus - additive names on the same T030/T031 bus, never a second bus, and §19's
+> existing set is not renamed (same rule as §64.15). They fan out over the
+> existing SSE stream (T023/T320) to Electron, mobile, ESP32 and logs.
+
 ---
 
 # 20. MODEL ROUTER
@@ -1040,6 +1094,13 @@ model.router.select(
     speed="balanced"
 )
 ```
+
+> **Amended after §65 (added with §66):** §66.6 extends this router rather
+> than adding one: selection inputs grow (task/agent type, capability, latency,
+> cost, context size, availability, privacy, local/cloud preference) and
+> fallback chains (§59.9) gain provider **health tracking with temporary
+> circuit breaking**. Providers stay config-selected behind the adapter
+> interface; no provider type reaches agents, and no provider is hard-coded.
 
 ---
 
@@ -1105,6 +1166,14 @@ agent:research
 ```
 
 Do not mix unrelated project memories.
+
+> **Amended after §65 (added with §66):** §66.12-§66.13 extend this system in
+> place: preference/task/device/agent memory become **scopes on these same
+> layers** (not a second store), and knowledge/RAG ingestion
+> (source→ingest→parse→chunk→embed→index) targets the existing pgvector
+> `memories.embedding` vector store - one vector database, permission-scoped
+> retrieval, intentional extraction (conversation messages are not memorized
+> by default).
 
 ---
 
@@ -1194,6 +1263,12 @@ Support streaming/partial transcripts where practical.
 
 The ESP32 wake-word device should communicate with the server through a defined protocol.
 
+> **Amended after §64 (added with §65):** a phone call is a second *source* of
+> audio into this same subsystem, not a second voice system (§65.1). The
+> telephony service (§65.3) attaches call audio to a normal voice session
+> (T153); STT/TTS stay behind the `STTEngine`/`TTSEngine` ABCs (T150/T151), and
+> the pipeline above runs unchanged once audio arrives.
+
 ---
 
 # 26. ESP32 / DEVICE GATEWAY
@@ -1224,6 +1299,13 @@ device_offline
 ```
 
 Do not hard-code one ESP32 board into the Core.
+
+> **Amended after §63 (added with §64):** device records (T161) and node
+> records (T141/T332) are **one registry**, not two (D021). An ESP32 is a node
+> of type `esp32` carrying the device fields above plus heartbeat and
+> capability data (§64.5, §64.10); `device_online` / `device_offline` are the
+> same events as the `NODE_*` family of §64.15, kept under their existing names
+> here so §19 is not rewritten.
 
 ---
 
@@ -1299,6 +1381,14 @@ The server remains the actual execution environment.
 
 The UI is only a visualization/control surface.
 
+> **Amended after §63 (added with §64):** "the server" in this section means
+> **agents and their reasoning execute in the cloud server** - that is still
+> true. What §64.6 adds is that a *tool call* an agent makes may be routed to
+> the Windows node (§64.11), so the effects of some executions happen on
+> Windows while the agent, permission check, and event log stay server-side.
+> Window state is published as cross-node events (§64.15), so the visualization
+> surface works the same whether it is a local window or a remote one.
+
 ---
 
 # 29. API
@@ -1350,6 +1440,12 @@ Example:
 > is replaced by SSE `Last-Event-ID` filtering or distinct event paths. The
 > ESP32 device transport stays JSON-over-WebSocket (T162) and is unaffected.
 > Do not build the mobile/desktop client against `/ws`.
+
+> **Amended after §64 (added with §65):** telephony adds `/voice/calls`,
+> `/voice/calls/{call_id}`, `/voice/calls/{call_id}/end` and the unauthenticated
+> but signature-verified `/voice/webhooks/{provider}` intake (§65.6), following
+> this section's plural convention. User-facing routes require the existing
+> auth + permission dependencies; responses never carry provider secrets.
 
 ---
 
@@ -1800,6 +1896,14 @@ When a GitHub event occurs
 Use APScheduler initially or an equivalent lightweight scheduler.
 
 Persist important scheduled jobs.
+
+> **Amended after §65 (added with §66):** §66.11 places autonomous background
+> agents on this scheduler and the existing task DAG (T040/T041, T044 manager
+> lifecycle) - scheduling, cancel, pause/resume, retry, timeout, resource
+> limits, logs, notifications - bounded by a max-iteration/timeout policy so a
+> background agent cannot loop forever. §65.18 also lands scheduled phone calls
+> here: "call me at 8 PM" is an ordinary job whose action is
+> `telephony.initiate_call`. No second scheduler exists or is needed.
 
 ---
 
@@ -3580,6 +3684,13 @@ Agents request tools through the Tool Router. An agent does not import a tool
 module and call it directly; a direct call would bypass schema validation,
 permission checks and verification, which is the entire value of the pipeline.
 
+> **Amended after §65 (added with §66):** §66.14 adds registry fields this
+> section's pipeline increasingly needs: `output_schema`, `node_requirements`
+> (which §64.10 capability the target node must advertise), `risk_level`,
+> `availability`, `version`, and `reversibility` (§66.17). The interface,
+> validation-first ordering and Tool Router rule above are unchanged; tools
+> declare, the pipeline decides.
+
 ## 59.7 OPENROUTER PROVIDER — FREE MODELS ONLY
 
 Extends §3 (External AI), §20 (Model Router) and §21 (Ollama). **New provider.**
@@ -3885,6 +3996,14 @@ The client is a **client**. It holds no agent logic and no model access; it
 renders state and forwards intent. This is what keeps the server authoritative
 for permissions (§15) -- a permission decision made on the client is a permission
 decision nobody audited.
+
+> **Amended after §63 (added with §64):** the Windows client is a client **and**
+> a node (§64.3). Its `Local Computer Tools` box above becomes the Windows
+> node's registered capability set (§64.6.2): the client still holds no agent
+> logic and no model access, but it *does* expose an authenticated local
+> runtime that the server routes tool calls to (§64.11). Permission decisions
+> remain server-side (§64.12); the node executes what it is told, after
+> re-validating the call locally - it never decides policy itself.
 
 ## 59.15 WINDOWS COMPUTER CONTROL BRIDGE
 
@@ -4283,7 +4402,7 @@ shedding material** -- §59.25 pressure must not become §15 pressure.
 ## 59.26 IMPLEMENTATION STRATEGY
 
 Maps onto §51's phases rather than replacing them. Phases A and B are already
-done: §51 Phase 0 (T001-T009) and most of Phase 1.
+done: §51 Phase 0 (T001-T008) and most of Phase 1.
 
 ```text
 A  Inspect             DONE -- §51 Phase 0/1; repository, architecture,
@@ -4640,6 +4759,13 @@ a Windows laptop and could easily be misread as Windows-first.
 | ULTRON mobile client | Android and iOS | - |
 | ULTRON Orb | Windows, inside the desktop client | - |
 
+> **Amended after §63 (added with §64):** §64.3 splits these rows by *role*
+> rather than by *product*: the desktop client row is client **and** Windows
+> node; the server row is client **and** server node; the ESP32 (§26) is a
+> node with no client UI; the mobile row stays client-only (D022). Nothing is
+> added to the "never runs on" column - Core still never runs on Windows or
+> mobile (§64.4).
+
 ### 62.2 The server host is Ubuntu Server OS
 
 The server host is **Ubuntu Server OS**. Ubuntu Server 26.x is the only
@@ -4761,6 +4887,15 @@ The Windows-specific computer-control bridge (§59.15) is therefore **desktop
 only**, and stays deferred and last (§59.15) - it cannot be the mobile client's
 answer to anything.
 
+> **Amended after §63 (added with §64):** this table still holds, with one
+> reframing from §64.8. Those capabilities were listed as *Windows desktop
+> client* features; §64.6 moves them onto the **Windows node** - the same
+> machine, an explicitly registered target. Mobile's column is unchanged: every
+> **revoked** row stays revoked, because revocation describes what the *phone*
+> can do, and a phone cannot do it by asking a node to do it for it. The
+> difference is that mobile can now *direct* Windows-node capabilities the
+> server has authorised (§64.18.1), while holding none itself (D022).
+
 ### 63.4 The ESP32 mode is control-panel only
 
 The PWA has a **separate mode dedicated to the ESP32**. That mode is a
@@ -4829,3 +4964,1693 @@ Installable implies it will be opened on bad networks. Per §60.4 the client own
 a local cache (SQLite/IndexedDB) for recent conversations and a bounded one-way
 outbox for commands, shows cached data with its age, and marks queued commands
 as pending. It must never present queued work as completed.
+
+---
+
+==========================================================================
+# 64. DISTRIBUTED NODE ARCHITECTURE — CORE, NODES, CLIENTS (ADDENDUM)
+==========================================================================
+
+## 64.0 STATUS AND NON-DESTRUCTIVE RULE
+
+This section is **additive**, on the same terms as §59. Sections 1-63 remain in
+force. Where this section restates an existing requirement it is marked
+**extend**, and the original section stays authoritative. Nothing here deletes,
+rewrites or competes with an existing decision.
+
+```text
+DO NOT
+  - treat the Ubuntu server as the only execution environment
+  - route a Windows operation through Ubuntu merely because a server exists
+  - grant the mobile client Windows-local control
+  - treat the ESP32 as an AI computer
+  - build a second tool registry, a second permission layer, a second event
+    system, or a second agent runtime for the node architecture
+  - renumber or re-time the existing task list
+
+DO
+  - extend the existing tool registry (§14, §59.6), permission layer (§15),
+    event bus (§19), node gateway (§13, T141) and device registry (§26, T161)
+  - execute each operation on the node that owns the relevant capability
+  - report an unavailable capability honestly (§33, §54, §63.3)
+  - record new work as tasks T330+ in tasks.md
+```
+
+The two failure modes §59.0 names still apply: a parallel implementation is a
+hole with the same reach as the real one, and a specification that disagrees
+with the code is a defect.
+
+## 64.1 EXTENSION MAP
+
+Read this first. Most of the requested surface already exists; the right-hand
+column is the actual work.
+
+| Requested capability | Existing section / tasks | Verdict | Amendment work |
+|---|---|---|---|
+| Distributed core + node vision | §1, §5, §40 | extend | §64.2-§64.5, T330 |
+| Core decides *what*, node decides *where* | §5, §59.21 | extend | §64.4 |
+| Client vs node distinction | §40, §59.14, §62 | extend | §64.3 |
+| Windows node (Electron, local execution) | §13, §42, §59.14, §59.15, Phase 8 (T140-T148), T261, T262 | extend | §64.6, T340-T347 |
+| Server node | §5, §12, §47, §59.5, §62.2 | extend (clarify) | §64.7, T348 |
+| Mobile web app | §62.4, §63, T315-T322 | extend | §64.8, T350-T351 |
+| ESP32 node | §26, §27, §59.13, Phase 10 (T160-T167), §63.4 | extend | §64.9, T352 |
+| Shared ULTRON Core | §5, §59.21 | extend | §64.4 |
+| Node capability model | §59.6, T141, T161 | extend | §64.10, T331-T332 |
+| Node registration / discovery | T141, T161 | extend | §64.10, T332 |
+| Node availability / heartbeat | T141 (`heartbeat`), T161 (`last_seen`) | extend | §64.14, T333 |
+| Node-targeted tool routing | §14, §16, §59.6 | extend | §64.11, T334 |
+| Permissions: user/client/node/risk/confirmation | §15, §59.3-§59.5 | extend | §64.12, T353 |
+| Node authentication | §30, T142, T161 | extend | §64.13, T353 |
+| Cloud vs nodes vs clients | §3, §60, §63 | extend | §64.3, §64.17 |
+| Availability / offline behaviour per node | §33, §60.4, §63.3 | extend | §64.14, T333, T336 |
+| Cross-node event protocol | §19, §27, §28, T030/T031, T023, T162 | extend | §64.15, T335, T352 |
+| Example workflows | — | **new** | §64.18 |
+| Cross-node testing | §38, T147, T166, T290 | extend | T354 |
+
+## 64.2 THE ARCHITECTURE PRINCIPLE
+
+Three statements, and they govern every decision in this section:
+
+> **ULTRON is a distributed personal agent system. Intelligence/orchestration
+> and execution are logically separated. Nodes own capabilities; clients
+> provide interfaces; the Core routes authorized operations to the appropriate
+> node.**
+
+> **Having an Ubuntu server does not mean Windows operations should execute on
+> Ubuntu.** The server is *a* node, not *the* node. An operation executes on
+> the node that owns the relevant capability.
+
+> **The same ULTRON system can operate through Windows, Ubuntu, mobile, and
+> ESP32 interfaces.** One Core, one permission layer, one event bus, one tool
+> registry — several interfaces and several execution surfaces.
+
+```text
+                            ULTRON
+                               |
+                        ULTRON CORE            intelligence / orchestration
+                               |                (hosts on the server node)
+          +--------------------+--------------------+
+          |                    |                    |
+          v                    v                    v
+   WINDOWS NODE           SERVER NODE          ESP32 NODE
+   Electron app           Ubuntu Ultron        Desk device
+   Windows OS             Linux OS             Physical UI
+   local tools            local tools          display/mic/speaker/buttons
+          |                    |                    |
+          +--------------------+--------------------+
+                               |
+        CLIENTS (interfaces)  |  CLOUD SERVICES (not nodes)
+   Windows Electron UI        |  Firebase Auth (§60.2)
+   Mobile web app (§63)       |  Vercel app hosting (§63)
+   Future desktop/web clients |  cloud AI APIs (§3, §59.7)
+                              |  notifications, sync, storage
+```
+
+The diagram is conceptual. It does not move any component: the Core, agents,
+model router, memory and event bus stay where §4 and §59.21 already put them.
+
+## 64.3 CLIENTS, NODES, AND CLOUD SERVICES
+
+Three categories, kept distinct on purpose. Collapsing any two of them is how a
+permission decision ends up being made in a place nobody audits.
+
+| | CLIENT | NODE | CLOUD SERVICE |
+|---|---|---|---|
+| Definition | sends requests, displays results | **owns capabilities, executes operations** | third-party/remote support, not an execution surface |
+| Holds agent logic | no | no (the Core does) | no |
+| Holds model access | no | no (the Core does) | it *is* the model provider |
+| Can execute a tool | no | **yes**, after §15 | no |
+| Examples | Windows Electron UI, mobile PWA (§63), future web/desktop clients | Windows node, server node, ESP32 node | Firebase Auth, Vercel, OpenRouter/OpenAI/Gemini/Anthropic |
+| Offline effect | shows cached state (§60.4) | its capabilities disappear (§64.14) | dependent features degrade (§59.9) |
+
+**The Electron application is both a client and a node.** One installed
+artefact, two roles:
+
+```text
+Windows Electron app
+  ├── CLIENT role
+  │     renders server state, orb, agent windows, chat, notifications
+  │     forwards intent to the Core            (§59.14, §28)
+  │     holds NO agent logic, NO model access  (§59.14 unchanged)
+  │
+  └── NODE role
+        owns Windows capabilities
+        executes structured Windows tool requests locally (§64.6)
+        a tool executor, not a second agent runtime
+```
+
+These do not conflict. §59.14 forbids *intelligence* on the client; the node
+role is *execution*, and it goes through the same tool schema (§14), the same
+permission levels (§15) and the same audit (§31, §59.24) as every other tool.
+
+## 64.4 ULTRON CORE — WHAT VERSUS WHERE
+
+The Core (§5) already owns orchestration. What this section adds is the
+explicit split of questions:
+
+```text
+ULTRON CORE asks:   "What needs to happen?"
+                     understand -> plan -> task -> agent -> model -> tool
+                     memory, permissions, sessions, events, verification
+
+TARGET NODE asks:   "Where does it execute?"
+                     which node owns this capability
+                     is that node online
+                     is this principal authorized for it on that node
+```
+
+The Core therefore gains two responsibilities it did not previously state,
+both of which are routing concerns rather than new subsystems:
+
+```text
+CAPABILITY DISCOVERY      which node advertises this capability, now
+EXECUTION ROUTING         resolve capability -> node -> tool executor
+```
+
+Everything else the Core does — intent, planning, task graphs, agent
+management, model routing, memory, permissions, events, authentication,
+sessions, verification — is unchanged and stays where §5, §59.8 and §59.21
+placed it. **No component is moved into a new "core" package.** `app/core/`
+is the Core; the node work extends it with a router, not a second brain.
+
+The Core does not assume it runs "on the server" as a matter of principle; it
+runs where it is deployed, which today is the Ubuntu server (§62.2). A future
+host for the Core is a deployment question, not a reason to redesign §5.
+
+## 64.5 NODE INVENTORY
+
+| Node | Platform | Role | Specification |
+|---|---|---|---|
+| **Windows node** | Windows, Electron | first-class execution node for Windows-local operations; also the primary UI client | §64.6 |
+| **Server node** | Ubuntu Server | always-on Linux execution, hosts Core/agents/services, coordinates other nodes | §64.7 |
+| **ESP32 node** | ESP32 | physical desk interface: display, audio, buttons, wake state — **not** an AI computer | §64.9 |
+| Future nodes | Linux desktop, other devices | added by registering with the same registry (§64.10) | — |
+
+A node is any machine/device that owns capabilities and can execute a
+structured tool request. Registration, capability advertisement and heartbeat
+are what make it a node rather than an unnamed client (§64.10).
+
+## 64.6 WINDOWS NODE
+
+Extends §13 (Computer Agent), §42 (future computer control), §59.14 (desktop
+client) and §59.15 (Windows tool bridge). **New: Windows operations execute on
+Windows.**
+
+### 64.6.1 The rule
+
+The primary Windows experience is an Electron application installed on
+Windows. It executes Windows-specific operations **locally**, through
+controlled local tools.
+
+```text
+CORRECT          User -> ULTRON Core/agent -> Windows node -> permission
+                 layer -> Windows -> Chrome
+
+WRONG            User -> Ubuntu server -> Ubuntu Chrome -> "somehow control
+                 the Windows machine"
+```
+
+The Ubuntu server is not required for an actual Windows application launch.
+The server may *route* a request to the Windows node, but it is not in the
+execution path of a local operation, and a Windows operation is never
+performed by the server's own OS.
+
+### 64.6.2 Windows-local capabilities
+
+```text
+filesystem              git                 PowerShell / terminal
+application launch      application manage   browser launch
+browser automation      Windows UI automation
+process management      screenshots          system information
+system controls         notifications        audio / device interaction
+other approved Windows tools
+```
+
+Every one of these is a **structured tool** (§14, §59.6) with a declared
+permission level (§15). None of them is a general shell handed to a model.
+
+### 64.6.3 Two authorized paths, one tool contract
+
+```text
+PATH A — local (server not required, works offline)
+
+  Electron UI / local trigger
+        |
+  Windows node runtime          local capability discovery
+        |
+  local permission layer        §15 levels, local policy, audit
+        |
+  Windows tool executor
+        |
+  Windows OS
+
+
+PATH B — routed (another client or the Core asks for a Windows capability)
+
+  Mobile / web / agent
+        |
+  ULTRON Core                   capability discovery -> node = "windows"
+        |
+  permission check (server)     §15 + node authorisation + confirmation
+        |
+  structured tool request       { "tool": ..., "node": "windows", ... }
+        |
+  Windows node (outbound connection, §59.15)
+        |
+  node permission check         a request the node refuses is refused
+        |
+  Windows tool executor
+        |
+  Windows OS
+```
+
+Both paths use the **same** tool schema, permission levels and audit records.
+Path B re-checks on the node because a request that reached the wire is not
+the same thing as a request that was authorized (§64.13).
+
+### 64.6.4 Shape of the application
+
+```text
+Windows Electron App
+  ├── main process      window lifecycle, IPC, local tool executor
+  ├── preload           an explicit, minimal bridge — no raw Node to renderer
+  ├── renderer          ULTRON UI: orb, chat, agent windows, notifications
+  └── node runtime      registration, heartbeat, tool dispatch, local audit
+```
+
+- The **renderer never executes tools.** It renders state and forwards intent
+  (§59.14). The main process is the tool executor, which is what makes the
+  preload boundary meaningful.
+- The node runtime is a client of the server's node gateway (§13, T141) over
+  an **outbound** connection (§59.15): no inbound LAN listener, consistent
+  with §31.
+- Windows-specific execution sits behind Windows-specific adapters (§36,
+  §64.20). Nothing in `server/` imports a Windows API.
+
+### 64.6.5 What the Windows node is not
+
+- It is not a second agent runtime. Agents run where the Core runs (§64.16).
+- It is not a second permission system. It implements §15 locally.
+- It is not required to be online for server, cloud or mobile capabilities to
+  work (§64.14).
+
+## 64.7 SERVER NODE
+
+Extends §5, §12, §47, §59.5 and §62.2. **The Ubuntu server remains a
+first-class ULTRON node. It is not removed, and it is not required to perform
+Windows-local operations.**
+
+The server node provides the always-on Linux execution environment and the
+persistent/background half of the system:
+
+```text
+run ULTRON services, Core and agents       run long-running background agents
+execute Linux applications                 run scheduled tasks (§44)
+launch/control Linux browsers              maintain persistent services
+filesystem and Git operations              maintain server-side state
+terminal and server administration tools   coordinate other nodes (§64.10)
+browser automation                          communicate with the ESP32 (§26)
+APIs / SSE / device WebSocket              host optional local AI (§21, §48)
+provide execution when Windows is offline  schedule + automation (§44)
+```
+
+Two clarifications this section exists to make:
+
+1. **Windows execution is not a server duty.** The server *routes* Windows
+   requests (§64.6.3 Path B) and enforces permissions before routing. It does
+   not perform them.
+2. **The server is one node among several from the router's point of view.**
+   Its tools carry `node = "server"` and are selected by capability like any
+   other node's (§64.10). Nothing in the tool pipeline special-cases the
+   server — which is what keeps "the server is the only execution
+   environment" from re-entering the code through the back door.
+
+## 64.8 MOBILE CLIENT
+
+Extends §62.4 and §63. The mobile-first web client is the Next.js PWA already
+decided in §63; this section adds its **capability scope** as a ULTRON
+interface.
+
+```text
+Phone -> ULTRON mobile web app -> ULTRON server/node -> Linux tool
+```
+
+The mobile client is **a client** (§64.3). It has no node role of its own. It
+is a remote interface to the server and to other *authorized* capabilities.
+
+In scope:
+
+```text
+chat                                 voice interaction where supported
+viewing agent activity               viewing tasks
+starting/stopping authorized tasks   server system status
+server application control           server filesystem operations
+server browser operations            server Git operations
+server terminal/tool operations      memory/conversation access per permissions
+device status                        ESP32 control (the §63.4 control panel)
+notifications / events where supported
+```
+
+Out of scope, and stated as a rule rather than a omission:
+
+> **The mobile client is granted no Windows-local control.** A Windows
+> capability is never exposed through the PWA unless a future explicit
+> remote-Windows feature is added with its own authentication, authorisation
+> and audit. §63.3's revocation table stands unchanged.
+
+**§63.3's revocations are about client-local execution, not server
+capabilities.** "Launch local applications: revoked" means the PWA sandbox
+cannot launch an app *on the phone*. It says nothing about asking the server
+to open Firefox *on the server*. Both facts are reported to the UI by the
+capability matrix (T316), which now reports per **node** rather than per
+client only.
+
+## 64.9 ESP32 NODE
+
+Extends §26 (device gateway), §27 (orb backend), §59.13 (orb states) and
+§63.4 (control panel). **The ESP32 is a dedicated physical ULTRON node. It is
+not a full AI computer and not a server.**
+
+```text
+ULTRON SERVER
+      |
+Device Gateway / node registry        §26, T161, T332
+      |
+ESP32 node                            JSON-over-WebSocket (T162), dials OUT
+      |
+display   microphone   speaker   buttons/joystick/touch   sensors
+```
+
+Role:
+
+```text
+physical ULTRON desk interface        real-time ULTRON events
+display / status UI                   server and node status
+wake / listening state                visual feedback
+microphone and speaker where fitted   physical controls
+device status / heartbeat
+```
+
+**One event system.** The ESP32 consumes the same event bus (§19) as every
+other surface; it does not get a parallel one. Transports differ, events do
+not:
+
+| Consumer | Transport |
+|---|---|
+| Windows Electron UI, mobile PWA | receive-only SSE (T023, T320) |
+| ESP32 node | device JSON-over-WebSocket (T162) |
+| Windows/other execution nodes | node gateway connection (T141) |
+| internal subscribers | in-process bus (T031) |
+
+Event types this section adds to the canonical set in T030 (existing types in
+§19 and §27 are not renamed):
+
+```text
+TASK_PROGRESS        node lifecycle        NODE_ONLINE  NODE_OFFLINE
+                                             SERVER_ONLINE  SERVER_OFFLINE
+                                             WINDOWS_ONLINE WINDOWS_OFFLINE
+orb / agent states   LISTENING  THINKING  SPEAKING  ORB_SHOW  ORB_HIDE
+                                             AGENT_STOPPED
+```
+
+`TASK_STARTED`, `TASK_COMPLETED`, `TASK_FAILED`, `AGENT_STARTED` and
+`DEVICE_CONNECTED` / `DEVICE_DISCONNECTED` already exist in §19; `ORB_SHOW`,
+`ORB_HIDE` and the agent-window events already exist in §27. They are listed
+here so the ESP32's display contract can be written against one name per fact
+— §19 (`DEVICE_DISCONNECTED`) and the §58 checklist (`DEVICE_OFFLINE`) already
+disagree, and a third spelling is not welcome.
+
+## 64.10 NODE CAPABILITY MODEL
+
+Extends §59.6 (unified tool registry) and T141/T161. **One registry, one
+router; capabilities are advertised, not assumed.**
+
+```text
+WINDOWS NODE                        SERVER NODE
+  filesystem                          linux_apps
+  powershell                          linux_shell
+  windows_apps                        filesystem
+  windows_ui                          browser
+  browser                             git
+  git                                 server_management
+  processes                           background_agents
+  screenshots                         scheduler
+  notifications                       services
+  clipboard (high-sensitivity)
+
+ESP32 NODE
+  display      microphone     speaker
+  buttons      sensors        physical_controls
+```
+
+Rules:
+
+- **Capabilities are strings on a node record, not a new subsystem.** The node
+  record already exists in two places: `devices` (§26, T161, with a
+  `capabilities` column) and the computer-node registration (§13, T141). T332
+  unifies them behind **one** node registry. A third registry is forbidden
+  (§59.0).
+- **The tool registry stays the authority on what a tool is** (§14, §59.6). A
+  capability is the *name of a family a node can host*; the tool itself still
+  declares `name`, `input_schema`, `permission_level`, `execute`, `verify`,
+  `timeout`, `audit`. §59.6's required fields are unchanged; `node_scope` is
+  added to them (§64.11).
+- **Discovery is live, not a config file.** A node's advertised capabilities
+  come from its registration and heartbeat (§64.14), so an offline node stops
+  offering them without a configuration change.
+- **Discovery is exposed like the rest of the API** (§29):
+  `GET /nodes`, `GET /nodes/{id}` — registration, capabilities, status,
+  `last_seen`. Read access follows §15; mutating node records requires an
+  elevated level.
+
+Conceptual record — illustrative, not a literal schema:
+
+```text
+node_id            windows | server | esp32:<id>
+node_type          windows | server | esp32 | future
+capabilities[]     advertised, refreshed on heartbeat
+status             online | offline | degraded
+last_seen
+auth               node credential reference (§64.13)
+client_of          which UI, if any, is co-located (Electron = both)
+```
+
+## 64.11 NODE-TARGETED TOOL EXECUTION
+
+Extends §14 (tool system), §16 (execution pipeline) and §59.6 (registry). The
+LLM still never reaches the operating system directly.
+
+```text
+User
+  |
+ULTRON Core / Agent
+  |
+Structured Tool Request          { tool, node?, args }
+  |
+Capability discovery             resolve node, or confirm the named node
+  |
+Permission / Policy Layer        §15 + client + node + target + confirmation
+  |
+Target Node                      "server" | "windows" | "esp32:<id>"
+  |
+Tool Executor                    local dispatch, or routed to that node
+  |
+Operating System / Device
+  |
+Verification -> Event -> Result  §17, §19 — unchanged
+```
+
+Examples, following the schema style already used in §59.6 and §14:
+
+```json
+{ "tool": "open_application", "node": "windows", "application": "chrome" }
+```
+
+```json
+{ "tool": "open_application", "node": "server",  "application": "firefox" }
+```
+
+```json
+{ "tool": "git", "node": "server", "operation": "status", "workspace": "ultron" }
+```
+
+Rules:
+
+- **`node` is an extension of the existing tool request, not a second
+  protocol.** A request with no `node` is resolved by capability discovery;
+  a request with a `node` is checked against that node's advertised
+  capabilities. Either way it enters the *same* §16 pipeline.
+- **The model expresses a preference; the router decides.** A model that
+  names a node it is not authorized for, or a node that is offline, gets a
+  typed refusal (§33), not a silent re-route to a node the user did not
+  authorize.
+- **A capability available on several nodes resolves by explicit policy** —
+  node affinity, availability, and the requesting client. The default must be
+  deterministic and logged, because "which machine did that run on" has to be
+  answerable after the fact (§59.24).
+- **Offline node ⇒ typed `NODE_UNAVAILABLE`**, surfaced to the user with the
+  capability name. Never a hang, never a quiet success (§54, §63.3).
+- Windows dispatch obeys §64.6.3: routed requests are checked on the server
+  *and* on the node.
+
+## 64.12 PERMISSIONS
+
+Extends §15. **The LEVEL 0-5 scale in §15 is unchanged and remains the only
+permission scale in the project.** What this section adds are the dimensions
+over which a level is evaluated, and an explicit confirmation rule.
+
+Dimensions of one decision:
+
+```text
+user             who is asking
+client           which interface asked (Electron, PWA, voice, device)
+node             where it would execute
+tool             what capability
+operation        what specifically (§59.3's SAFE / CONTROLLED / EXPLICIT)
+risk level       the tool's declared §15 level
+target resource  workspace, path, service, device
+confirmation     does this invocation require an explicit yes
+```
+
+Reconciliation with the proposed labelling — the existing scale wins where
+they differ:
+
+| Proposed label | Existing §15 level | Verdict |
+|---|---|---|
+| 0 = answer only | LEVEL 0 (read-only) | **extend**: level 0 covers tool-free answers *and* reads; an answer needs no tool at all |
+| 1 = read information | LEVEL 0 | same meaning, already covered |
+| 2 = safe local action | LEVEL 1 (safe actions) | same meaning |
+| 3 = application/system action | LEVEL 3 (execute programs) | LEVEL 2 (modify project files) stays as its own level and is not merged away |
+| 4 = potentially destructive | LEVEL 4 (system configuration) | same meaning |
+| 5 = sensitive / high-impact requiring confirmation | LEVEL 5 (destructive / high-risk) | **extend**: confirmation is now explicit — see below |
+
+Confirmation rule, consistent with §59.3, §59.4 and §59.5:
+
+```text
+LEVEL 0-1    no confirmation
+LEVEL 2      confirmation unless pre-authorized for this workspace
+LEVEL 3      confirmation unless pre-authorized for this operation
+LEVEL 4      explicit confirmation per invocation
+LEVEL 5      explicit confirmation per invocation, naming the target node
+```
+
+Node-specific rules:
+
+- **A permission decision is made for a (principal, node, tool, operation)
+  tuple.** Granting a principal LEVEL 3 on `server` grants nothing on
+  `windows`.
+- **Cross-node actions are confirmed on the requesting side and re-checked on
+  the executing side** (§64.6.3).
+- **Screenshot and clipboard remain high-sensitivity** wherever they run
+  (§59.15), and now carry the node in the audit row (§59.24).
+- **Nothing is ever shed to save resources.** §59.25's rule is reaffirmed:
+  memory pressure never reduces a permission evaluation.
+
+## 64.13 NODE IDENTITY AND AUTHENTICATION
+
+Extends §30, T142 (node authentication) and T161 (device auth). One identity
+model for all three node types:
+
+```text
+node registers        presents a node credential          §30, T142
+server verifies       records the node, capabilities      node registry
+heartbeat             re-authenticates, refreshes caps    §64.14
+tool request          carries principal + node + tool     §64.11
+server check          principal authorized for this node  §15, §64.12
+node check            node re-verifies the request        §64.6.3 Path B
+audit row             principal, client, node, tool,
+                      operation, level, decision          §31, §59.24
+```
+
+- **Connections are outbound from the node/client to the server** (§59.15,
+  §31): no inbound LAN listener on a user's Windows machine.
+- A node credential authenticates *a node*, never a user. Sessions (§30) and
+  node identities are different principals and are recorded as such
+  (`actor_type`), the way §60.2 already separates a Firebase UID from a
+  ULTRON session.
+- **Revocation works per node.** Losing a node's credential removes that
+  node's access without touching the user's session, and vice versa.
+- The ESP32 keeps its existing device auth (§26, `ESP32_REQUIRE_AUTH`); this
+  section does not create a second device credential type.
+
+## 64.14 AVAILABILITY AND OFFLINE MODEL
+
+Extends §33 (graceful degradation), §60.4 (offline continuity) and §63.3
+(capability reporting). **ULTRON is not one monolithic machine, and capability
+availability is explicit rather than assumed.**
+
+| Condition | Effect |
+|---|---|
+| Windows node online | Windows tools available to every authorized principal |
+| **Windows node offline** | Windows tools reported unavailable with a reason; server, cloud, ESP32 and mobile-server capabilities keep working |
+| Server node online | Core, agents, server tools, tasks, scheduler available |
+| **Server node offline** | Mobile server controls unavailable (honest "server unreachable", §60.4); the Electron client's Windows-local capabilities continue; the PWA shows cached state with its age |
+| Cloud unavailable | local capabilities continue; model fallback per §59.9; **no promise of what the implementation cannot do** (§54) |
+| ESP32 node offline | device controls and device events unavailable; everything else unaffected |
+| Client offline | its session's requests stop; nodes and other clients are unaffected |
+
+Mechanisms (all existing, none new):
+
+```text
+heartbeat + timeout       node registry (T332/T333), extends devices.last_seen
+NODE_ONLINE / NODE_OFFLINE events    §64.15, on the one event bus
+capability matrix         T316, now per node
+typed errors              NODE_UNAVAILABLE, §33's degrade-don't-crash
+```
+
+An offline node is never simulated. §54 applies unchanged: ULTRON does not
+pretend a node is reachable, and does not pretend a capability exists.
+
+## 64.15 EVENTS AND THE CROSS-NODE EVENT PROTOCOL
+
+Extends §19 (event bus), §27 (orb), §28 (agent windows). **One bus, several
+transports, no duplicate event system.**
+
+```text
+producer (agent / Core / node / device)
+      |
+   EVENT BUS (T031)                single canonical type set (T030 + §64.9)
+      |
+      +--> in-process subscribers  logger, memory, scheduler, monitoring
+      +--> SSE to clients          T023, T320  (Electron UI, mobile PWA)
+      +--> device WebSocket        T162        (ESP32)
+      +--> node gateway            T141        (Windows node, future nodes)
+      +--> Redis bridge (optional) T031
+```
+
+Cross-node protocol requirements:
+
+- **Events carry the node.** An event caused by, or delivered to, a node
+  identifies it (`node_id`), so a UI can show *which* machine is offline.
+- **Delivery is at-least-once with idempotent consumers**, or is explicitly
+  documented as lossy — the choice is made once, in T335, not per consumer.
+- **A node that misses events recovers by re-fetching state**, the same rule
+  T320 already imposes on the PWA. Events are not a durable log.
+- Node lifecycle events (`NODE_ONLINE` / `NODE_OFFLINE` and their
+  `SERVER_`/`WINDOWS_`/`ESP32_` forms) are produced by the node registry
+  (T333) and are the same events the ESP32 uses to light its status display.
+
+## 64.16 AGENT ARCHITECTURE
+
+Extends §6, §7, §41 and §59.21. **The multi-agent architecture is preserved
+exactly as specified.** What changes is that an agent's tools are no longer
+implicitly assumed to live on the server.
+
+```text
+                        ULTRON CORE
+                   /                    \
+          Agent Router               Tool Router (§59.6 + §64.11)
+                |                          |
+     Coding Research Browser ...     capability -> node -> executor
+                |                     /          |          \
+                +---- agents ------- windows    server     esp32
+```
+
+- An agent declares **capabilities it needs**; the Tool Router resolves them
+  against the node registry. "Where are my tools?" is a routing question, not
+  an agent-code question.
+- **The same agent can execute on different nodes for different tasks:**
+
+```text
+Coding Agent on the Windows node:
+  Windows filesystem + Windows Git + Windows terminal + OpenCode CLI
+
+Coding Agent on the server node:
+  server filesystem + Linux Git + Linux terminal + OpenCode CLI
+```
+
+- **The OpenCode CLI integration (§8, §9) is unchanged** and remains the
+  coding-engine implementation where already planned. It is not replaced,
+  duplicated or moved.
+- **One agent runtime.** A node executes *tools*; it does not host agents
+  (§64.6.5). Agent lifecycle, model routing, memory scoping (§59.23) and
+  verification (§17) stay where they are.
+- New agent *types* are not implied by this section. §59.22's rule stands: an
+  agent is a capability profile over existing tools wherever possible.
+
+## 64.17 CLOUD SERVICES ARE NOT NODES
+
+Cloud services (§3, §60, §63) remain part of the architecture and remain
+**services**, not execution surfaces:
+
+```text
+Firebase Auth       identity at the door      §60.2 — never a ULTRON session
+Vercel              hosts the PWA app shell   §63.5 — never holds secrets
+OpenRouter/OpenAI/Gemini/Anthropic
+                    model providers           §3, §59.7 — never execute tools
+notifications/sync/storage                    §45 — providers behind an interface
+```
+
+A cloud service cannot be a target node: it has no ULTRON tool executor, it
+is not covered by §15, and it does not advertise capabilities. The three-way
+distinction in §64.3 is the test: **if it cannot execute a structured tool
+request after a permission check, it is not a node.**
+
+> **Amended after §63 (added with §65):** the telephony provider (Twilio and
+> siblings, §65.4) is classified here: a **cloud service**, never a node - it
+> has no tool executor and is not a capability target. The **telephony service**
+> (§65.3) runs on the server node like any other server-side component
+> (§64.7, §65.19); the provider is an outbound dependency behind an adapter,
+> in the same category as the model providers above.
+
+## 64.18 EXAMPLE WORKFLOWS
+
+### 64.18.1 Mobile → server: "Open Firefox on the server."
+
+```text
+Mobile UI
+  -> authenticated API + SSE (§63.5, T023, T320)
+  -> ULTRON Core
+  -> capability discovery        "browser" advertised by node "server"
+  -> server node selected
+  -> permission check            §15, client = mobile, node = server
+  -> structured tool request     { "tool": "open_application",
+                                   "node": "server",
+                                   "application": "firefox" }
+  -> server browser tool
+  -> Firefox opens on Ubuntu
+  -> verification (§17) + event (§19)
+  -> SSE event/result returned
+  -> Mobile UI updates
+```
+
+This is **not** Windows automation. No Windows capability is involved, and the
+phone's own sandbox is irrelevant to it.
+
+### 64.18.2 Windows: "Open Chrome."
+
+```text
+Electron UI (client role)
+  -> ULTRON Core / agent (local intent handling)
+  -> Windows capability discovery     node "windows" advertises windows_apps
+  -> permission check                 §15 + local policy (§64.6.3 Path A)
+  -> Windows application tool
+  -> Chrome opens on Windows
+  -> event / result
+```
+
+The Ubuntu server is **not** required for this launch. If the request arrives
+from another client instead, it takes Path B: server permission check → routed
+to the Windows node → node re-check → execute.
+
+### 64.18.3 ESP32: agent state
+
+```text
+Server/agent state: AGENT THINKING
+
+  ULTRON event bus emits THINKING / AGENT_STARTED   (§19, §64.9)
+        |
+  device gateway fans out over T162
+        |
+  ESP32 node -> display / LED / UI changes
+```
+
+And the reverse direction:
+
+```text
+ESP32 wake / button input
+        |
+  device gateway (T162) -> WAKE_DETECTED (§19)
+        |
+  voice pipeline (§25, §59.16-§59.20) -> agent/LLM
+        |
+  response -> TTS -> ESP32 audio + display feedback
+```
+
+Both directions use the existing voice/device architecture. No second
+pipeline.
+
+### 64.18.4 Coding agent across nodes
+
+```text
+"Fix the login bug in the repo on my PC."
+
+  Core -> planning -> Coding Agent
+       -> capability discovery: repository lives on node "windows"
+       -> permission check (workspace grant, §59.4)
+       -> Windows node: filesystem + Git + terminal + OpenCode
+       -> verification on the node
+       -> result + events to every subscribed client
+```
+
+## 64.19 CONFLICTS RECONCILED
+
+Apparent contradictions with sections 1-63, and how each is resolved:
+
+| Apparent conflict | Resolution |
+|---|---|
+| §28: "The server remains the actual execution environment" | True for **agent instances**: agents run where the Core runs, and an agent window visualises a server-side agent. **Tool execution** is routed to the owning node (§64.11). Both statements hold |
+| §59.14: "The client is a client... no agent logic, no model access" | Unchanged. The Electron node role is a **tool executor** (§64.3), which is neither agent logic nor model access |
+| §13/§42/§59.15 describe the server calling into a Windows client | Preserved as **Path B** (§64.6.3). Path A (local execution with no server round trip) is the addition; it uses the same schema and permissions |
+| §61: "ULTRON is never run on the development machine" | Unchanged, and it still applies to the **server** and to running a live Windows node **on the author's laptop**. The Windows node as a product ships to a Windows target machine (§62.3); on this laptop it is developed and tested through unit/contract tests and the T146 test double |
+| §63.3: mobile cannot launch applications | About the **phone's** sandbox. Server-node application control is available to mobile (§64.8). Both are reported by the capability matrix |
+| §62.1 table lists the desktop client as a client only | Amended by §64.3: it is a client **and**, in its node role, the Windows execution node |
+| §64.9 adds ESP32 events while §19 already lists device events | Additive: §19's set is not renamed; §64.9 adds the missing names so one fact has one spelling (T300/T335) |
+| "Server is the only execution environment" reading of §5/§41 | Refuted explicitly by §64.2, §64.7; the tool pipeline does not special-case the server |
+| A second architecture could be read into this section | §64.0 forbids it: same registry, router, permission layer, event bus, agent runtime |
+
+## 64.20 DEVELOPMENT, DEPLOYMENT, AND RESOURCE CONSTRAINTS
+
+**Preserved unchanged:** §36 (Windows development, Linux equivalents),
+§51/§53 (phased build, inspect first), §59.25 (4 GB server / 8 GB laptop),
+§61 (never run ULTRON on the development machine), §62 (Ubuntu is the only
+server platform), §21/§48 (resource management).
+
+What the node architecture adds:
+
+```text
+Windows development   +  Ubuntu deployment  +  ESP32 development
+```
+
+- **No Windows-path dependence.** Platform-specific execution stays behind
+  platform-specific adapters and tools (§36, §64.6.4). `server/` never
+  imports a Windows API; `clients/` never pretends to be Linux.
+- **No virtualenv transfer between operating systems.** The server's Python
+  environment is created on the server; the Electron app's dependencies are
+  installed by its own toolchain.
+- **No heavy services are forced onto the laptop or the server.** Local AI,
+  STT, TTS, Docker, MQTT and self-hosted LiveKit remain optional/deferred
+  exactly where §3, §59.16, §59.20 and todo.md §F already put them. The
+  node architecture adds **no new service**: no message broker, no
+  microservices, no Kubernetes, no second API, no second database. It adds a
+  registry (data), a router (code), and reuse of the existing transports.
+- **The Electron app is lightweight by requirement** — it must not become a
+  memory or CPU liability (§59.13's rule, applied to the whole client), and
+  it must not run the server's runtime.
+- **The Ubuntu server stays lightweight**: the node registry is a table and a
+  heartbeat, not a new process.
+
+## 64.21 IMPLEMENTATION ROADMAP
+
+Maps onto the existing task structure rather than replacing it. New tasks are
+**T330+**, appended in tasks.md in the same style as T220+ and T300+
+(D013/D017). Existing tasks are not renumbered, re-timed or marked complete.
+
+```text
+ARCHITECTURE AMENDMENT   T330-T336   spec (this section) + node registry,
+                                     heartbeat, node-targeted routing,
+                                     cross-node events, availability reporting
+WINDOWS NODE             T340-T347   Electron shell, local runtime, Windows
+                                     tools, registration, tests  (Phase 8 /
+                                     §59.15 client half)
+SERVER NODE              T348        advertise server capabilities as a node
+MOBILE CLIENT            T350-T351   chat/agent UI, server control (extends
+                                     the §63 T315-T322 block)
+ESP32 NODE               T352        real-time ULTRON states over T162
+SECURITY                 T353        node identity + capability authorization
+TESTING                  T354        cross-node test matrix
+```
+
+Dependency order:
+
+```text
+node registry (T332)
+   -> heartbeat / availability (T333)
+   -> node-targeted tool routing (T334)
+   -> cross-node events (T335) -> availability reporting (T336)
+   -> Windows node runtime (T341) -> Windows tools (T342-T345)
+   -> server capability registration (T348)
+   -> mobile server control (T351)
+   -> ESP32 state events (T352)
+   -> node authorization (T353)
+   -> cross-node test matrix (T354)
+```
+
+Security boundaries carried forward unchanged (§59.28's list, plus §64):
+
+```text
+§30   every interface authenticates — nodes and clients are no exception
+§15   no agent reaches a tool without the permission layer
+§31   no public PostgreSQL/Redis/Ollama; nodes connect outbound
+§59.3 destructive Git needs explicit authorization
+§64.12 a permission is granted for (principal, node, tool, operation)
+§64.6  Windows operations execute on Windows, never on Ubuntu
+§64.8  the mobile client is granted no Windows-local control
+§59.25 correctness is never shed under resource pressure
+```
+
+**This section is documentation.** Nothing in §64 is implemented by virtue of
+being written here; §54, §56 and tasks.md rule 1 apply unchanged.
+
+---
+
+# 65. TELEPHONY - PHONE CALL INTERFACE (ADDENDUM)
+
+## 65.0 STATUS AND NON-DESTRUCTIVE RULE
+
+This section is appended after §64. It adds a **phone-call interface** to the
+existing architecture. It does not replace, rename or rewrite the voice system
+(§25, §59.16-§59.20), the agent runtime (§6, §7), the event bus (§19), the
+permission system (§15), the task system (§18), memory (§22), or the node
+architecture (§64). Existing sections are extended by reference only.
+
+Nothing here is implemented by virtue of being written here (§54, §56).
+
+## 65.1 EXTENSION MAP - WHAT THE AUDIT FOUND
+
+Audited before writing: voice manager/session tasks (T150-T156), STT/TTS/wake
+packages (`app/voice/stt`, `app/voice/tts`, `app/voice/wake`), voice extensions
+(§59.16-§59.20, T250-T255), event bus (§19, T030/T031), API conventions (§29),
+auth (§30, T021/T022), permissions (§15, T033), scheduler (§44, T170-T175),
+memory (§22, T120-T129), nodes (§64, T330-T354), config/settings.
+
+| Needed by telephony | Already exists | Verdict |
+|---|---|---|
+| Voice session + pipeline | T153 `app/voice/manager.py`, §25 | **Reused** - a call is a voice session |
+| STT / TTS engines | `STTEngine` / `TTSEngine` ABCs (T150/T151) | **Reused** - calls use the same adapters |
+| Realtime transport for audio | §59.16 LiveKit (mic-in path) | **Reused where it fits**; provider call media streams get their own bridge (§65.9) |
+| Event bus | §19, T030/T031, SSE fan-out (T023/T320) | **Extended** - `VOICE_CALL_*` names only |
+| Sessions / tasks / scheduler | §18, §44, conversations/sessions tables | **Reused** - a call links to a session/task |
+| Auth, permissions, audit | §15, §30, §31, T033 | **Reused unchanged** |
+| Config/secrets | `config/settings.py`, `.env.example` | **Extended** - `TELEPHONY_*` keys |
+| Provider HTTP client conventions | model provider adapters (§20) | **Pattern reused** - provider isolation |
+
+**Not created:** no second voice system, no second agent runtime, no second
+event bus, no second memory system (§24 of the feature request = our §64.20
+rule, restated in §65.24).
+
+## 65.2 THE FEATURE AND THE PRINCIPLE
+
+User: "Call me." ULTRON creates a call session, dials the destination through
+the configured provider, establishes a realtime voice session on answer, and
+runs the conversation through the **existing** agent system until the call
+ends; state is finalized under existing memory/session rules. The same
+architecture accepts inbound calls later (§65.14).
+
+The architectural rule:
+
+```text
+Agent / Core
+     |
+"I need to call this destination"        <- all the agent ever says
+     |
+Voice Call API  (§65.6)
+     |
+ULTRON Telephony Service  (§65.3)
+     |
+Provider Adapter  (§65.4)                <- Twilio specifics live ONLY here
+     |
+   Twilio / Telnyx / Plivo
+     |
+   Phone network
+```
+
+The agent knows *intent*; the service knows *state*; the adapter knows
+*vendor*. No vendor type crosses upward.
+
+## 65.3 SERVICE BOUNDARY AND MODULE LAYOUT
+
+```text
+server/app/voice/
+├── manager.py                 (T153 - existing voice sessions)
+├── telephony/
+│   ├── __init__.py
+│   ├── service.py             call lifecycle orchestration
+│   ├── provider.py            TelephonyProvider ABC
+│   ├── sessions.py            call session state machine
+│   ├── webhook.py             provider callback intake + verification
+│   └── providers/
+│       ├── __init__.py
+│       ├── twilio.py          first adapter
+│       ├── telnyx.py          later
+│       └── plivo.py           later
+├── stt/  tts/  wake/          (existing, untouched)
+```
+
+The telephony service **calls into** `voice/manager.py` to attach the audio
+session; it does not fork it. `service.py` is the only module allowed to import
+`providers/`.
+
+## 65.4 PROVIDER ABSTRACTION
+
+`TelephonyProvider` ABC, adapted from ULTRON's adapter convention (§1 principle,
+§20 provider pattern):
+
+```text
+TelephonyProvider
+ ├── initiate_call(destination, from_, webhook_url) -> provider_call_id
+ ├── answer(...) / hangup(provider_call_id)
+ ├── get_status(provider_call_id)
+ ├── open_media_stream(provider_call_id)   realtime audio in/out
+ ├── parse_webhook(request) -> CallEvent  (signature-verified)
+ └── health() -> ok | degraded | down
+```
+
+Only **one provider is implemented first** (Twilio, T365). Telnyx and Plivo are
+listed as future adapters behind the same ABC; adding one must not touch
+service.py, sessions.py or the agent layer. A `MockTelephonyProvider` ships
+with the tests (§65.23).
+
+## 65.5 CALL SESSION MODEL
+
+A call is a ULTRON voice session with call fields - not a parallel session
+concept:
+
+```text
+CallSession
+ ├── call_id            provider call id + ULTRON id
+ ├── provider           twilio | telnyx | plivo | mock
+ ├── direction          outbound | inbound
+ ├── destination        stored per §65.13 policy (masked in logs)
+ ├── status             CREATING | RINGING | CONNECTED | LISTENING
+ │                      | THINKING | SPEAKING | ENDING | ENDED | FAILED
+ ├── created_at / connected_at / ended_at
+ ├── session_id         link to existing ULTRON session/conversation
+ ├── task_id            link to task when schedule-created (§65.18)
+ ├── agent_id           agent driving the conversation
+ └── metadata           purpose, locale, failure_reason
+```
+
+State transitions are guarded and monotonic (CREATING→RINGING→CONNECTED→…
+→ENDED; any state →FAILED). LISTENING/THINKING/SPEAKING mirror §59.13's orb
+states, so every interface already understands them.
+
+## 65.6 OUTBOUND CALL API
+
+Following §29's plural convention:
+
+```text
+POST /voice/calls                 {destination, agent?, purpose?, schedule?}
+GET  /voice/calls/{call_id}
+POST /voice/calls/{call_id}/end
+POST /voice/webhooks/{provider}   (provider callbacks, not user-authenticated)
+```
+
+Authenticated by the existing dependencies (§30, T021/T022); call initiation
+requires the calling principal to hold the telephony permission (§15); responses
+carry ids and status only - never provider credentials or full webhook secrets.
+Returns `{call_id, session_id, status}`.
+
+## 65.7 OUTBOUND LIFECYCLE
+
+```text
+POST /voice/calls
+  → permission check (§15)
+  → CallSession CREATING
+  → provider.initiate_call(webhook_url = public base + /voice/webhooks/{p})
+  → RINGING  (VOICE_CALL_RINGING)
+  → answer   → CONNECTED  → realtime bridge open (§65.9)
+  → loop: LISTENING → agent (§65.8) → SPEAKING → LISTENING
+  → end (user, agent, hangup event, timeout)
+  → ENDING → ENDED  (VOICE_CALL_ENDED) → finalize (§65.17)
+Any step may go → FAILED with a reason; the API call itself still succeeded
+(a failed call is an event and a row, never an unhandled exception - §65.21).
+```
+
+## 65.8 AGENT INTEGRATION
+
+There is **no Telephony Agent.** The path is:
+
+```text
+phone audio → voice session (T153) → ULTRON Core/orchestrator (T049)
+           → existing AI router (§20) → existing agents/tools (§7, §14)
+           → result → TTS/realtime audio → phone
+```
+
+"Check the status of my server" on a call routes through exactly the same
+tool pipeline, permission checks and confirmations as any other interface;
+"Start the research task" creates a normal background task (§44) and speaks
+the confirmation. Calls grant no implicit permissions (§64.12's scoped grants
+apply: (principal, node, tool, operation) with the call recorded in the
+session field).
+
+## 65.9 REALTIME VOICE IN A CALL
+
+Target is full-duplex, but implementation follows the phase and the
+cloud-first rule (§65.10):
+
+```text
+phone mic → provider media stream → ULTRON audio bridge (service)
+          → STT or realtime provider → Core/agent → tools/memory/tasks
+          → TTS or realtime provider → audio bridge → provider → phone
+```
+
+- STT/TTS go through the **existing** `STTEngine`/`TTSEngine` ABCs (T150/T151),
+  with cloud adapters configured first; local engines stay optional (§59.20).
+- A **realtime provider abstraction** (OpenAI realtime, Gemini Live, others)
+  sits behind config-selected adapters; swapping it changes no agent code.
+- Barge-in/cancellation follows §59.19; partial transcripts follow T154.
+- LiveKit (§59.16) remains the mic-in transport for client UIs; phone media
+  streams are provider-specific and terminate in the audio bridge, not in
+  LiveKit rooms.
+
+## 65.10 CLOUD-FIRST RESOURCE MODEL
+
+The 4 GB Ubuntu server must not gain heavy models to make calls work (§59.25,
+§64.20 preserved):
+
+```text
+Ubuntu:  FastAPI + telephony service + webhook intake + audio forwarding
+         + session coordination + agent orchestration   (lightweight)
+Cloud:   realtime AI / STT / TTS / inference            (as configured)
+Local:   optional, never required                        (§59.20)
+```
+
+No GPU requirement, no new daemon, no message broker.
+
+## 65.11 WEBHOOK ARCHITECTURE - PUBLIC HTTPS IS MANDATORY
+
+Providers dial **out** to ULTRON over HTTPS. Local addresses
+(`localhost`, `192.168.x.x`) are not webhook endpoints and the spec must never
+pretend otherwise:
+
+```text
+Internet → phone network → telephony provider → HTTPS webhook
+        → public endpoint (reverse proxy / TLS / tunnel / cloud ingress)
+        → ULTRON gateway → /voice/webhooks/{provider} → service
+```
+
+`TELEPHONY_WEBHOOK_BASE_URL` must be a public HTTPS origin; the service
+validates this at startup and refuses to start with a local base URL (same
+fail-fast philosophy as D011). This **reuses T318** (HTTPS on the server) and
+§63.5's reverse-proxy/CORS work - telephony adds no new ingress, it is the
+second consumer of it. No specific tunnel vendor is hard-coded.
+
+## 65.12 SECURITY
+
+- Authenticated, permission-checked call initiation (§15, §30).
+- Webhook signature verification per provider + timestamp window; forged or
+  replayed callbacks are rejected with an audit row (§31).
+- Secrets only in environment/config (§65.13); no keys or numbers in source.
+- Rate limiting on `POST /voice/calls` and on webhook intake (§32 metrics).
+- Phone numbers masked in logs and events; never in exception text.
+- Tool use during calls: unchanged permission/confirmation model (§64.12).
+- Audit: call start/end, provider, duration, permission decisions, tool calls
+  executed under the call's session.
+- Audio channels follow the provider's encrypted media path; ULTRON stores no
+  raw audio by default (§65.17).
+
+## 65.13 CONFIGURATION AND SECRETS
+
+```text
+TELEPHONY_PROVIDER=                twilio | telnyx | plivo | mock | off
+TELEPHONY_ACCOUNT_ID=
+TELEPHONY_AUTH_SECRET=
+TELEPHONY_PHONE_NUMBER=
+TELEPHONY_WEBHOOK_BASE_URL=        public HTTPS origin, validated at startup
+TELEPHONY_TRANSCRIPT_POLICY=       store_transcript | summary_only | none
+```
+
+Realtime AI credentials use the **existing** AI provider configuration (§20,
+§59.7-§59.8). Documented in `.env.example`; committed values are placeholders
+only. `TELEPHONY_PROVIDER=off` (default) disables the feature entirely.
+
+## 65.14 INBOUND CALLS - ARCHITECTURALLY EXTENSIBLE
+
+Minimum for now: the webhook intake (§65.11) parses `incoming_call` events and
+records them; the full flow is specified so it can be completed without
+redesign:
+
+```text
+phone → provider → ULTRON webhook → validate/verify → lookup greeting/rule
+      → create CallSession (direction=inbound) → voice session → agent
+      → same realtime loop as outbound (§65.7)
+```
+
+Authorization for inbound differs from outbound (a call *to* ULTRON is not a
+permission to *use* ULTRON): rule-based auto-answer is deny-by-default and
+scoped to allow-listed numbers (§15).
+
+## 65.15 EVENTS
+
+The bus is §19's bus (T030/T031). Additive names only - §19's set is not
+renamed (same rule as §64.15):
+
+```text
+VOICE_CALL_CREATED    VOICE_CALL_RINGING    VOICE_CALL_CONNECTED
+VOICE_CALL_LISTENING  VOICE_CALL_THINKING   VOICE_CALL_SPEAKING
+VOICE_CALL_ENDED      VOICE_CALL_FAILED
+```
+
+They ride the existing SSE fan-out (T023/T320) to every subscribed interface:
+Electron shows "call active", the mobile PWA shows an active-call card, the
+ESP32 shows `CALLING` on the desk display over T162, logs/metrics record them
+(§32), and the task system may react (§44 automation on `VOICE_CALL_ENDED`).
+
+## 65.16 MULTI-INTERFACE CONSISTENCY
+
+The call is another interface onto the **same** core (§62, §64):
+
+```text
+Mobile PWA   → API /voice/calls        → Core → telephony
+Electron     → API /voice/calls        → Core → telephony
+ESP32        → display/control events  → Core → telephony
+Scheduler    → task (§65.18)           → Core → telephony
+```
+
+None of them routes through the Windows node (§65.19), and none of them needs
+to be online for a scheduled call to happen. There is no separate "phone
+ULTRON".
+
+## 65.17 MEMORY AND CONVERSATION FINALIZATION
+
+On ENDED, the call's voice session finalizes under existing memory rules
+(§22, T126/T128): call metadata always; transcript/summary/actions-taken per
+`TELEPHONY_TRANSCRIPT_POLICY` (§65.13) - including `none`. No audio is kept by
+default; no second memory store (§65.1); extraction is intentional (§66.12's
+rule applies here too).
+
+## 65.18 TASK AND SCHEDULER INTEGRATION
+
+"Call me at 8 PM" is an ordinary scheduled task (§44, T170) whose action is
+`telephony.initiate_call`; "Call me now" is a direct API call. No separate
+scheduler, no bespoke cron. Call failure is a task failure (retry policy
+applies to *failed dials*, not to *answered calls that drop* - the latter is
+reported, not redialed).
+
+## 65.19 NODE PLACEMENT
+
+Telephony lives on the **server node** (§64.7): FastAPI service, webhooks,
+session coordination. It is never routed through the Windows node (D024) - the
+always-on Ubuntu server must place and hold calls with Electron closed, which
+is exactly why the server exists (§62.2). The provider adapter is server-side
+code; the ESP32 and clients only *observe or trigger* it through Core.
+
+## 65.20 OPENCLAW RELATIONSHIP
+
+OpenClaw is an architectural reference for this feature **only**. ULTRON does
+not install, import, launch, gateway through, or compatibly wrap OpenClaw; it
+is not in the dependency graph; no OpenClaw source is copied. What is borrowed
+is the shape: provider plugin + call session + gateway + agent loop, rebuilt
+natively on ULTRON's own abstractions.
+
+## 65.21 FAILURE HANDLING
+
+A failed call must never crash ULTRON (§33). Handled explicitly: provider
+unavailable/unreachable, invalid credentials (fail at startup, D011 style),
+webhook timeout or malformed payload, phone unreachable/rejected/busy,
+mid-call disconnect, AI/STT/TTS provider failure (§59.9 fallback chains apply
+to the conversation loop), agent/tool failure (existing error taxonomy), and
+server restart (CallSession rows are durable; orphaned CONNECTED sessions
+recover to ENDED with `failure_reason=server_restart`).
+
+## 65.22 OBSERVABILITY
+
+Per-call structured record: call_id, session_id, provider, direction, status
+transitions, timestamps, duration, failure_reason. Exposed as metrics
+(§32/T180-T181: calls_total, call_duration, webhook_verify_failures). Never
+logged: auth secrets, provider tokens, raw audio, unmasked numbers.
+
+## 65.23 TESTING - NO REAL CALLS, EVER
+
+`MockTelephonyProvider` + fake webhook payloads drive the suite: provider ABC
+conformance, config validation (including local-base-URL rejection), call
+creation, every state transition, webhook signature accept/reject/replay,
+provider failure, hangup, permission rejection, event emission, session
+cleanup. CI never has credentials and cannot dial; a real-call smoke test is a
+manual, documented, opt-in step only.
+
+## 65.24 DEPLOYMENT AND RESOURCE MODEL
+
+§65.11's public HTTPS ingress (T318), reverse proxy or tunnel, production
+secrets outside the repo, a `/health`-style readiness check for the telephony
+service including provider reachability, and metrics in the existing
+Prometheus setup. No Kubernetes, no new microservice, no broker (§64.20
+preserved verbatim).
+
+## 65.25 CONFLICTS RECONCILED
+
+| Apparent conflict | Resolution |
+|---|---|
+| §25's pipeline has no phone stage | §25 stays the mic/client pipeline; §65.2 shows the same Core entry point from a second source. Provider-independent rule (§25) is what makes this fit |
+| §59.16 LiveKit vs provider media streams | LiveKit = client mic-in transport; phone media terminates in the audio bridge (§65.9). Both are transports behind the voice subsystem |
+| §19 event set vs `VOICE_CALL_*` | Additive, same rule as §64.15; names follow the `VOICE_` prefix family already implied by §19's STT_/TTS_ entries |
+| §29 endpoint list vs `/voice/calls` | §29 says "Create REST endpoints for" - it lists examples, not an exhaustive allowlist; naming follows the plural convention |
+| §64 node routing vs calls | Calls are server-node work (§65.19, D024); clients trigger, never carry |
+| Cloud-first vs realtime models | §65.10: cloud adapters required for the default path, local optional (§59.20 unchanged) |
+
+## 65.26 IMPLEMENTATION ROADMAP
+
+Appended in tasks.md after §66's numbering neighbor as **T360-T377** (D013/D017
+precedent; see the telephony block there). Dependency order:
+
+```text
+service boundary (T361) → provider ABC + config (T362) → call session (T363)
+   → outbound API (T364) → first adapter (T365) → webhooks (T366) → lifecycle (T367)
+   → audio bridge (T368) → STT/TTS/realtime (T369) → agent loop (T370)
+   → events (T371) → memory finalize (T372) → clients (T373)
+   → security (T374) → mock-provider tests (T375) → deployment (T376)
+   → inbound (T377, FUTURE)
+```
+
+---
+
+# 66. CAPABILITY INTEGRATION - CONTEXT, LIFECYCLE, ORCHESTRATION (ADDENDUM)
+
+## 66.0 STATUS AND NON-DESTRUCTIVE RULE
+
+This section appends after §65 and integrates twenty requested capabilities
+into the architecture that already exists. For every capability the authority
+is the map in §66.1: **if a subsystem already exists, it is extended; nothing
+here creates a V2 of anything** (no MemoryV2, AgentRuntimeV2, EventBusV2,
+VoiceV2, TaskEngineV2). Existing sections are not rewritten; where this
+section formalizes something the spec already implied, it says so.
+
+Documentation and roadmap only. §54, §56 and tasks.md rule 1 apply unchanged.
+
+## 66.1 CAPABILITY MAP - THE TWENTY FEATURES
+
+| # | Requested capability | Lives in | Verdict |
+|---|---|---|---|
+| 1 | Context engine | T046 `core/context.py`, §22, §7 | **Extended** - §66.3, T380 |
+| 2 | Goal→Plan→Execute→Verify | §1, §17, §18, T048-T050 | **Formalized** - §66.4, T381 |
+| 3 | Multi-agent orchestration | §7, §41, §59.21, T042-T045 | **Extended** - §66.5 |
+| 4 | AI model routing & fallback | §20, §59.7-§59.9, T220-T224 | **Extended** - §66.6, T383 |
+| 5 | Permission & security engine | §15, §31, §64.12, T033 | **Extended** - §66.7 |
+| 6 | Event bus | §19, T030/T031 | **Extended** - §66.8, T384 |
+| 7 | Multi-node discovery & routing | §64, §13, T330-T336 | **Done by §64** - gap task T385 |
+| 8 | Computer vision & computer use | §13, §42, §59.15, T143-T145, `agents/vision` | **Extended** - §66.10, T386 |
+| 9 | Autonomous background agents | §18, §44, T170-T172, T044 | **Extended** - §66.11, T387 |
+| 10 | Advanced memory | §22, T120-T129 | **Extended** - §66.12, T388 |
+| 11 | Knowledge / RAG | T124/T127 retrieval + pgvector (`memories.embedding`, `ENABLE_PGVECTOR`) | **Extended** - §66.13, T389 (ingestion is the gap) |
+| 12 | Universal tool & plugin system | §14, §59.6, T230-T232 | **Extended** - §66.14, T390 |
+| 13 | Self-diagnostics & self-healing | §32, §33, T180-T183 | **Extended** - §66.15, T391 |
+| 14 | Action history & audit | §31, `tool_executions`, T041 events | **Extended** - §66.16, T392 |
+| 15 | Undo / rollback | not present | **New, constrained** - §66.17, T393 |
+| 16 | Continuous voice & wake word | §25, §59.17-§59.20, T150-T155, T250-T255 | **Unchanged** - pointed to, no VoiceV2 |
+| 17 | Phone call interface | §65, T360-T377 | **Done by §65** - referenced in §66.19 |
+| 18 | Agent-to-agent communication | §41 passes results; no message contract | **New** - §66.20, T382 |
+| 19 | Multi-interface support | §62, §63, §64 | **Done by §62-§64** - §66.21 records it |
+| 20 | Node capability management | §64.10, §64.14, T331-T336 | **Done by §64** - §66.9 binds it to planning |
+
+Reading the Verdict column: five are already delivered by an existing section
+(§62-§65 and §64); twelve extend a named subsystem in place; one formalizes the
+lifecycle the spec already implies; two add genuinely new contracts (rollback
+and agent-to-agent). Not one of the twenty creates a second system of
+anything - see §66.23.
+
+## 66.2 TARGET ARCHITECTURE - UNCHANGED PRINCIPLES
+
+```text
+                         ULTRON CORE
+        context · memory · planner · orchestrator · AI router
+        permissions · event bus · verification
+                              |
+          +-------------------+-------------------+
+          |                   |                   |
+       AGENTS               TOOLS               TASKS
+          |                   |                   |
+   coding research system   files git browser   scheduler
+   voice decision vision    os computer web     background
+          |
+   NODE CAPABILITY LAYER (§64.10 capability registry)
+          |            |            |
+      Windows        Ubuntu        ESP32        (+ telephony, a
+       node          node          node          service on the node)
+```
+
+The central principle is the one already written (§1, §64.2), restated once:
+**AI decides. Agents reason. Tools act. Nodes execute. Events report. Memory
+persists. Permissions govern. Verification confirms. Interfaces communicate.**
+Every capability below must be traceable to one of those verbs; anything that
+would add a new verb is out of scope.
+
+## 66.3 CONTEXT ENGINE (extends T046)
+
+One context layer, one instance. `app/core/context.py` (T046) grows from
+"conversation state + namespaces" into the ranked, bounded provider of record:
+
+```text
+ContextManager
+ ├── collect()              conversation, task, agent, node, project/repository,
+ │                          recent actions/tool calls, device state, preferences,
+ │                          memory (§22), knowledge (§66.13), background tasks,
+ │                          current session, voice session, phone call (§65),
+ │                          effective permissions
+ ├── resolve()              which sources apply to this request
+ ├── rank()                 task-specific relevance, never everything
+ ├── compress()             bounded size before the model (§59.25 budgets)
+ ├── build_prompt_context() the only shape agents hand to a model
+ └── clear_expired_context()
+```
+
+Rules: context is gathered per-namespace and filtered by permission before it
+is ever ranked (a principal cannot surface another principal's memory through
+context); callers are agents, planner, voice sessions, tools and UI - all
+through this one interface; no per-feature context copies.
+
+## 66.4 EXECUTION LIFECYCLE - GOAL → PLAN → EXECUTE → VERIFY (formalizes §1/§17/§18)
+
+Not a new runtime - this is §1's Core lifecycle plus §17's verification and
+§18's task graph, written as one contract and implemented by the already-planned
+T048 (planner), T049 (orchestrator), T050 (executor retry/replan):
+
+```text
+USER GOAL → UNDERSTAND → CONTEXT(§66.3) → PLAN → PERMISSION CHECK(§15)
+  → AGENT SELECTION(§7) → NODE SELECTION(§64.10) → TOOL EXECUTION(§16)
+  → OBSERVATION → VERIFY(§17) → success? yes → COMPLETE
+                                      no  → retry / replan / escalate
+```
+
+The planner supports single-step, multi-step, dependent, parallel-where-safe
+steps, retries, replanning, verification, human confirmation, cancellation and
+pause/resume - as graph operations on the existing task DAG (T040/T041), not as
+an isolated planner agent.
+
+## 66.5 MULTI-AGENT ORCHESTRATION (extends §7, §41, §59.21)
+
+The agent inventory (coding, research, browser, system, git, decision, voice,
+iot, server, computer, vision, file, automation - §59.22, `app/agents/`) is
+complete as *types*. What §66 adds is the orchestration contract on top of
+T044 (manager) and T049 (orchestrator): selection criteria, sequential and
+parallel invocation, structured results passed between agents (§66.20),
+verification of agent output, retry/terminate, permission enforcement per
+invocation, and an execution history per agent (§66.16). Each agent keeps its
+identity, capabilities, tools, model policy, permissions, context needs, scope,
+timeout, resource limits and result format - the 12 attributes §6 already
+declares.
+
+## 66.6 AI MODEL ROUTING AND FALLBACK (extends §20, §59.7-§59.9)
+
+One router (§20), extended - never a second one. Selection inputs grow to: task
+type, agent type, capability, latency, cost, context size, quality,
+availability, privacy and local/cloud preference (§59.8's registry already
+carries capability and availability). Fallback chains (§59.9's
+capability-by-capability chains, T223) gain the operational half: **provider
+health tracking and temporary circuit breaking** - a provider failing fast is
+skipped for a cooldown instead of being retried on every call. Providers stay
+config-selected (OpenRouter free-tier first per §59.7, Ollama optional,
+OpenAI/Gemini/Anthropic/cloud realtime behind the same adapter interface); no
+provider is hard-coded, and no provider type leaks into agents.
+
+## 66.7 PERMISSION AND SECURITY ENGINE (extends §15, §31, §64.12)
+
+Still **one** engine, evaluated as (principal, agent, tool, node, action,
+target resource, session, confirmation) - §15's LEVEL 0-5 scale and §64.12's
+node scope, combined into the single decision the Permission Manager already
+makes (T033). Added clarifications, not new subsystems: risk is an attribute
+the tool declares (§66.14), confirmation is required for level 4-5 and for
+everything marked irreversible (§66.17), and every decision - allow, deny,
+confirm-required - produces an audit row (§31). Tools do **not** grow their own
+permission logic; they declare, the engine decides.
+
+## 66.8 EVENT CATALOG (extends §19)
+
+Additive names on the one bus (T030/T031), same no-rename rule as §64.15 and
+§65.15. Requested names that do not yet exist are added: `CONTEXT_UPDATED`,
+`PLAN_CREATED`, `PLAN_UPDATED`, `NODE_CAPABILITIES_UPDATED`,
+`VOICE_STARTED/LISTENING/THINKING/SPEAKING/ENDED`, `VOICE_CALL_*` (§65.15),
+`MODEL_SELECTED`, `MODEL_FAILED`, `PERMISSION_REQUESTED/GRANTED/DENIED`,
+`SYSTEM_ERROR`. Names already in §19 (`TASK_*`, `AGENT_*`, `TOOL_*`, `DEVICE_*`,
+`MODEL_REQUEST/RESPONSE`, `WAKE_DETECTED`, `STT_*`, `TTS_*`, `CPU_HIGH`…,
+`SCHEDULE_TRIGGERED`) and in the §64.9/§64.15 canonical additions
+(`NODE_ONLINE`/`NODE_OFFLINE` and their `SERVER_`/`WINDOWS_` forms) keep their
+spellings; the `DEVICE_*` spelling mismatch is the one §64.9 names - one
+event, one spelling, decided in T335. Consumers stay as they are: UI, ESP32,
+logging, memory, notifications, automation, monitoring, task engine, agents -
+no message broker is introduced.
+
+## 66.9 NODE DISCOVERY AND CAPABILITY MANAGEMENT (binds §64 to planning)
+
+§64.5/§64.10/§64.14 define registry, capabilities and availability; T331-T336
+implement them. The remaining gap is **binding them into planning** (T385): the
+planner and executor must answer, at run time - which node can perform this
+action, is it online, is the capability available, does the permission exist
+for that (node, tool), is another node better, and what is the fallback if it
+goes offline - from the registry, never from a hard-coded node assumption.
+Each node advertises exactly the shape §64.10 already specifies (node_id, type,
+status, platform, capabilities, tools, version, connection state, health,
+permissions, metadata).
+
+## 66.10 COMPUTER VISION AND COMPUTER USE (extends §13, §42, §59.15)
+
+Structured tools only - the §16 path holds: MODEL → STRUCTURED TOOL REQUEST →
+PERMISSION → NODE TOOL EXECUTOR → OS → OBSERVATION → MODEL. Screenshot, OCR,
+element detection, click/type/scroll/window management are the T143 tool set on
+the Windows node (§64.6) with the T145 capability fallback chain (API → DOM →
+UIA → shortcuts → mouse → vision). The addition is the **verification loop**
+(T386): act → screenshot again → confirm expected state → else retry/escalate -
+so "Click Download" is verified, not assumed (§17). Ubuntu exposes equivalent
+Linux capabilities through the server node when needed. An LLM never reaches
+the OS directly.
+
+## 66.11 AUTONOMOUS BACKGROUND AGENTS (extends §18, §44)
+
+Long-running agents (scheduled research, server/Git monitoring, maintenance,
+reports, backups, health watch, notification agents) run on the **existing**
+scheduler (T170-T172) and task DAG (T040/T041) with the T044 manager lifecycle:
+scheduling, cancellation, pause/resume, retry, timeout, resource limits, logs,
+result storage, notifications (§45) and permission enforcement. Two explicit
+guards against uncontrolled loops: every background agent runs under a bounded
+plan (§66.4) with a max-iteration/timeout policy, and emits events so
+self-diagnostics (§66.15) can stop a runaway.
+
+## 66.12 ADVANCED MEMORY (extends §22)
+
+The §22 layers already exist as tasks (T120-T129: short-term, long-term,
+episodic, semantic, project, manager facade). The extension (T388) is the type
+set and the discipline: preference, task, device and agent memory as
+**namespaces/scopes on the same store**, not new stores; creation, retrieval,
+ranking, updating, deduplication, importance, timestamps, source tracking,
+confidence and decay where appropriate; privacy boundaries enforced by the
+existing namespace rules (`user`, `project:*`, `agent:*`). Memory extraction
+is intentional - conversation messages are not memorized by default (§65.17's
+transcript policy is the telephony instance of this rule).
+
+## 66.13 KNOWLEDGE / RAG (extends T124/T127, existing pgvector)
+
+Retrieval exists (semantic memory + pgvector behind `ENABLE_PGVECTOR`); the gap
+is **ingestion** (T389):
+
+```text
+SOURCE (PDF, docs, project files, Git repos, websites, notes, manuals)
+  → INGEST → PARSE → CHUNK → EMBED → INDEX   (into the existing vector store)
+  → RETRIEVE → RERANK → agent context (§66.3)
+```
+
+One vector database: PostgreSQL/pgvector (`memories.embedding`, `Vector(768)`
+or jsonb fallback) - no second vector store (D030). Embeddings go through the
+existing provider abstraction (T127). Retrieval is permission-scoped: a chunk
+is only retrievable by a principal who could read its source.
+
+## 66.14 UNIVERSAL TOOL AND PLUGIN SYSTEM (extends §14, §59.6)
+
+The registry (§59.6) gains the fields that the rest of §66 needs (T390):
+`output_schema`, `node_requirements` (which capability the target node must
+advertise), `timeout`, `risk_level`, `availability`, `version`, and
+`reversibility` (§66.17). Plugins - telephony among them, and OpenClaw-shaped
+integrations generally - stay isolated from core logic behind this interface;
+adding one changes no core module. The inventory (filesystem, browser,
+web_search, git, powershell, linux_shell, computer_use, notifications, ESP32,
+telephony, calendar/email later) is a registry list, not a code fork.
+
+## 66.15 SELF-DIAGNOSTICS AND SELF-HEALING (extends §32, §33)
+
+One health matrix over what is already monitored (T180-T183 metrics, §32):
+server, agents, nodes, WebSockets/SSE, API, database, AI providers, tool
+providers, voice, telephony (§65.22), ESP32, background jobs. Recovery follows
+FAILURE → DIAGNOSE → RECOVER → VERIFY → NOTIFY, with a bounded action menu:
+reconnect (WebSocket/node/ESP32), retry with backoff, switch provider on the
+§59.9 fallback, restart a failed worker, recover an interrupted task. Recovery
+respects permissions: self-healing may repeat *failed* work through the same
+checks; it may not grant itself new capabilities, and every recovery action
+emits an event and an audit row.
+
+## 66.16 ACTION HISTORY AND AUDIT (extends §31, `tool_executions`)
+
+The rows exist (`tool_executions` with permission_level/decision, audit log,
+T041 task events). T392 makes them **queryable as one execution record**:
+user request → plan → agents → tools → nodes → permission decisions → results
+→ errors → timestamps → model/provider → verification outcome, correlatable by
+request/correlation id (already emitted by T021's middleware). This feeds
+debugging, the UI, and audit review - it is a view over existing tables, not a
+new logging system.
+
+## 66.17 UNDO / ROLLBACK (new, constrained)
+
+```text
+ACTION → SNAPSHOT or REVERSIBLE OPERATION → EXECUTE → VERIFY
+```
+
+- Every tool declares `reversible | partially_reversible | irreversible`
+  (§66.14 field); the registry shows it before execution.
+- Reversible where technically possible: file modifications (snapshot/copy),
+  Git operations (branch/ref state, §59.3 already gates destructive ones),
+  configuration changes.
+- Irreversible actions require the stronger confirmation path (§66.7).
+- **No universal undo is claimed.** §66.17 exists so the boundary is declared,
+  not to promise reversal of anything with side effects outside ULTRON's reach.
+
+## 66.18 CONTINUOUS VOICE AND WAKE WORD (existing voice, unchanged)
+
+Wake word, VAD, streaming/partial STT, barge-in, streaming TTS, voice states
+and session memory are §25 + §59.17-§59.20 + T150-T155/T250-T255 - all already
+planned, with the SLEEP → WAKE → LISTEN → THINK → SPEAK → LIST loop being
+§59.13's state machine plus §59.19's pipeline. Voice sessions run through the
+normal agent/task system; there is no voice-only intelligence layer. This
+section adds no tasks of its own beyond §66.3's context hook.
+
+## 66.19 PHONE CALL INTERFACE (§65)
+
+Telephony is specified in §65 (provider abstraction, call sessions, webhooks,
+realtime, security, T360-T377). Repeated here only to fix its place in the
+map: phone is one more interface on the same core, its provider is a cloud
+service and never a node (§64.17 amended), and OpenClaw remains reference-only
+with zero dependency (§65.20).
+
+## 66.20 AGENT-TO-AGENT COMMUNICATION (new contract)
+
+Structured messages, passed through the orchestrator - not free-form agent
+chat:
+
+```text
+AgentMessage
+ ├── task_id · sender · receiver · objective
+ ├── input · result · evidence · confidence
+ ├── errors · requested_next_action
+```
+
+Planner → Research → Coding → Testing → Review → Planner is a chain of these
+messages on one task graph (§66.4), each hop subject to permissions and
+recorded in the execution history (§66.16). The orchestrator owns lifecycle;
+uncontrolled agent-to-agent conversation loops are out of scope.
+
+## 66.21 MULTI-INTERFACE SUPPORT (records §62-§64 as the answer)
+
+Windows Electron (interface + Windows node), mobile web (control client), web
+UI, ESP32 (physical interface + device node), phone calls (§65), future
+interfaces - all reach one core through API / SSE / device WebSocket / voice
+gateway. Interfaces never duplicate intelligence: UI → API/SSE/Voice gateway →
+Core → agents/tools/nodes. This is §62-§64 written as a principle; no new work
+beyond the interface tasks already listed there (T315-T322, T260-T262,
+T160-T167, T350-T351, T373).
+
+## 66.22 SECURITY, RESOURCES, DEPLOYMENT - PRESERVED
+
+Unchanged and binding on every capability above: least privilege; explicit
+permissions; node authentication (§64.13); API authentication (§30); secure
+streams (SSE/T162/provider media); credential isolation and secrets in config
+(§34); audit logs (§31); schema validation (§16); rate limiting; confirmation
+for sensitive actions; safe failure (§33); **never LLM → arbitrary shell →
+OS** (§16 path, stated in §1). Cloud-first and lightweight: cloud AI /
+OpenRouter, optional local models, 4 GB Ubuntu server, 8 GB Windows laptop,
+ESP32 constraints (§59.25, §64.20). No Kubernetes, no unnecessary
+microservices, no new brokers - modular monolith as before.
+
+## 66.23 DUPLICATE-SYSTEM CHECK AND CONFLICTS
+
+| Check | Result |
+|---|---|
+| Second memory system for knowledge? | No - pgvector store reused (D030) |
+| Second agent runtime for planning? | No - planner/orchestrator/executor T048-T050 on the existing manager |
+| Second event bus for new events? | No - §19 bus, additive names |
+| VoiceV2 for calls/continuous voice? | No - §25 + §65 both attach to T153's sessions |
+| TaskEngineV2 for background agents? | No - §44 scheduler + T040/T041 graph |
+| Node registry beside §64's? | No - §64.10 is the only registry (D021) |
+| New permission scale alongside LEVEL 0-5? | No - §15 scale, scoped grants (D020) |
+| OpenClaw as a dependency? | No - reference only (§65.20) |
+| Phase numbering replaced with the requested 0-21 phases? | No - mapped onto existing Phases 1-13 + blocks (D031) |
+
+## 66.24 ROADMAP AND DEPENDENCY ORDER
+
+New work is **T380-T394**, appended in tasks.md after the telephony block
+(D012/D013/D017 precedent). Existing tasks referenced rather than duplicated:
+T046/T048-T050 (core), T042-T045 (agents), T030/T031/T033 (bus, permissions),
+T120-T129/T124/T127 (memory, vectors), T150-T155/T250-T255 (voice),
+T170-T175 (scheduler), T180-T186 (observability), T220-T224/T223 (routing),
+T230-T232 (tools), T330-T354 (nodes), T360-T377 (telephony), T143-T145
+(computer use).
+
+```text
+context engine (T380)
+   → execution lifecycle (T381)
+       → agent-to-agent contract (T382)
+       → capability-aware node selection (T385)
+       → model routing hardening (T383)
+       → tool registry hardening (T390)   [before large plugin expansion]
+           → computer-use verify loop (T386)
+           → background agent lifecycle (T387)
+           → knowledge ingestion (T389)   [after context reads exist]
+           → memory type expansion (T388)
+       → event catalog additions (T384)   [before deep autonomy]
+       → action history (T392) → rollback (T393)
+       → self-diagnostics (T391)          [after events + health metrics]
+   → cross-capability integration test (T394)
+```
+
+Security ordering preserved: permission work (§66.7, T033) precedes powerful
+OS tools; node capability management precedes advanced multi-node planning;
+event additions precede autonomous/background integration.
+
+**This section is documentation.** Nothing in §66 is implemented by virtue of
+being written here.

@@ -4,12 +4,14 @@ These tests cover the HTTP surface: that the stream requires a credential, that
 its headers survive a real deployment, and that a topic filter is validated
 rather than silently ignored.
 
-The stream body is driven two ways, both necessary. ``TestClient`` cannot read a
-streaming response that never ends -- it buffers to completion, which is why the
-header tests use ``client.stream`` and never touch the body. To see actual
-frames, :class:`TestStreamGenerator` calls the route function directly and walks
-its async generator, which is the same object ``StreamingResponse`` would have
-wrapped.
+The stream body is driven two ways, both necessary. ``TestClient`` runs the
+ASGI app to completion before it returns anything -- it buffers the whole
+response -- so any request that *succeeds* hangs forever against a stream that
+never ends; only the finite refusals (401, 422, 503) travel over HTTP. To see
+actual frames, and to read the status and headers of an open stream,
+:class:`TestStreamGenerator` and ``open_stream`` call the route function
+directly and walk its async generator, which is the same object
+``StreamingResponse`` would have wrapped.
 
 What is worth pinning here is the set of things that are silently wrong in a way
 a manual test would miss: a missing ``X-Accel-Buffering`` header (a stream that
@@ -21,10 +23,12 @@ stream (the whole point of the T023 authentication decision).
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import AsyncGenerator
+from typing import Any, cast
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import CORRELATION_HEADERS, MAX_CORRELATION_LENGTH
@@ -121,6 +125,33 @@ def _principal() -> Principal:
     )
 
 
+async def open_stream(
+    app: FastAPI,
+    *,
+    headers: dict[str, str] | None = None,
+    topics: list[str] | None = None,
+    last_event_id: int | None = None,
+) -> StreamingResponse:
+    """Open the stream by driving the route function directly.
+
+    ``TestClient`` cannot do this: its transport runs the ASGI app to
+    completion and only then returns the buffered response, so a request that
+    succeeds would block forever against a stream that never ends. The finite
+    failures (401, 422, 503) still travel over HTTP; everything that opens the
+    stream comes through here, against the same code the HTTP layer calls.
+
+    Header names are passed lower-case because ``FakeRequest`` carries a plain
+    dict where a real ``Request`` would carry case-insensitive headers.
+    """
+    request = FakeRequest(app, headers=headers)
+    return await stream_events(
+        cast(Request, request),
+        _principal(),
+        topics=topics,
+        last_event_id=last_event_id,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
@@ -141,9 +172,7 @@ def settings(security: Any) -> Any:
     C9. That is exactly what this fixture would fall into if written the obvious
     way.
     """
-    return get_settings().model_copy(
-        update={"security": security, "event_heartbeat_seconds": 0.05}
-    )
+    return get_settings().model_copy(update={"security": security, "event_heartbeat_seconds": 0.05})
 
 
 @pytest.fixture
@@ -199,7 +228,8 @@ def token(client: TestClient, make_user: Any, authenticator: Any) -> str:
         json={"username": "alice", "password": "correct horse battery staple"},
     )
     assert response.status_code == 200, response.text
-    return response.json()["access_token"]
+    token: str = response.json()["access_token"]
+    return token
 
 
 @pytest.fixture
@@ -253,17 +283,19 @@ class TestAuthentication:
         assert client.get("/events").status_code == 401
         assert app.state.container.events.subscriber_count == 0
 
-    def test_an_authenticated_stream_opens(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
+    @pytest.mark.asyncio
+    async def test_an_authenticated_stream_opens(self, app: FastAPI) -> None:
         """The happy path, asserted on status and content type only.
 
-        The body is not read because ``TestClient`` buffers a streaming response
-        to completion and this one never completes.
+        Over HTTP this would hang: ``TestClient`` buffers to completion (see
+        ``open_stream``), and this response never completes. That a credential
+        is what earns the 200 is proven by the refusals above; here the route's
+        own output is under the microscope.
         """
-        with client.stream("GET", "/events", headers=auth) as response:
-            assert response.status_code == 200
-            assert response.headers["content-type"].startswith(SSE_CONTENT_TYPE)
+        response = await open_stream(app)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(SSE_CONTENT_TYPE)
+        await _body(response).aclose()
 
 
 # --------------------------------------------------------------------------- #
@@ -271,35 +303,41 @@ class TestAuthentication:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.asyncio
 class TestStreamingHeaders:
-    """Headers that decide whether a stream survives a real deployment."""
+    """Headers that decide whether a stream survives a real deployment.
 
-    def test_buffering_is_disabled_for_reverse_proxies(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
+    Driven through ``open_stream``: the headers are built by the route, which
+    is the code under test, and ``TestClient`` cannot return them without first
+    running the endless stream to completion.
+    """
+
+    async def test_buffering_is_disabled_for_reverse_proxies(self, app: FastAPI) -> None:
         """Without this, nginx holds every frame and the stream looks hung.
 
         This is the most common way an SSE deployment works locally and fails in
         production: the proxy is not broken, it is doing what it is configured to
         do, and the symptom is silence.
         """
-        with client.stream("GET", "/events", headers=auth) as response:
-            assert response.headers["x-accel-buffering"] == "no"
+        response = await open_stream(app)
+        assert response.headers["x-accel-buffering"] == "no"
+        await _body(response).aclose()
 
-    def test_transform_is_disabled(self, client: TestClient, auth: dict[str, str]) -> None:
+    async def test_transform_is_disabled(self, app: FastAPI) -> None:
         """A compressing proxy would have to buffer to build a compressed frame."""
-        with client.stream("GET", "/events", headers=auth) as response:
-            assert "no-transform" in response.headers["cache-control"]
+        response = await open_stream(app)
+        assert "no-transform" in response.headers["cache-control"]
+        await _body(response).aclose()
 
-    def test_the_response_is_not_cacheable(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
-        with client.stream("GET", "/events", headers=auth) as response:
-            assert "no-cache" in response.headers["cache-control"]
+    async def test_the_response_is_not_cacheable(self, app: FastAPI) -> None:
+        response = await open_stream(app)
+        assert "no-cache" in response.headers["cache-control"]
+        await _body(response).aclose()
 
-    def test_the_connection_is_kept_alive(self, client: TestClient, auth: dict[str, str]) -> None:
-        with client.stream("GET", "/events", headers=auth) as response:
-            assert response.headers.get("connection") == "keep-alive"
+    async def test_the_connection_is_kept_alive(self, app: FastAPI) -> None:
+        response = await open_stream(app)
+        assert response.headers.get("connection") == "keep-alive"
+        await _body(response).aclose()
 
 
 # --------------------------------------------------------------------------- #
@@ -308,9 +346,7 @@ class TestStreamingHeaders:
 
 
 class TestTopicFilter:
-    def test_an_unknown_topic_is_a_422(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
+    def test_an_unknown_topic_is_a_422(self, client: TestClient, auth: dict[str, str]) -> None:
         """Reject rather than silently drop.
 
         A client asking for ``agentz`` should get an error, not an open stream that
@@ -321,21 +357,23 @@ class TestTopicFilter:
         assert response.status_code == 422
         assert "agentz" in response.text
 
-    def test_a_known_topic_is_accepted(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
-        assert client.get("/events", headers=auth, params={"topics": "agent"}).status_code == 200
-
-    def test_the_wildcard_is_accepted(self, client: TestClient, auth: dict[str, str]) -> None:
-        assert client.get("/events", headers=auth, params={"topics": "*"}).status_code == 200
-
-    def test_several_topics_are_accepted(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
-        response = client.get(
-            "/events", headers=auth, params=[("topics", "agent"), ("topics", "task")]
-        )
+    @pytest.mark.asyncio
+    async def test_a_known_topic_is_accepted(self, app: FastAPI) -> None:
+        response = await open_stream(app, topics=["agent"])
         assert response.status_code == 200
+        await _body(response).aclose()
+
+    @pytest.mark.asyncio
+    async def test_the_wildcard_is_accepted(self, app: FastAPI) -> None:
+        response = await open_stream(app, topics=["*"])
+        assert response.status_code == 200
+        await _body(response).aclose()
+
+    @pytest.mark.asyncio
+    async def test_several_topics_are_accepted(self, app: FastAPI) -> None:
+        response = await open_stream(app, topics=["agent", "task"])
+        assert response.status_code == 200
+        await _body(response).aclose()
 
     def test_the_error_names_the_known_topics(
         self, client: TestClient, auth: dict[str, str]
@@ -370,9 +408,7 @@ class TestCapacity:
         full.subscribe()
         app.state.container.events = full
 
-        response = TestClient(app).get(
-            "/events", headers={"Authorization": f"Bearer {token}"}
-        )
+        response = TestClient(app).get("/events", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 503
         assert full.subscriber_count == 1
 
@@ -383,26 +419,26 @@ class TestCapacity:
 
 
 class TestResume:
-    def test_last_event_id_header_is_accepted(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
+    @pytest.mark.asyncio
+    async def test_last_event_id_header_is_accepted(self, app: FastAPI) -> None:
         """The standard SSE resume header, honoured without a query parameter."""
-        response = client.get("/events", headers={**auth, "Last-Event-ID": "5"})
+        response = await open_stream(app, headers={"last-event-id": "5"})
         assert response.status_code == 200
+        await _body(response).aclose()
 
-    def test_the_query_parameter_is_accepted(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
+    @pytest.mark.asyncio
+    async def test_the_query_parameter_is_accepted(self, app: FastAPI) -> None:
         """For the fetch() client, which sets headers but rebuilds URLs less often."""
-        response = client.get("/events", headers=auth, params={"lastEventId": "5"})
+        response = await open_stream(app, last_event_id=5)
         assert response.status_code == 200
+        await _body(response).aclose()
 
-    def test_a_non_numeric_header_is_ignored_rather_than_fatal(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
+    @pytest.mark.asyncio
+    async def test_a_non_numeric_header_is_ignored_rather_than_fatal(self, app: FastAPI) -> None:
         """A corrupt resume value should cost a client its backlog, not its stream."""
-        response = client.get("/events", headers={**auth, "Last-Event-ID": "not-a-number"})
+        response = await open_stream(app, headers={"last-event-id": "not-a-number"})
         assert response.status_code == 200
+        await _body(response).aclose()
 
 
 # --------------------------------------------------------------------------- #
@@ -430,22 +466,24 @@ async def _frames(
     return collected
 
 
+def _body(response: Any) -> AsyncGenerator[bytes, None]:
+    """The async generator behind a ``StreamingResponse``, typed for walking."""
+    return cast(AsyncGenerator[bytes, None], response.body_iterator)
+
+
 @pytest.mark.asyncio
 class TestStreamGenerator:
     """Drive the route function directly; this is where the frames are visible."""
 
     async def _open(self, app: FastAPI, **kw: Any) -> Any:
-        request = FakeRequest(app, headers=kw.pop("headers", {}))
-        return await stream_events(
-            request,
-            _principal(),
+        return await open_stream(
+            app,
+            headers=kw.pop("headers", {}),
             topics=kw.pop("topics", None),
             last_event_id=kw.pop("last_event_id", None),
         )
 
-    async def test_the_stream_opens_with_a_retry_hint(
-        self, app: FastAPI, bus: EventBus
-    ) -> None:
+    async def test_the_stream_opens_with_a_retry_hint(self, app: FastAPI, bus: EventBus) -> None:
         """A native client uses this for every future reconnect.
 
         The value is deliberately long. A reconnect storm against a struggling
@@ -474,9 +512,7 @@ class TestStreamGenerator:
         assert '"heartbeat_seconds"' in connected
         await response.body_iterator.aclose()
 
-    async def test_a_published_event_reaches_the_stream(
-        self, app: FastAPI, bus: EventBus
-    ) -> None:
+    async def test_a_published_event_reaches_the_stream(self, app: FastAPI, bus: EventBus) -> None:
         """The actual purpose of the endpoint."""
         response = await self._open(app)
 
@@ -505,22 +541,23 @@ class TestStreamGenerator:
         assert keepalive.startswith(": keepalive")
         await response.body_iterator.aclose()
 
-    async def test_a_disconnect_ends_the_stream(
-        self, app: FastAPI, bus: EventBus
-    ) -> None:
+    async def test_a_disconnect_ends_the_stream(self, app: FastAPI, bus: EventBus) -> None:
         """A vanished client is noticed on the heartbeat tick, not left hanging.
 
         On a quiet system there may never be a next event, so waiting on the queue
         alone would keep the subscription — and its queue — alive indefinitely.
         """
         request = FakeRequest(app)
-        response = await stream_events(request, _principal(), topics=None, last_event_id=None)
-        await response.body_iterator.__anext__()
-        await response.body_iterator.__anext__()
+        response = await stream_events(
+            cast(Request, request), _principal(), topics=None, last_event_id=None
+        )
+        iterator = _body(response)
+        await iterator.__anext__()
+        await iterator.__anext__()
         request.disconnected = True
 
         with pytest.raises(StopAsyncIteration):
-            await asyncio.wait_for(response.body_iterator.__anext__(), timeout=2)
+            await asyncio.wait_for(iterator.__anext__(), timeout=2)
 
     async def test_closing_the_response_releases_the_subscription(
         self, app: FastAPI, bus: EventBus
@@ -540,9 +577,7 @@ class TestStreamGenerator:
         await response.body_iterator.aclose()
         assert bus.subscriber_count == 0
 
-    async def test_resume_replays_missed_events(
-        self, app: FastAPI, bus: EventBus
-    ) -> None:
+    async def test_resume_replays_missed_events(self, app: FastAPI, bus: EventBus) -> None:
         """A reconnecting client gets what it missed, without a gap it cannot see."""
         await bus.publish("TASK_CREATED", {"i": 1})
         await bus.publish("TASK_STARTED", {"i": 2})
@@ -554,9 +589,7 @@ class TestStreamGenerator:
         assert '"TASK_STARTED"' in replayed
         await response.body_iterator.aclose()
 
-    async def test_a_lag_signal_reaches_the_client(
-        self, app: FastAPI, bus: EventBus
-    ) -> None:
+    async def test_a_lag_signal_reaches_the_client(self, app: FastAPI, bus: EventBus) -> None:
         """When replay cannot cover the gap, the client is told to resync.
 
         A resume that quietly skips events is indistinguishable from a working
@@ -576,9 +609,7 @@ class TestStreamGenerator:
         assert '"action":"resync"' in lagged
         await response.body_iterator.aclose()
 
-    async def test_delivered_ids_strictly_increase(
-        self, app: FastAPI, bus: EventBus
-    ) -> None:
+    async def test_delivered_ids_strictly_increase(self, app: FastAPI, bus: EventBus) -> None:
         """Ordering is the property a client uses to spot a gap or a reorder.
 
         The fixture's queue is large enough that nothing is dropped, so this
