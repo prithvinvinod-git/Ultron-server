@@ -375,6 +375,18 @@ class TestTopicFilter:
         assert response.status_code == 200
         await _body(response).aclose()
 
+    @pytest.mark.asyncio
+    async def test_topics_from_the_extended_catalog_are_accepted(self, app: FastAPI) -> None:
+        """The T030 catalog added topics §19 never had; the gate must know them.
+
+        A topic that exists in the catalog but is rejected here would strand
+        every subscriber of a node, orb, call or permission panel behind a
+        422 on a perfectly valid filter.
+        """
+        response = await open_stream(app, topics=["node", "orb", "call", "permission"])
+        assert response.status_code == 200
+        await _body(response).aclose()
+
     def test_the_error_names_the_known_topics(
         self, client: TestClient, auth: dict[str, str]
     ) -> None:

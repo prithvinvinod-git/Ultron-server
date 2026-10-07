@@ -42,6 +42,7 @@ from app.core.errors import InvalidInputError
 from app.events.bus import (
     ALL_TOPICS,
     CONNECTED_EVENT_TYPE,
+    KNOWN_TOPICS,
     SYSTEM_TOPIC,
     EventEnvelope,
     iter_topics,
@@ -98,8 +99,7 @@ async def stream_events(
         default=None,
         description=(
             "Topics to receive. Omit or pass '*' for everything. "
-            f"Available: {SYSTEM_TOPIC}, agent, task, tool, model, build, test, "
-            "device, voice, schedule."
+            f"Available: {', '.join(sorted(t for t in KNOWN_TOPICS if t != ALL_TOPICS))}."
         ),
     ),
     last_event_id: int | None = Query(
@@ -242,22 +242,8 @@ def _resume_from(request: Request, explicit: int | None) -> int | None:
 
 
 def _known_topics() -> frozenset[str]:
-    """Every topic derivable from a spec §19 event type, plus the wildcard."""
-    return frozenset(
-        {
-            ALL_TOPICS,
-            SYSTEM_TOPIC,
-            "agent",
-            "task",
-            "tool",
-            "model",
-            "build",
-            "test",
-            "device",
-            "voice",
-            "schedule",
-        }
-    )
+    """Every topic derivable from the canonical catalog (T030), plus the wildcard."""
+    return KNOWN_TOPICS
 
 
 def _capacity_error(exc: Exception) -> Exception:

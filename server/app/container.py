@@ -62,6 +62,7 @@ from app.database.session import (
     session_scope,
 )
 from app.events.bus import EventBus
+from app.events.handlers import PersistEvents
 from app.observability.health import (
     HealthService,
     check_filesystem,
@@ -97,6 +98,7 @@ class Container:
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._redis = redis
         self._events = events
+        self._persist: PersistEvents | None = None
         self._health = health or HealthService()
         self._register_default_checks()
 
@@ -179,6 +181,21 @@ class Container:
         """
         await self.ping_database()
         await self.ping_redis()
+        await self._start_persist_handler()
+
+    async def _start_persist_handler(self) -> None:
+        """Attach the durable event subscriber when persistence is enabled.
+
+        No-op when ``events_persist`` is off, so a deployment that keeps only
+        the live bus (or none) pays nothing for a table it never fills.
+        """
+        if not self.settings.observability.events_persist:
+            return
+        self._persist = PersistEvents(
+            self.events,
+            session_scope=lambda: session_scope(self.session_factory),
+        )
+        await self._persist.start()
 
     async def shutdown(self) -> None:
         """Dispose of the engine and close the Redis client.
@@ -187,6 +204,9 @@ class Container:
         is closed first so that any open ``/events`` stream wakes up and ends
         instead of hanging until its client gives up.
         """
+        if self._persist is not None:
+            await self._persist.stop()
+            self._persist = None
         if self._events is not None:
             self._events.close()
         await self.redis.aclose()

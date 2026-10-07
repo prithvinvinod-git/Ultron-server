@@ -42,6 +42,12 @@ from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, Self
 
+from app.events.types import (
+    ALL_TOPICS,
+    KNOWN_TOPICS,
+    SYSTEM_TOPIC,
+    topic_for,
+)
 from app.observability.logging import get_logger
 
 _LOGGER = get_logger(__name__)
@@ -53,46 +59,6 @@ LAG_EVENT_TYPE = "stream.lagged"
 
 #: Event type sent once when a stream opens, carrying what it resumed from.
 CONNECTED_EVENT_TYPE = "stream.connected"
-
-#: Topic for events that belong to no other topic (resource alarms, schedules).
-SYSTEM_TOPIC = "system"
-
-#: Wildcard topic: subscribe to everything.
-ALL_TOPICS = "*"
-
-_TOPIC_BY_PREFIX: tuple[tuple[str, str], ...] = (
-    ("TASK_", "task"),
-    ("AGENT_", "agent"),
-    ("TOOL_", "tool"),
-    ("MODEL_", "model"),
-    ("BUILD_", "build"),
-    ("TEST_", "test"),
-    ("DEVICE_", "device"),
-    ("WAKE_", "voice"),
-    ("STT_", "voice"),
-    ("TTS_", "voice"),
-    ("SCHEDULE_", "schedule"),
-)
-
-#: Prefixes that are resource alarms rather than anything a client subscribes to
-#: by name; they land on the system topic with everything else.
-_SYSTEM_EVENT_TYPES = frozenset({"CPU_HIGH", "RAM_HIGH", "DISK_LOW", "GPU_HIGH"})
-
-
-def topic_for(event_type: str) -> str:
-    """Return the topic an event type belongs to.
-
-    Derived from the spec §19 type name rather than passed in, so a publisher
-    cannot file an event under a topic that contradicts its type. An unknown type
-    becomes :data:`SYSTEM_TOPIC`, which is the safe direction: a new event type
-    reaches subscribers instead of silently reaching nobody.
-    """
-    if event_type in _SYSTEM_EVENT_TYPES:
-        return SYSTEM_TOPIC
-    for prefix, topic in _TOPIC_BY_PREFIX:
-        if event_type.startswith(prefix):
-            return topic
-    return SYSTEM_TOPIC
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +80,13 @@ class EventEnvelope:
     task_id: str | None = None
     agent_id: str | None = None
     device_id: str | None = None
+    #: Whether the persistence subscriber should write this event to the
+    #: ``events`` table. Per-event opt-in (``EventBus.publish(persist=True)``)
+    #: rather than a bus-wide rule, because high-volume types like
+    #: ``STT_PARTIAL`` would otherwise dominate the table. Deliberately not in
+    #: ``to_dict``: it is a routing instruction for subscribers, not event data
+    #: a client should see or the table should store.
+    persist: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Return the JSON body of the event.
@@ -223,10 +196,19 @@ class Subscription:
         left its subscription behind forever, still receiving events into a queue
         nobody reads -- a slow memory leak that no single-connection test would
         catch.
+
+        The wake-up ``None`` sentinel must always land, so a full queue is made
+        to fit it by sacrificing the oldest undelivered event (which counts as a
+        drop -- the counter already blames full queues). Otherwise a consumer
+        draining on shutdown would wait forever for a sentinel that could not be
+        enqueued.
         """
         self._closed = True
-        with contextlib.suppress(asyncio.QueueFull):
-            self._queue.put_nowait(None)
+        if self._queue.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._queue.get_nowait()
+            self._dropped += 1
+        self._queue.put_nowait(None)
         self._bus._forget(self)
 
     async def __aenter__(self) -> Self:
@@ -324,6 +306,7 @@ class EventBus:
             task_id=task_id,
             agent_id=agent_id,
             device_id=device_id,
+            persist=persist,
         )
         if self._replay_size:
             self._replay.append(envelope)
@@ -478,6 +461,7 @@ def iter_topics(values: Sequence[str] | None) -> Iterator[str]:
 __all__ = [
     "ALL_TOPICS",
     "CONNECTED_EVENT_TYPE",
+    "KNOWN_TOPICS",
     "LAG_EVENT_TYPE",
     "SYSTEM_TOPIC",
     "EventBus",

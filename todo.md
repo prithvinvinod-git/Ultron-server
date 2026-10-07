@@ -371,5 +371,25 @@ long-lived opaque credentials.
 
 ### G3. **ANSWERED: T024 first**
 
-Done — the Phase 1 suite is now closed out at 942 tests, with the event-stream
-connect check deliberately left open for T023 rather than faked.
+Done — the Phase 1 suite closed at 942 tests, with the event-stream connect
+check deliberately left open for T023 rather than faked. That check has since
+landed with T023 (see C12/C13); the suite is now 1021 tests.
+
+---
+
+## H. Untested surfaces — remind the author whenever work resumes
+
+Recorded at the start of the proceed-to-remaining-tasks pass, per the author's
+instruction to flag these at every proceed point. None can be closed on this
+machine (spec 61 forbids running ULTRON here).
+
+1. **Server never started here** — no live end-to-end run of any endpoint.
+2. **Integration tests never ran** against live PostgreSQL/Redis —
+   `-m integration` is always deselected; no Docker on this machine (T025
+   deferred), so only native-PostgreSQL manual checks exist (T021, T026).
+3. **Redis, Ollama, agent runtime** — health checks exist and are unit-tested,
+   but the services themselves are unconfirmed (Redis also C5).
+4. **SSE `/events` never served on a real socket** — route tests + direct
+   drive only; `TestClient` limitation documented in C13.
+
+Closing any of these needs the server (B1) or Docker (T025).

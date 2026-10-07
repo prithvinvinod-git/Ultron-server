@@ -144,11 +144,11 @@ phases that need them, and permanently in production on Ubuntu.
 - [x] **T020** `app/main.py` — FastAPI factory + lifespan, exception handlers, router mounting
 - [x] **T021** `app/api/dependencies.py` — container access, correlation IDs, auth dependency stub. Written: `app/security/{passwords,tokens,audit,authentication}.py`, `app/api/dependencies.py`, `app/api/routes/auth.py`, correlation-ID + access-log middleware in `app/main.py`, and unit tests for each. Route-level tests over `TestClient` are in place (35 tests) and the full gate passes. Also verified against a live PostgreSQL 17 instance with `ENABLE_PGVECTOR=false`: login, token authentication, refresh rotation and replay refusal all behave, and the audit trail carries `auth.login` / `auth.token_refresh` / `auth.token_reuse_detected`. See delivery notes below.
 - [x] **T022** `app/api/routes/health.py` — `/health`, `/ready`, `/metrics` — **done.** Written: `app/api/routes/health.py`, `app/observability/metrics.py`, plus `ContainerProtocol.health`. `/health` is liveness via `HealthService.liveness()` and is deliberately **dependency-free** — it never opens a database connection, because a liveness probe that consulted PostgreSQL would restart a healthy process on every blip and turn one dependency's hiccup into an outage of every replica. `/ready` returns `503` unless a **required** check is `OK` (PostgreSQL only, §23); an optional failure degrades without removing the instance (§33). Both now carry `startup_warnings`, which keeps the promise in `Settings.startup_warnings` ("observable through `/health`") — before this those warnings were logged once at boot and then invisible. Warnings drop `status` to `degraded` but never fail the probe, because a restart cannot fix configuration and a crash loop is not diagnosable. `/metrics` uses `prometheus_client` (already a core dependency, no new package) behind a dedicated `CollectorRegistry` rather than the process-global default, which any import could collide with; status is **one-hot** (`{check,status}` label set to 1) rather than collapsed onto magic numbers. `404` when `METRICS_ENABLED=false`, because an empty body reads as "healthy, nothing to report". 16 new tests, 928 total.
-- [ ] **T023** event stream endpoint — **scope changed.** The original `app/api/websocket/manager.py` + `/ws` is replaced by an **authenticated, receive-only SSE** endpoint per the T311 decision. Note the constraint this creates: a receive-only stream has no first message, so "authenticate on the first frame" is impossible. Recommended resolution is `fetch()`-based streaming with an `Authorization` header and custom backoff; `EventSource` cannot send headers at all, so it would force a cookie or a query-string token. Confirm before writing code.
-- [x] **T024** `server/tests/` Phase 1 suite — config, logging, session, health, API smoke — **done except stream connect.** Most of the listed areas were already covered by unit tests (config 40, logging 51, session 32, health 71, repositories 132). The genuine gap was **API smoke**: no test exercised the *assembled* app, so nothing caught route-table drift. Added `tests/unit/test_api_smoke.py` (13 tests) covering the mounted surface, OpenAPI generation, the error envelope on 404/405, unauthenticated 401, correlation-ID middleware, and real-container construction. 942 total.
+- [x] **T023** event stream endpoint — **done.** The original `app/api/websocket/manager.py` + `/ws` was replaced by an **authenticated, receive-only SSE** endpoint (`app/api/routes/events.py`, `GET /events`) per the T311 decision; first-frame auth was impossible (a receive-only stream has no first message), so the resolution is `fetch()`-based streaming with an `Authorization: Bearer` header and hand-written client backoff — `EventSource` cannot send headers, so it stays out of the contract and the token never enters a URL or proxy log. Code landed in `277aac0` but no gate was ever run; this entry closes that debt: `tests/unit/test_event_stream_routes.py` (28 tests — auth refusals, streaming headers, topic filter, resume via `Last-Event-ID`, capacity 503, disconnect cleanup) plus the T024-carried stream-connect check in `test_api_smoke.py` (`/events` in the mounted-surface assertion, anonymous 401 against the real `create_app()` app). Gate: ruff/format/mypy clean over 108 files, **1021 tests pass**. Two structural fixes found while gating — inherited `ENABLE_PGVECTOR` env isolation in `tests/conftest.py`, and `TestClient`'s inability to buffer an endless SSE response (the 11 open-stream tests now drive the route directly via `open_stream()`) — are recorded in the delivery notes below and `todo.md` C12/C13.
+- [x] **T024** `server/tests/` Phase 1 suite — config, logging, session, health, API smoke — **done.** Most of the listed areas were already covered by unit tests (config 40, logging 51, session 32, health 71, repositories 132). The genuine gap was **API smoke**: no test exercised the *assembled* app, so nothing caught route-table drift. Added `tests/unit/test_api_smoke.py` (13 tests, now 14) covering the mounted surface, OpenAPI generation, the error envelope on 404/405, unauthenticated 401, correlation-ID middleware, and real-container construction. 942 total at the time. The event-stream connect check carried below landed with T023.
 - [ ] **T025** `deployment/docker/Dockerfile.dev` + root `docker-compose.yml` dev stack (`postgres`, `redis`, `ultron-api`) - `DEFERRED` - not a Phase 1 blocker. No Docker on the dev machine (spec 61); native PostgreSQL 17 serves tests and migrations instead.
-- [ ] **T026** Migrate real PostgreSQL + create schema via Alembic - `DONE` on the dev machine - Alembic applied to native PostgreSQL 17 with `ENABLE_PGVECTOR=false`, 17 tables + `alembic_version`, `memories.embedding` is `jsonb`. Re-run on the server.
-- [ ] **T027** **PHASE 1 verification** — server starts, PostgreSQL connects, Redis connects, `/health` works, WebSocket works - `REVISED` - 'server starts' and 'WebSocket works' cannot be checked here (spec 61 forbids running ULTRON on this machine); they move to the server. Remaining local half: `/health` and `/ready` over `TestClient`, in T022.
+- [x] **T026** Migrate real PostgreSQL + create schema via Alembic - `DONE` on the dev machine - Alembic applied to native PostgreSQL 17 with `ENABLE_PGVECTOR=false`, 17 tables + `alembic_version`, `memories.embedding` is `jsonb`. Evidence: revision chain applied end-to-end on loopback PG17, schema verified (T021 live checks ran against it). Re-run on the server — tracked in `todo.md` B1/H, not here.
+- [x] **T027** **PHASE 1 verification** — server starts, PostgreSQL connects, Redis connects, `/health` works, WebSocket works - `REVISED` - 'server starts' and 'WebSocket works' cannot be checked here (spec 61 forbids running ULTRON on this machine); they move to the server. Remaining local half: `/health` and `/ready` over `TestClient`, in T022 — **done** (16 tests, live-probe semantics covered). Local half closed; server halves tracked in `todo.md` B1/H and must be run before the phase gate is claimed.
 
 **Phase 1 gate (spec §51):** server starts successfully
 
@@ -507,9 +507,9 @@ no account of *why*, and this is the revision every later one is compared agains
 
 ## Phase 2 — Core
 
-- [ ] **T030** `app/events/types.py` — 33 event types from spec §19 + orb/agent-window events (§27, §28)
-- [ ] **T031** `app/events/bus.py` — async pub/sub, wildcards, queue backpressure, optional Redis bridge
-- [ ] **T032** `app/events/handlers.py` — built-in subscribers (logger, memory, WS fan-out)
+- [x] **T030** `app/events/types.py` — **done.** The task's "33 event types from §19 + orb/agent-window events (§27, §28)" is §19's 30 names plus §27's three `ORB_*` ones; the delivered catalog is the full **71-name canonical set**, because each later section declares itself an addition to *this* set under the no-rename rule: §27 (5), §64.9 node/orb/agent states (11), §64.15 `ESP32_` forms (2), §65.15 call lifecycle (8), §66.8 planner/permission/voice/model-fallback names (15). `EventType` is a `StrEnum` grouped by provenance, with `CANONICAL_EVENT_TYPES` for plain-string membership and `is_canonical()`. Topic derivation (`topic_for`, ordered prefix table, exact orb-state match) moved here from `bus.py` so one module owns names *and* routing; `bus` re-exports the same objects (identity-tested), and `KNOWN_TOPICS` is derived from the tables — the SSE route's 422 gate and its `Available:` description now read it, so a future prefix cannot be unsubscribable. Deliberately absent: `stream.*` transport signals (stay in `bus`) and `DEVICE_OFFLINE` (the §19/§58 spelling conflict stays unresolved until T335 — one spelling, not two guesses). Topic order is load-bearing (`VOICE_CALL_` before `VOICE_` or calls land on the voice-pipeline panel). Evidence: `tests/unit/test_event_types.py` (36 tests, spec tables transcribed from `server_arc.md` so drift fails), +1 stream-route test for the new topics; gate green, **1058 tests total**.
+- [x] **T031** `app/events/bus.py` — async pub/sub, wildcards, queue backpressure, optional Redis bridge — **done (written under T023, assessed here).** `EventBus`/`Subscription`/`EventEnvelope`: async publish, topic fan-out with full wildcard (`*`), bounded per-subscriber queues that drop the oldest and hand the subscriber a `stream.lagged` resync signal instead of blocking the publisher, bounded replay for `Last-Event-ID`, subscriber cap with honest refusal (`503`), health snapshot for readiness. Topic derivation moved to `app/events/types.py` in T030 with identity-verified re-exports. The **Redis bridge is the optional half and is deliberately absent**: Redis is deferred project-wide (`todo.md` C5) and the bus docstring records the trade — single-process delivery now, swap point is the narrow `publish`/`subscribe` surface later, no rewrite. Evidence: `test_event_bus.py` 50 tests (wildcard, filter, backpressure drop order, lag visibility, replay + eviction, close/limit/counter semantics), gate green, **1058 tests total**.
+- [x] **T032** `app/events/handlers.py` — built-in subscribers (logger, memory, WS fan-out) — **done, delivered as the durable write-through the `events` table promises.** Of the three named subscribers, only one has a source today and the other two would be net-negative scaffolding: the **logger** is already implied by `EventBus.publish`'s per-event transport log (a subscriber re-logging would double every line), the **WS fan-out** was replaced by T023's per-client SSE subscriptions (each client owns a bus subscription), and **memory** has no producer until Phase 7 (`app/memory/` is empty). Delivered instead: **`PersistEvents`**, the §19 async subscriber for the `events` table — wildcard subscription, private worker task over a bounded bus queue (drop-don't-block, same rule as SSE tabs), filters `EventEnvelope.persist` (new per-event opt-in flag wired through `EventBus.publish(persist=...)` and deliberately excluded from `to_dict`: a routing instruction, not wire data — high-volume `STT_PARTIAL`-class events stay live-only by default), injectable writer (tests use a recorder; production appends via `EventRepository` with `sequence`=envelope.id and UUID-coercing `task_id`/`agent_id`/`device_id`), failure isolation (a dropped database increments `failed` and the worker survives — never kills the publisher), `written`/`failed`/`dropped` counters + `snapshot()` for a health subscriber, idempotent start/stop with stop draining the queue (engineered around a real bug: `Subscription.close()`'s wake-up sentinel was suppressed on a full queue, so a draining consumer could wait forever — close now makes room by sacrificing the oldest event, counted as a drop). Container wiring: attached in `startup()` behind `settings.observability.events_persist` (default true), stopped before the bus closes in `shutdown()`. Retention (`event_retention_days`) stays Phase 3+ work as the model already documents. Evidence: `tests/unit/test_event_handlers.py` (10 deterministic tests — flag plumbing + wire exclusions, skip-non-persist, failure isolation, stop-drains, exact backpressure counts, container attach/off paths), lint+mypy clean over 112 files, gate green, **1068 tests total**. Root `.env.example` already carries `EVENTS_PERSIST=true`, `REDIS_EVENT_BRIDGE=false`.
 - [ ] **T033** `app/security/permissions.py` + `app/core/permissions.py` — LEVEL 0–5, policy, allow/deny/confirm, audit every decision
 - [ ] **T034** `app/tools/base.py` — `Tool` ABC: name, description, `input_schema`, `permission_level`, `execute()`, `verify()`
 - [ ] **T035** `app/tools/registry.py` — register/lookup/list/describe, schema validation
@@ -802,19 +802,19 @@ Appended after each phase, per spec §51/§58.
 | Item | Result |
 |---|---|
 | Branch | `feature/phase-1-foundation` (from `develop` @ `d6fcb94`) |
-| Done | T010 configuration, T011 structured logging, T012 typed errors, T013 async session layer, T014 models, T015 repositories, T016 migrations, T017 Redis wrapper, T018 health checks, T019 DI composition root, T020 FastAPI factory — 11 of 18 |
-| `scripts/lint` | Ruff clean over `app`, `tests` and `migrations` (including the new `S`/bandit rules); mypy clean over `app`, 78 files |
-| `scripts/test` | 807 passed, integration and e2e deselected |
+| Done | T010–T020 foundation, T021 auth stack, T022 probes, T023 SSE event stream, T024 test suite, T026 Alembic migration, T027 local verification — **17 of 18** (only T025 remains, `DEFERRED`: no Docker) |
+| `scripts/lint` | Ruff check + format clean; mypy clean over `app`, `tests` and `migrations/env.py` — 108 files (fixed: `explicit_package_bases` for the duplicate-`conftest` clash) |
+| `scripts/test` | 1021 passed, integration and e2e deselected (was 807) |
 | `docs/errors.md` | Catalogue generated from the running code and diffed against it, so it cannot drift; now covers `LockUnavailableError` |
-| Next | T021 `app/api/dependencies.py` — container access, correlation IDs, auth dependency. **In progress and uncommitted**: security primitives, the authenticator, the `/auth` routes and the correlation middleware are written and unit-tested; route-level tests, the gate and the commit remain. |
-| Still blocked | T025/T026/T027 need Docker Desktop: no PostgreSQL, no Redis, no real migration yet. The phase gate cannot be claimed. |
+| Next | Phase 2 begins at T030. Uncommitted: gate fixes, T023 delivery notes, §64–§66 docs (`server_arc.md`, `tasks.md`, `todo.md`). |
+| Still blocked | Server halves of T027 (live start, Redis/Ollama connect, SSE on a real socket) need the server (`todo.md` B1/H); Docker-dependent integration tests need T025. The full phase gate ("server starts successfully") cannot be claimed on this machine — spec 61. |
 
 #### T017 delivery notes
 
 Scope is the four uses the task line names — cache, locks, pub/sub, transient
 state. Spec §24 lists six, and the other three arrive with their consumers rather
 than landing here unasked: queues with the event bus (T031), rate limiting with
-the security work, and WebSocket coordination with the connection manager (T023).
+the security work, and event-stream coordination (T023, since built as SSE).
 All three are built on the primitives in this module.
 
 Four decisions were confirmed before implementation, because the spec is silent on
@@ -988,9 +988,12 @@ socket is opened; and it does not touch `/ready`, because readiness runs the
 health engine, which takes seconds to fail against a real PostgreSQL and Redis.
 `/health` is dependency-free and answers immediately.
 
-**Still open for T024:** the event-stream connect check. It cannot be written
-until T023 exists, and T023 is now SSE rather than WebSocket. Carried in the T023
-entry above.
+**Closed with T023:** the event-stream connect check now lives in this file
+(`test_event_stream_refuses_an_anonymous_caller`, plus `/events` in the
+mounted-surface assertion) and runs against the real `create_app()` app. The
+happy path cannot travel over `TestClient` — starlette 1.7 buffers an endless
+stream to completion — so it is covered by the T023 route tests via direct
+drive instead.
 
 #### T020 delivery notes
 
@@ -1050,10 +1053,10 @@ behaviours were mutation-checked: restoring wildcard CORS fails 4 of them,
 reintroducing the `error_code` typo fails 5, and making `/ready` always answer
 200 fails 1.
 
-Still missing, and tracked as later tasks rather than fixed here: authentication
-itself (T021/T022), permission enforcement (T033), rate limiting (T035), the
-tool execution pipeline (T036), and event-stream authentication (T023 — the
-question is still open, see `todo.md` §G2).
+Still missing, and tracked as later tasks rather than fixed here: permission
+enforcement (T033), rate limiting (T035) and the tool execution pipeline
+(T036). Event-stream authentication has since closed with T023 (`fetch()` +
+`Authorization` header; `todo.md` §G2).
 
 #### Security audit: remaining gaps against §15/§16/§17/§30/§31
 
@@ -1079,6 +1082,44 @@ the spec — it is a list of schemas, settings and error types with no caller.
 Two settings are also unused scaffolding and are worth wiring before Phase 1 is
 called done: `security.require_auth` (defaults to `True`, so the fail-closed
 intent is already there) and `startup_warnings()`'s output (now called).
+
+#### T023 delivery notes — SSE event stream
+
+`277aac0` wrote the endpoint and its tests but never ran a gate; this entry
+closes that debt and records what the gate found.
+
+**What exists.** `app/api/routes/events.py`: `GET /events`, authenticated by
+the standard `Authorization: Bearer` dependency, subscribes to the real event
+bus and sends named server-sent events until the client disconnects. Topic
+selection validates against the known vocabulary (422 naming what is allowed);
+`Last-Event-ID` / `lastEventId` resume a dropped stream from the event store;
+`Retry:` hints are emitted while the backoff itself lives client-side
+(`fetch()`, never `EventSource`, so the token never enters a URL or proxy log
+— `todo.md` §G2). 503 on subscription-capacity exhaustion, heartbeats keep
+proxies from idling the connection, and every exit path (client disconnect,
+capacity refusal, bus error) unsubscribes so nothing leaks.
+
+**The gate found three structural problems, none visible before it:**
+
+1. **`TestClient` cannot stream.** starlette 1.7's transport runs the app to
+   completion and buffers the whole response, so a *successful* endless SSE
+   request hangs forever — `client.stream` included, because headers do not
+   return until the app finishes. The 11 open-stream tests now drive
+   `stream_events` directly through a typed `open_stream()` helper;
+   `TestClient` remains correct for the finite paths (401/422/503).
+2. **Ambient environment leaked into the test suite.** This machine's shell
+   exports `ENABLE_PGVECTOR=false` (user scope), so model import picked `JSONB`
+   for `memories.embedding` while `clean_settings` fixtures claimed the default
+   `True`. `tests/conftest.py` now scrubs every settings env var at import
+   time, before models load.
+3. **mypy had never seen the test tree.** `explicit_package_bases` plus
+   `mypy_path` resolved the `conftest` vs `tests.conftest` duplicate-module
+   clash, exposing 26 real typing errors across 5 test files (untyped route
+   locals, `Response | Awaitable[Response]`, dead `type: ignore`s).
+
+**Evidence:** ruff check + format + mypy clean over 108 files;
+`scripts/test.ps1` = 1021 passed (smoke 14); `test_event_stream_routes.py`
+28/28 in 2s.
 
 ---
 
