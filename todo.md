@@ -393,3 +393,129 @@ machine (spec 61 forbids running ULTRON here).
    drive only; `TestClient` limitation documented in C13.
 
 Closing any of these needs the server (B1) or Docker (T025).
+
+---
+
+## I. Stage-2 deployment planning — ideas recorded from the author (2026-10-07)
+
+From the author's two-stage usage plan. Stage 1: Windows persona machine —
+development today, and a permanent **Windows node** (§64.6) running local
+tools (windows-use, playwright, PowerShell) under one Core. Stage 2: an
+always-on **Ubuntu server** hosting Core + services (§64.7) behind a real
+domain, reached from the phone PWA (§63). The topology already matches the
+spec; these are the open questions to resolve before the deployment phase
+(§37 / PHASE 13 / T025).
+
+1. **Windows-node reachability** — a phone → Core → Windows tool request
+   executes on the Windows node, which must be **on and reachable** while the
+   author is away (§64.6.1's CORRECT path; §64.14 defines the offline degrade).
+   Candidates: WireGuard/tailscale or a tunnel. Decide when the node gateway
+   lands (T141, Phase 8) — stage 1 needs none of this.
+
+2. **Ollama host decision** — where local inference lives in stage 2: on the
+   Ubuntu server (always available, low voice latency; GPU?) versus staying on
+   the Windows box (compute headroom, but a SPOF — offline when the author is
+   away). Nothing decided in the repo. Verify VRAM/model-size requirements
+   before choosing; cloud fallback already exists (§3, §59.7).
+
+3. **TLS / reverse proxy for stage 2** — §63.5 makes HTTPS + a real domain
+   mandatory (a Vercel-served HTTPS PWA will not call `http://`), plus a CORS
+   allowlist for the Vercel origin, and the live event stream must reach ULTRON
+   **directly** (never proxied through Vercel). Plan Caddy/nginx in front of the
+   server; Cloudflare Tunnel if there is no public IP. §37 + Phase 13 only say
+   "document it" — this is the content they need.
+
+4. **Ops on the Ubuntu box** — PostgreSQL backups, and *enforcing*
+   `event_retention_days` (officially Phase 3+ per the events model docstring;
+   currently unenforced). Health/readiness/metrics are already built (T022).
+
+5. **Voice from the phone** — voice is planned on the Windows persona; phone
+   voice would use browser/cloud STT-TTS plus a TURN/cloud path. **Self-hosted
+   LiveKit is already rejected** (`server_arc.md:4061`) — do not re-propose it;
+   solve with a configured cloud provider when the time comes.
+
+---
+
+## J. Session progress report (2026-10-08)
+
+**State at stop: 32 of 264 tasks `[x]`.** T025 remains `DEFERRED` (no Docker).
+Branch `feature/phase-1-foundation`, last commit `3c243ec` (T030-T032) pushed to
+origin; **T033's changes are written and gated but NOT yet committed** — working
+tree has uncommitted changes (see below).
+
+### Done this session
+
+- **T030 `[x]`** — `app/events/types.py`: canonical 71-name `EventType` StrEnum
+  (spec §19 + §27/§28/§64.9/§64.15/§65.15/§66.8 additions under the no-rename
+  rule), `topic_for`/`KNOWN_TOPICS` moved out of `bus.py`, SSE route 422 gate now
+  reads the catalog. 36 tests; 1058 total at the time.
+- **T031 `[x]`** — `app/events/bus.py` assessed as already delivered under T023;
+  50 tests cover wildcard/backpressure/replay/cap. Redis bridge deliberately
+  absent (project-wide Redis deferral, `todo.md` C5).
+- **T032 `[x]`** — `app/events/handlers.py` (`PersistEvents` durable
+  write-through for the `events` table), `EventEnvelope.persist` flag +
+  `EventBus.publish(persist=...)`, container wiring behind
+  `settings.observability.events_persist`. Found and fixed a real deadlock:
+  `Subscription.close()`'s wake-up `None` sentinel was suppressed on a full
+  queue, so a draining consumer could wait forever — close now evicts the
+  oldest event to make room (counted as a drop). 10 deterministic tests.
+  Committed as `3c243ec`.
+- **T033 `[x]`** (this stop) — permission engine, split in two:
+  - `app/security/permissions.py` — pure policy: `PermissionDecision`
+    (ALLOWED/DENIED/CONFIRM_REQUIRED, values identical to `AuditOutcome`),
+    frozen `PermissionRequest` (§64.12 dimensions), `scope_of()`,
+    `confirmation_required()`, `evaluate()`. Rule table: 0-1 never ask; 2
+    unless workspace pre-auth; 3 unless operation pre-auth; 4-5 every
+    invocation; irreversible always (§66.17); risk follows the operation, not
+    the caller; **denial outranks confirmation**; ungranted scope = denial.
+  - `app/core/permissions.py` — `PermissionManager`: `GrantStore` Protocol +
+    `default_level` fallback, `check()` (returns decision), `enforce()` (raises
+    `PermissionDeniedError` 403 / `ConfirmationRequiredError` 409 with
+    node/client/tool/operation/scope in `error.details`), every decision audited
+    with §64.13's full tuple; refusals `durable=True` (outlive the rollback of
+    the raise), allows transactional. No container wiring (no caller until
+    T036); no event emission (pipeline owns `permission.*` events).
+  - `tests/unit/test_permissions.py` — 25 tests.
+  - **Gate green**: ruff format/check + mypy clean over **115 source files**,
+    **1093 tests passed**. Marked `[x]` in `tasks.md` with full evidence.
+
+### In progress when stopped: T034 `app/tools/base.py` (research only, NO code)
+
+Spec read; design not yet written to disk. Facts to carry forward:
+
+- §14 defines the ABC: `name`, `description`, `input_schema`,
+  `permission_level`, `execute()`, `verify()`. §59.6 makes `timeout` mandatory
+  ("always declared") and adds `logging`/`audit`/typed-errors; §66.14 adds
+  `output_schema`, `node_requirements`, `risk_level`, `availability`,
+  `version`, `reversibility` (§66.17: `reversible | partially_reversible |
+  irreversible`); §64.11 adds `node_scope`. "Tools declare, the pipeline
+  decides" (§66.7) — the ABC must contain **zero permission logic**.
+- §16 pipeline order: schema → permission → policy → target selection → execute
+  → result → verify → event (target-selection stage added by §64.11; tools
+  that declare no node run on the cloud server).
+- Already available: `PermissionLevel`, `VerificationOutcome`
+  (SUCCESS/PARTIAL/FAILED/UNVERIFIED, verbatim §17), `ToolExecutionStatus`
+  (incl. `AWAITING_CONFIRM`) in `app/database/models/enums.py`; errors module
+  has no `Tool*` error yet (T036 will need one); `app/tools/__init__.py` exists
+  (docstring only); scaffold subdirs `browser/ computer/ filesystem/ git/ mock/
+  notifications/ python/ system/ terminal/ web/` are empty (`__init__.py` only,
+  from T002); `app/verification/` empty too.
+- Design leaning (not final): ABC with abstract `execute()`, `verify()` default
+  honest-but-not-magic (§17 "never assume success" argues against a silent pass
+  — candidate: default returns `VerificationOutcome.UNVERIFIED` with a reason),
+  declarative class attributes for §59.6/§66.14 fields, and a small typed
+  result carrier for `execute()` so T036's executor has one shape to move
+  through the pipeline. Registry (`T035`) consumes these fields as data.
+- Tests will go in `tests/unit/test_base.py` or `test_tool_base.py`; follow
+  `pytestmark = pytest.mark.unit`.
+
+### Reminders
+
+- Gate commands: `powershell -File scripts/lint.ps1` (ruff format+check, mypy)
+  and `powershell -File scripts/test.ps1` (pytest, non-integration). Run from
+  repo root; tests only via `uv run pytest …` from `server/`.
+- Never run ULTRON on this Windows machine (no uvicorn/startup/clients).
+- **Commit T033 before starting T034** — it is gated, marked, and otherwise
+  complete; only the commit is missing.
+- Encoding: always write files with the edit/write tools, never PowerShell
+  `-replace` (it mangled UTF-8 `§`/dashes once already).
