@@ -2094,6 +2094,19 @@ RESULT
 CLIENT
 ```
 
+> **Amended after §67/§68 (spatial + perception addenda):** two additive
+> changes to this flow. (1) **Interface selection** after RESULT→CLIENT: the
+> response planner may render text, the 2D component registry, or a spatial
+> scene (§67.2) - three modes of the same client, never a second UI system.
+> (2) **A second, observation-only entry path** feeds INTENT from the world:
+> CAMERA/SCREEN → local vision service → `PERCEPTION_*`/`GESTURE_*` events
+> (§68) → context engine → INTENT. Perceptions observe; they never reach
+> TOOL without passing PERMISSION on the action path above (§68.12). The
+> motto of the extended system: **AI decides, agents reason, tools act,
+> nodes execute, events communicate, UI renders, spatial UI visualizes,
+> vision detects, gestures interact, permissions govern, verification
+> confirms.**
+
 ---
 
 # 51. DEVELOPMENT PHASES
@@ -6464,6 +6477,13 @@ so "Click Download" is verified, not assumed (§17). Ubuntu exposes equivalent
 Linux capabilities through the server node when needed. An LLM never reaches
 the OS directly.
 
+> **Amended after §68 (perception addendum):** §66.10 is the **action** side
+> of vision - a tool in the §16 pipeline, invoked to *do* something. §68 adds
+> the **observation** side - cameras and sensors producing context events on
+> their own. The split is deliberate and binding: perception observes and
+> feeds the context engine; computer-use tools act and require permission.
+> Neither replaces the other, and no code path goes camera → OS (§68.12).
+
 ## 66.11 AUTONOMOUS BACKGROUND AGENTS (extends §18, §44)
 
 Long-running agents (scheduled research, server/Git monitoring, maintenance,
@@ -6595,6 +6615,11 @@ Core → agents/tools/nodes. This is §62-§64 written as a principle; no new wo
 beyond the interface tasks already listed there (T315-T322, T260-T262,
 T160-T167, T350-T351, T373).
 
+> **Amended after §67:** the spatial 3D UI (§67) joins this set as one more
+> interface on exactly the same principle - a renderer inside the existing
+> Electron client, reached through API/SSE, holding no intelligence of its
+> own. It is a mode of the client, not a new client (§67.2).
+
 ## 66.22 SECURITY, RESOURCES, DEPLOYMENT - PRESERVED
 
 Unchanged and binding on every capability above: least privilege; explicit
@@ -6654,3 +6679,1003 @@ event additions precede autonomous/background integration.
 
 **This section is documentation.** Nothing in §66 is implemented by virtue of
 being written here.
+
+---
+
+# 67. ULTRON SPATIAL INTERFACE (USI) (ADDENDUM)
+
+A 3D / holographic-style spatial interface inside the existing Electron
+client, controlled by mouse, keyboard, touch, voice, camera-based hand
+gestures, and future sensors. This section specifies an **extension layer**:
+it adds a renderer and an interaction vocabulary to the client that §63/§64
+already define. It creates no new core, no second agent system, no second
+event bus, no second component architecture, and no second permission system.
+
+## 67.0 STATUS AND NON-DESTRUCTIVE RULE
+
+Same rule as §64.0/§65.0/§66.0: **additive only.** Everything here attaches
+to a subsystem that already exists or is already tasked:
+
+| USI piece | Attaches to |
+|---|---|
+| Spatial renderer host | Electron client shell (T340, §59.14) |
+| Scene / component data | API + SSE event stream (T023/T320, §19, §29) |
+| Gesture + spatial events | the one §19 bus, additive names (§66.8 rule) |
+| Interaction authority | permission system (§15, §64.12, §66.7) via the §16 pipeline |
+| Voice + gesture fusion | context engine (§66.3, T380) + existing voice sessions (§25, §59.19) |
+| Selection / scene state | context engine session state + existing memory scopes (§22, §66.12) |
+| Persistent workspaces | existing workspace/project persistence (§46, `workspaces/`) |
+| Metrics | §32 observability |
+
+**Honest audit note:** this repository contains **no "Dynamic UI" engine
+today** - the phrase in the request ("the existing Dynamic UI system")
+refers to a 2D component layer that does not yet exist in `server_arc.md`,
+`tasks.md`, or `clients/` (the Electron shell T340 is still an unbuilt
+placeholder). Rather than inventing two registries later, §67.5 defines
+**one component protocol** that both the 2D layer and the spatial layer
+implement. Whichever arrives first, the other extends it - there will never
+be a dynamic-UI registry *and* a spatial registry.
+
+**This section is documentation.** Nothing in §67 is implemented by virtue of
+being written here (§54: do not fake features).
+
+## 67.1 PURPOSE
+
+ULTRON should be able to *show* - as spatial objects the user can walk around
+in - 3D models, images, graphs, charts, datasets, diagrams, flowcharts,
+system information, agent graphs, task timelines, documents, dashboards,
+simulations, UI panels, and arbitrary spatial objects. The spatial interface
+must feel like an extension of ULTRON: same identity, same permissions, same
+events, same voice, same tools. Not a separate application.
+
+## 67.2 INTERFACE MODES AND WHEN SPATIAL IS CHOSEN
+
+Three render modes for one client, selected per response:
+
+```text
+USER → ULTRON CORE → INTENT / CONTEXT → RESPONSE PLANNER
+   → INTERFACE SELECTION
+        ├── TEXT          (chat)
+        ├── COMPONENT     (2D: the shared component registry, §67.5)
+        └── SPATIAL       (3D scene graph, §67.4)
+               → SpatialScene → Electron renderer
+```
+
+Rules:
+
+1. **Spatial is chosen when it improves understanding or interaction**, never
+   by default. "Plot this function" → 2D may suffice; "show me this molecule"
+   → 3D; "explain ULTRON's architecture" → interactive spatial diagram;
+   "show my server status" → spatial dashboard. Do not force everything into
+   3D.
+2. The **response planner decides the mode** as part of planning (§66.4) -
+   the model proposes a mode with the response, and the *client* is free to
+   fall back (§67.15). The model never ships renderer code (§67.13, §30).
+3. Modes are also switchable by voice/command independent of any response:
+   "enter spatial mode" / "exit spatial mode" (§67.20).
+4. This is §66.21 multi-interface support with one more member: a **mode of
+   the existing client**, reached through the existing API/SSE, holding no
+   intelligence of its own.
+
+## 67.3 SPATIAL UI ENGINE
+
+A logical engine inside the Electron renderer process - a set of modules, not
+a microservice (§59.27: modular monolith discipline applies to the client
+too):
+
+```text
+SpatialUIEngine (renderer process, one per window)
+    ├── SceneManager        load/validate/swap scenes, scene state
+    ├── SceneGraph          the §67.4 document, live-edited
+    ├── ObjectManager       object lifecycle, groups, labels, isolate/hide
+    ├── CameraController    orbit/pan/zoom/focus/reset, bounded moves
+    ├── InteractionManager  pointer + touch + gesture dispatch → resolver
+    ├── GestureInputAdapter subscribes to §68 GESTURE_* on the bus (§67.9)
+    ├── VoiceInteractionAdapter  structured spatial commands (§67.13)
+    ├── AnimationManager    bounded, interruptible, reduced-motion (§67.14)
+    ├── LayoutEngine        panel placement, flowchart/timeline layout
+    ├── SelectionManager    single source of selection truth (§67.12)
+    ├── StateManager        mode, workspace, undoable view state
+    └── RendererAdapter     thin seam over the chosen 3D library (§67.6)
+```
+
+The engine **consumes** events and **emits** structured actions (§67.13). It
+has no model access, no tool access, and no direct database or filesystem
+access - it is a renderer, exactly as §66.21 requires of every interface.
+
+## 67.4 SPATIAL SCENE GRAPH
+
+A `SpatialScene` is a **strict, versioned JSON document** - data, never code.
+It travels over the existing API (persist) and SSE (live updates).
+
+```json
+{
+  "scene": { "id": "server-overview", "type": "spatial_scene", "version": 1,
+             "mode": "SYSTEM_VIEW", "workspace": "ultron-server" },
+  "camera": { "position": [0, 2, 6], "target": [0, 0, 0], "fov": 50 },
+  "environment": { "lighting": "neutral", "background": "grid" },
+  "objects": [
+    { "id": "server.cpu", "type": "spatial_panel", "position": [0, 1, 0],
+      "rotation": [0, 0, 0], "scale": [1, 1, 1], "interactive": true,
+      "props": { "source": "metric:cpu", "refresh_ms": 2000 } }
+  ],
+  "relationships": [ { "from": "server", "to": "server.cpu", "kind": "contains" } ],
+  "interactions": [ { "object": "server.cpu", "on": "pinch", "action": "spatial.focus" } ],
+  "animations": [],
+  "permissions": { "read": "any", "mutate": "LEVEL_3" },
+  "state": { "selected": null, "expanded": [] }
+}
+```
+
+Rules (each testable):
+
+- **Schema-validated end to end**: one JSON Schema for the scene, one for
+  each object type, Draft 2020-12, `additionalProperties: false`. Validation
+  runs on the server before persist/emit *and* on the client before render -
+  the same discipline as §16 gives tools. Unknown object `type` → rejected
+  (§67.5 fallback, never a blank canvas).
+- **No executable content**: no JavaScript, HTML, shaders, URLs-to-execute,
+  or arbitrary expressions inside a scene. `props` are data bound to
+  *approved* component inputs only. This is the prompt-injection firewall
+  (§30): the AI produces a validated scene *specification*; the renderer
+  interprets approved schemas.
+- **Stable object ids** (`server.cpu`, `agent.planner`, `task.T041`): the
+  vocabulary voice and gestures use to refer to things (§67.12).
+- **Object types** (initial closed set): `model`, `spatial_image`,
+  `spatial_text`, `spatial_graph`, `spatial_chart`, `spatial_panel`,
+  `spatial_button`, `flowchart_node`, `spatial_timeline`, `spatial_document`,
+  `spatial_video`, `simulation`, `agent`, `task`, `device`,
+  `system_resource`. New types are a registry entry (§67.5), never an open
+  string.
+- **Permissions inside the document** are advisory display metadata; the
+  authority is always §15/§64.12 (§67.16). A scene cannot grant itself rights
+  it does not have.
+
+## 67.5 COMPONENT REGISTRY - ONE PROTOCOL, TWO RENDERERS
+
+To avoid the duplicate architecture the brief forbids, **one component
+protocol** serves 2D and spatial:
+
+```text
+ComponentSpec (discriminated union: { type, id, props, children?, ... })
+    ├── COMPONENT registry (2D renderers: text, table, graph, form, flowchart, ...)
+    └── SPATIAL registry (3D renderers:)
+            model · spatial_image · spatial_graph · spatial_panel
+            spatial_chart · spatial_diagram · spatial_timeline
+            spatial_dashboard · spatial_simulation
+```
+
+- A registry entry declares: `type`, JSON Schema for `props`, renderer class
+  (2D or spatial), capability requirements (e.g. WebGL), and a **2D
+  fallback renderer** where one exists (a `spatial_graph` degrades to the 2D
+  graph component - §67.15 is a property of the registry, not a hope).
+- The spatial registry is a **namespace under the same registry
+  architecture**, not a parallel one: same registration validation, same
+  schema check, same "unknown type is an error" rule the tool registry
+  (§59.6) and the prompt's Dynamic UI both rely on.
+- Because neither registry exists in code today, the S1 phase (tasks.md)
+  lands the *protocol* first, so both future renderers implement it.
+
+## 67.6 3D RENDERING
+
+The renderer lives in the **Electron application** (T340's renderer process),
+not on any server node - interactive UI workload, local by design (§64.6).
+
+```text
+Electron (T340)
+    → SpatialUIEngine (§67.3)
+        → RendererAdapter
+            → WebGL/WebGPU-capable rendering layer
+                → 3D Scene
+```
+
+**Technology selection is a task with a gate (S2.1), not an assumption:**
+inspect the frontend stack when T340 lands, then choose the *simplest*
+library that (a) renders WebGL, (b) loads glTF/GLB via established loaders,
+(c) supports picking/selection, (d) has a maintenance record. Candidates:
+**three.js** (smallest, most boring, framework-free), **Babylon.js**, or
+**React Three Fiber - only if T340 chose React** (the Next.js PWA §63 is
+React; the Electron renderer is T340's call). No custom 3D engine, no
+hand-written loaders (§54).
+
+Renderer must support: camera movement, object transforms, lighting,
+materials, textures, model loading, animations, selection, highlighting,
+grouping, spatial panels, labels, connection lines, optional particle/effect
+layers, and responsive resize. **Culling, level-of-detail, and frame budget
+are §67.17 requirements**, not afterthoughts.
+
+## 67.7 MODEL AND ASSET SUPPORT
+
+Established libraries parse established formats: **GLTF, GLB** first, **OBJ**
+if required, **STL** where relevant. The user-facing behaviours to support:
+rotate, pan, zoom, focus, reset, inspect, select, highlight, isolate,
+hide/show, and explode view where the asset allows it.
+
+Example: "Show me this engine." → the planner emits a scene containing the
+model → renderer loads it, centers the camera, enables interaction. Asset
+fetching uses the existing API/file paths with the normal permission checks;
+assets are cached client-side per §67.17.
+
+## 67.8 SPATIAL IMAGES, DATA, FLOWCHARTS, DASHBOARDS
+
+- **Images** become spatial objects: floating panels, galleries, comparison
+  walls, stacks, zoomable images, selection-enlargement. Gestures: point →
+  hover/select, pinch → select, pinch+move → move, two-hand spread → zoom,
+  swipe → next. Same interaction protocol as every other object (§67.10).
+- **Data visualization**: existing 2D graphs/charts gain *spatial versions*
+  (3D scatter, bar structures, network graphs, time-series landscapes,
+  clusters, heatmaps, system metrics) as additional registry entries. The 2D
+  versions are never replaced - spatial is offered where it helps (§67.2).
+- **Flowcharts**: the component-level flowchart (§67.5) can enter spatial
+  mode - nodes float in 3D, relationships become 3D connections, active
+  nodes highlight (live status from `TASK_*`/`AGENT_*` events), nodes expand,
+  the scene rotates. The **task DAG (T040/T041) and agent graph** are natural
+  scene sources: the planner's own structure, visualized.
+- **Dashboards** are *composed* from reusable spatial components - server
+  (CPU/RAM/disk/network/processes/services), ULTRON (agents/tasks/tools/
+  memory/providers/devices), project (git/build/tests/files/issues). No
+  hard-coded dashboard; a dashboard is just a scene document (§67.4).
+
+## 67.9 GESTURE INPUT PIPELINE
+
+Hand gestures arrive from the **§68 perception layer** - USI does not run its
+own computer vision (the prompt's camera sections are merged into §68; see
+§67.23):
+
+```text
+Camera → Python vision service (local, §68.4) → hand tracking →
+semantic gesture events (§68.6) → §19 bus (GESTURE_*) →
+GestureInputAdapter (this client) → InteractionManager →
+Interaction Resolver (§67.10) → spatial action (§67.13) → renderer
+```
+
+**Raw camera coordinates never reach the UI as the interaction API** - that
+is the whole point of §68.6's semantic layer. The adapter consumes semantic
+events (`point`, `pinch_start`, `pinch_end`, `grab`, `release`, `swipe_*`,
+`open_palm`, `fist`, `two_finger`, `rotate`, `zoom_in`, `zoom_out`, `hold`)
+with normalized positions (0-1), hand (left/right), confidence, timestamp.
+
+Mouse, keyboard, and touch flow into the **same InteractionManager** through
+the same resolver - gestures are an input device, not a parallel input
+system. If the camera, the vision service, or hand tracking is unavailable,
+the pipeline simply has one fewer device (§67.15).
+
+## 67.10 INTERACTION RESOLVER AND CONTEXT-AWARE GESTURES
+
+The resolver is the critical piece: **a gesture means different things in
+different contexts**, and that mapping must be deterministic and testable -
+never an LLM call per frame.
+
+```text
+gesture + current scene + selected object + object interaction rules +
+current ULTRON mode + pointer state
+        → Interaction Resolver (local, synchronous)
+        → structured spatial action
+```
+
+A pinch, by context: on a model → grab/rotate; on a graph → pan; on an
+image → select; on a menu → click; on a slider → adjust; on free space →
+select nearest object. **Priority order (documented, tested):** active drag >
+focused control > selected object's rules > scene default > global default.
+The resolver is a pure rule table over (gesture, context) - unit-tested
+without hardware, parametrized over the rule matrix (§67.22).
+
+Object interaction rules live **in the scene document** (§67.4
+`interactions`), validated against the action protocol (§67.13) - an object
+can only declare actions that exist.
+
+## 67.11 LOCAL VS AI RESPONSIBILITY
+
+Binding split (the prompt's "do not send every hand movement to the LLM"):
+
+| Handled locally (renderer, synchronous) | Handled by AI/core (semantic, slow) |
+|---|---|
+| 30 Hz gesture stream → resolver → immediate feedback | "explain this object" |
+| select/grab/rotate/zoom/pan/navigate | "open this dataset" |
+| hover, highlight, focus, camera moves | "compare these" |
+| drag/drop, slider adjust, button click | mode changes by conversation |
+| animation of its own results | planning which scene to build |
+
+Only **meaningful semantic events** cross into the core (§68.11's
+throttling): a completed selection, an explicit object gesture with
+confidence above threshold, a spatial command. The architecture:
+
+```text
+Camera → Vision → local gesture interpreter → Interaction Resolver →
+immediate UI response        (no core round-trip, no LLM)
+
+semantic events only → §19 bus → context engine → ULTRON reasoning
+```
+
+## 67.12 VOICE + GESTURE FUSION AND SPATIAL REFERENCES
+
+Fusion uses the **existing** context engine (§66.3/T380) - not a new memory
+system. Example: user says "Show me the CPU." → scene built with object
+`server.cpu`; user points → `SelectionManager` sets `selected =
+server.cpu` and publishes selection as context; user says "Zoom into that."
+→ core resolves "that" from (voice context `CPU` + gesture POINT +
+selection `server.cpu`) and emits `spatial.focus`.
+
+Requirements:
+
+- **Stable object ids** are the reference vocabulary (§67.4).
+- **Selection state is exposed to the core** as session context (context
+  engine, §66.3): current scene, selected object, expanded groups, workspace
+  - a handful of typed values, not a new store (§22 remains the only memory).
+- **Spatial commands** from voice/text: "show this in 3D", "rotate it",
+  "zoom in", "move that to the left", "hide this", "show details", "compare
+  these", "expand this", "focus on this", "explain this", "open this",
+  "go back", "reset the scene" - each compiled to a validated action from
+  §67.13, never to free-form renderer code.
+
+## 67.13 SPATIAL ACTION PROTOCOL
+
+All mutations of the scene go through one structured protocol:
+
+```json
+{ "action": "spatial.select", "scene_id": "server-overview",
+  "object_id": "server.cpu", "source": "gesture|voice|ui|agent",
+  "request_id": "…", "confidence": 0.94 }
+```
+
+Initial vocabulary: `spatial.select`, `spatial.focus`, `spatial.move`,
+`spatial.rotate`, `spatial.scale`, `spatial.hide`, `spatial.show`,
+`spatial.expand`, `spatial.collapse`, `spatial.inspect`, `spatial.reset`,
+`spatial.navigate`, plus `spatial.set_mode` (§67.20).
+
+Rules: **schema-validated** (a bad action is a 422, never a renderer
+exception); **audited** through the same §31/§66.16 action-history path when
+it crosses into core-side effects; and **permission-checked** when the action
+leads to anything beyond view state (§67.16). View-only actions (select,
+focus, rotate camera) are local and free; object- or system-affecting actions
+are not.
+
+## 67.14 ANIMATION SYSTEM
+
+Transitions, object movement, camera movement, highlighting, expand/collapse,
+flow animations, data updates, spawn/remove. Hard requirements, each
+testable: **bounded duration** (no open-ended animations), **interruptible**
+(a new input supersedes), **reduced-motion honoured** (accessibility +
+`prefers-reduced-motion`), **never blocking interaction**, and **cleaned up**
+(no orphan timers/listeners on scene swap). Animation must never be required
+to understand content - the final state is reachable with animation off.
+
+## 67.15 FALLBACK BEHAVIOR (mandatory)
+
+Spatial UI must never be a single point of failure:
+
+```text
+3D → 2D component registry → text
+gesture → mouse/touch/keyboard
+camera / vision service / hand tracking unavailable → normal input only
+renderer init fails or WebGL absent → 2D immediately, flag reported
+```
+
+The renderer adapter reports capability at startup; the client enters 3D
+only when the capability probe passes. A mid-session renderer failure
+degrades to 2D with the scene still available as data (the document is the
+truth, the renderer is a view). The fallback chain is part of each registry
+entry (§67.5) and is tested by simulating failure (§67.22).
+
+## 67.16 SECURITY - SPATIAL NEVER BYPASSING PERMISSIONS
+
+Mandatory pipeline, identical for every entry route (gesture, voice, UI click,
+agent):
+
+```text
+gesture/voice/UI → spatial action → schema validation → §15 permission check
+(LEVEL 0-5, §64.12) → [confirmation UI if required] → tool (§16 pipeline)
+→ node (§64) → execution → §17 verification → §31 audit
+```
+
+- A gesture can never become a shell command, filesystem access, or app
+  launch: gestures produce *actions*, actions pass permissions like any
+  other request.
+- Destructive examples get **explicit confirmation** rendered in the scene
+  (LEVEL 4-5 and irreversible per §15/§66.17): pinch on "Shutdown Ubuntu
+  server" → scene shows "Shutdown Ubuntu server?" [Cancel] [Confirm] →
+  only then the tool pipeline runs.
+- **Electron hardening** is part of this phase: `contextIsolation` on, no
+  `nodeIntegration`, preload whitelist for IPC, scenes loaded only through
+  validated IPC messages (T340's main/preload/renderer split).
+- The AI generates scene **specifications** only (§67.4); no generated
+  JavaScript/HTML/shaders are ever executed (§30), closing the
+  prompt-injection route into the renderer.
+
+## 67.17 PERFORMANCE
+
+Budget: an 8 GB development laptop (§59.25) sharing duties with everything
+else. Requirements: steady frame rate with a frame-time metric exported to
+§32; low input latency for gestures (resolver is local, §67.11); lazy model
+loading; client-side asset caching; object culling; level-of-detail where
+assets justify it; bounded particle effects; GPU when available; **frame
+rate and scene complexity degrade gracefully** (quality tiers). Spatial
+features must be **disable-able or defer-able** by configuration
+(§67.19) - and the system must be fully usable when they are.
+
+## 67.18 PRIVACY
+
+Camera processing is local by default (§68.13): camera → local Python vision
+→ gesture metadata → bus. **Raw frames never go to cloud AI by default.**
+The renderer never sees raw frames either - only semantic events. A visible
+vision indicator lives in the client chrome whenever the camera is active
+(§68.13 states), with an off switch that is honoured immediately
+(`VISION_OFF`).
+
+## 67.19 NODE INTEGRATION
+
+- **Windows node (§64.6)**: the Electron application *is* the spatial UI host
+  and the owner of camera, local vision, screen, filesystem, browser,
+  screenshots, UI automation. Camera and vision service run here; nothing
+  Windows-specific moves to Ubuntu.
+- **Ubuntu (§64.7)**: remains a pure execution node. It *feeds* spatial
+  scenes (metrics, services, processes via existing events) but renders
+  nothing - the primary spatial UI stays in Electron.
+- **ESP32 (§64.9)**: remains the physical device node. A future spatial
+  scene can *show* ESP32 topology (ULTRON → ESP32 → mic/speaker/OLED/
+  sensors/battery); the ESP32 never renders 3D.
+- **Mobile PWA (§64.8)**: consumes 2D/text of the same scene documents; a
+  mobile 3D viewer is future work, not assumed.
+
+## 67.20 SPATIAL MODES AND PERSISTENT WORKSPACES
+
+Modes: `NORMAL`, `SPATIAL`, `PRESENTATION`, `MODEL_VIEWER`, `DATA_EXPLORER`,
+`SYSTEM_VIEW`, `AGENT_VIEW`, `IMMERSIVE` - scene/viewport state in the
+document (§67.4 `scene.mode`), switched by `spatial.set_mode` from voice,
+text, or UI.
+
+A **spatial workspace** is a saved scene bundle (e.g. "ULTRON Server
+Workspace": server model, CPU/RAM panels, agents, tasks, logs, network
+graph). Persistence reuses existing storage: scene documents live with
+project/workspace artifacts (§46, `workspaces/`), session/selection state in
+context (§67.12), durable preferences in the §22 memory store under the
+existing `user`/`project:*` namespaces. **No new storage system** (§67.23).
+
+## 67.21 FEATURE FLAGS AND CONFIGURATION
+
+All default **off** in the current lightweight environment (§59.25):
+
+`SPATIAL_UI_ENABLED` (master), `SPATIAL_RENDERER_AUTO`, `SPATIAL_ASSETS_*`,
+`SPATIAL_GESTURES_ENABLED`, `SPATIAL_REDUCED_MOTION` (follows the OS,
+overridable), `VISION_ENABLED` (§68.19, shared). Flags are settings (§34), honoured by the
+client through the existing config/status endpoints - no new configuration
+mechanism.
+
+## 67.22 TESTING PHILOSOPHY
+
+Unit tests never need hardware or a GPU:
+
+- scene/object schema validation (valid, invalid, unknown type, malformed,
+  oversized, executable-content attempts);
+- interaction resolver as a pure rule table, parametrized over
+  (gesture × context × object rules) including priority conflicts;
+- action protocol validation and the permission/confirmation path (LEVEL
+  matrix, 403/409 shapes, audit rows) with fake inputs;
+- fallback: simulate WebGL absence, renderer crash, vision service down →
+  assert 2D/text and mouse-only paths;
+- reduced-motion and accessibility states;
+- voice + gesture reference resolution from *simulated* context;
+- performance boundaries as asserted limits (object count, frame budget
+  counters), not FPS promises;
+- gesture fixtures come from §68's simulated landmark data - **no camera in
+  unit tests, ever** (same rule as §65.23's "no real calls").
+
+## 67.23 DUPLICATE-SYSTEM CHECK
+
+| Check | Result |
+|---|---|
+| Second event bus for gestures/spatial? | No - additive `GESTURE_*`/`SPATIAL_*` names on §19 (§66.8 rule) |
+| Second component architecture beside a "Dynamic UI"? | No - **one** ComponentSpec registry, two renderer namespaces (§67.5) |
+| Second AI/agent system for spatial? | No - response planner + context engine decide; renderer is dumb |
+| Second memory system for selection/scene? | No - context engine session state + §22 scopes (§67.12) |
+| Second WebSocket system? | No - existing API/SSE/device WS; the vision service's localhost link (§68.4) is a local transport, not a bus |
+| Own computer vision inside USI? | No - USI consumes §68; camera sections of the USI request are merged into Phase V (V2-V4) |
+| LLM in the gesture loop? | No - local resolver (§67.11) |
+| Gesture → shell / filesystem? | No - §67.16 pipeline |
+| Custom 3D engine or model parser? | No - established libraries only (§67.6/§67.7) |
+| Duplicate storage for scenes? | No - §46 workspaces + §22 scopes (§67.20) |
+
+## 67.24 ROADMAP - PHASES S1-S9
+
+Specified in tasks.md as **T395-T451** (the S block, with perception's V
+tasks T452-T491 following), appended after the §66 block (D012/D013/
+D028 precedent), in nine phases: **S1** architecture (schema, registry,
+engine skeleton, events, renderer abstraction) → **S2** 3D renderer
+(integration gate, camera, objects, models, selection, animation) →
+**S3** spatial components (panels, images, graphs/charts, flowcharts,
+dashboards, timelines, agent graphs) → **S4** gesture input adapter
+(consumes V2-V4; no duplicate vision work) → **S5** interaction (resolver,
+selection, grab/rotate/scale, navigation, context rules) → **S6** multimodal
+(voice+gesture, references, commands) → **S7** security (validation,
+confirmation, camera privacy, IPC) → **S8** performance (metrics, caching,
+culling/LOD, fallback renderer, flags) → **S9** advanced (persistent
+workspaces, agent visualization, simulations, advanced viz, multi-user and
+future-hardware roadmapping). Every task carries objective, dependencies,
+implementation requirements, testing, and acceptance criteria in tasks.md.
+
+## 67.25 DOCUMENTATION-ONLY DISCLAIMER
+
+**This section is documentation.** Nothing in §67 is implemented by virtue of
+being written here. No renderer, scene, gesture, or spatial component exists
+until its tasks.md entry is `[x]` with a passing gate (§54).
+
+---
+
+# 68. ULTRON PERCEPTION LAYER - COMPUTER VISION (ADDENDUM)
+
+ULTRON gains the ability to **perceive** - cameras, the screen, and future
+sensors producing structured observations about the physical and visual
+world. This is a general Perception Layer, not a camera feature and not only
+a hand-gesture system: hand tracking is one capability module among many
+(object detection, OCR, scene understanding, screen understanding are
+others). It extends the existing system; it does not fork it.
+
+## 68.0 STATUS AND NON-DESTRUCTIVE RULE
+
+Additive only, attaching to what exists:
+
+| Perception piece | Attaches to |
+|---|---|
+| Perception events | the one §19 bus, additive names (§66.8 rule) |
+| Interpreted observations | context engine (§66.3, T380) → agents/tools |
+| Gesture feed for spatial UI | §67.9 (USI consumes, never re-detects) |
+| Screen capture inputs | existing screenshot/computer tools (T143, T262, T345) |
+| Vision service status | §32 observability + existing status endpoints |
+| Camera/screen hardware | Windows node (§64.6); Ubuntu optional (§64.7); ESP32 sensors (§64.9) |
+| On-demand "look" style analysis | existing tool pipeline (§16) - see §68.10 |
+| Sensor data (ESP32) | `DEVICE_*` events (§64.9, T160-T167) |
+
+**No new AI core, no second agent system, no second memory system, no second
+event bus, no second tool system, no second permission system, no duplicate
+Dynamic/Spatial UI architecture.** The perception system **never executes
+privileged actions** - that split is §68.12 and is the load-bearing wall.
+
+**This section is documentation.** Nothing in §68 is implemented by virtue of
+being written here (§54).
+
+## 68.1 CORE CONCEPT - PERCEPTION OBSERVES, CONTEXT UNDERSTANDS
+
+```text
+                     ULTRON CORE
+                          │
+                   CONTEXT ENGINE (§66.3 / T380)
+                          │
+              ┌───────────┴───────────┐
+              │                       │
+         PERCEPTION                 COGNITION
+              │                       │
+      ┌───────┼────────┐              │
+      │       │        │              │
+   Vision   Voice    Sensors          │
+      │       │        │              │
+   Camera     STT     ESP32           │
+      │                               │
+      └───────────┬───────────────────┘
+                  ▼  (structured events only)
+              AGENTS → TOOLS → PERMISSION → NODES
+```
+
+Division of labour: the Perception Layer **observes**; the Context Engine
+**interprets** in context; agents **reason**; tools **act**; nodes
+**execute**; permissions **govern**; verification (§17) **confirms**. An
+observation is never a command.
+
+## 68.2 PERCEPTION SOURCES
+
+One abstraction, many sources - each produces **normalized perception
+events**, never raw streams, into the bus/context:
+
+```text
+PerceptionSource (uniform interface: start/stop/health/capabilities/events)
+    ├── CameraSource        webcams on the Windows node
+    ├── ScreenSource        Windows screen capture
+    ├── VoiceSource         existing STT (§25/§59.17-19) - already built
+    ├── ESP32SensorSource   DEVICE_* events (§64.9)
+    └── Future: depth camera · extra cameras · IMU · mics · IoT · wearables
+```
+
+Voice is listed for completeness: STT is an existing perception channel
+(§18 wake/STT/TTS events); this layer gives vision and sensors the same
+standing. Future sources implement the same interface - **the abstraction
+must support real 3D coordinates when depth hardware arrives** (§68.8).
+
+## 68.3 CAMERA SERVICE
+
+```text
+Camera → Camera Service → Vision Processing → Perception Events → Context
+```
+
+Camera Service responsibilities: start, stop, restart, discovery, available/
+unavailable, resolution and FPS configuration, health state, disconnect
+detection, reconnect, processing status, privacy state. **The camera is
+assumed absent until proven present**: the entire system must behave
+normally with no camera attached, and a camera disappearing mid-session is a
+state transition (`VISION_STATUS_CHANGED`), not a crash (§68.16).
+
+## 68.4 PYTHON VISION SERVICE
+
+Camera processing runs in a **local Python service** on the Windows node:
+
+```text
+Electron/Windows node → spawns or connects → Python Vision Service →
+Camera → vision models → normalized perception events → bus/Electron
+```
+
+- **Local by default, cloud never mandatory** (§68.13): raw frames stay on
+  the machine.
+- **Technology is a gated decision, not a pre-commitment** (V2.1): inspect
+  the environment (8 GB laptop, §59.25) then choose the lightest practical
+  stack - candidates are OpenCV, MediaPipe, ONNX Runtime, or equivalent
+  hand-tracking/vision libraries. No large dependency is installed without
+  that inspection (§54).
+- **Transport**: a localhost WebSocket following the existing WebSocket
+  conventions (T162 lineage), plus an HTTP health endpoint. This is a local
+  process link - *not* a second bus (§68.22). Existing API/SSE/device WS
+  architecture is untouched.
+- **Independently testable**: the service has its own lifecycle (§68.16) and
+  accepts simulated frames/landmarks so unit tests need no hardware (§68.21).
+
+## 68.5 VISION CAPABILITY MODULES
+
+Modular, individually enabled/disabled - never all models at once:
+
+```text
+Vision
+    ├── Hand Tracking          (V3)
+    ├── Gesture Recognition    (V3 → GESTURE_* events → §67)
+    ├── Object Detection       (V4)
+    ├── Object Tracking        (V4)
+    ├── Scene Understanding    (V5)
+    ├── Spatial Understanding  (V5)
+    ├── OCR                    (V6)
+    ├── Document Understanding (V6)
+    ├── Image Understanding    (V6, shares §66.13 ingestion paths)
+    ├── Screen Understanding   (V7)
+    └── Visual Event Detection (V4/V5, throttled §68.11)
+```
+
+Each module reports presence through capability discovery (§68.15); absence
+of a module degrades features that depend on it and nothing else.
+
+## 68.6 HAND TRACKING AND GESTURE RECOGNITION
+
+**Tracking** (raw, local, never the UI API): hand detection, finger/palm
+landmarks, orientation, finger states, pinch distance, movement, velocity
+where useful, confidence, left/right identification, multiple hands where
+supported.
+
+**Recognition** converts landmarks into **semantic gestures** - the stable
+abstraction between vision and ULTRON:
+
+```json
+{ "event": "GESTURE_STARTED", "type": "pinch_start", "source": "camera",
+  "hand": "right", "position": { "x": 0.62, "y": 0.41 },
+  "confidence": 0.94, "timestamp": 1712345678901 }
+```
+
+Vocabulary: `point`, `pinch_start`, `pinch_end`, `grab`, `release`,
+`swipe_left/right/up/down`, `open_palm`, `fist`, `two_finger`, `rotate`,
+`zoom_in`, `zoom_out`, `hold`. Event family (§68.11): `GESTURE_STARTED`,
+`GESTURE_UPDATED` (threshold-crossings only), `GESTURE_ENDED` - the payload
+carries `type`, so the family stays small and spam stays impossible.
+
+**Raw landmark streams are explicitly not the interaction API** - §67.9
+consumes these semantic events and nothing else.
+
+## 68.7 OBJECT DETECTION AND TRACKING
+
+Detection produces normalized results:
+
+```json
+{ "event": "PERCEPTION_OBJECT_ENTERED", "object_id": "object_42",
+  "class": "laptop", "confidence": 0.93,
+  "bounding_box": { "x": 0.31, "y": 0.42, "width": 0.30, "height": 0.22 },
+  "timestamp": 1712345678901 }
+```
+
+- Object ids are **stable for the session** while tracked; the system never
+  claims persistent real-world identity it does not have (honesty rule).
+- Tracking emits *meaningful* transitions only - `ENTERED`, `MOVED`
+  (threshold-crossed), `LEFT`, `SELECTED` - never per-frame spam
+  (§68.11).
+- Detection feeds context ("what am I looking at?"), scene understanding
+  (§68.8), and spatial selection (§67.10) - it never feeds the tool
+  pipeline directly (§68.12).
+
+## 68.8 SCENE UNDERSTANDING AND SPATIAL AWARENESS
+
+A higher-level scene representation assembled from the modules:
+
+```json
+{ "scene": { "environment": "desk", "confidence": 0.87 },
+  "objects": ["laptop", "phone", "keyboard", "mouse"],
+  "hands": ["right_hand"],
+  "activity": "user_interacting_with_laptop" }
+```
+
+Relative spatial relationships without depth hardware: `left_of`,
+`right_of`, `in_front_of`, `behind`, `near`, `above`, `below` - each an
+observation with confidence:
+
+```json
+{ "relation": "left_of", "subject": "laptop", "object": "phone",
+  "confidence": 0.88 }
+```
+
+The abstraction carries optional 3D coordinates so depth cameras (future)
+upgrade fidelity without schema breakage. Scene understanding is *derived*
+from modules, stored as session context only (§68.13 privacy), and
+summarized into events (`PERCEPTION_SCENE_CHANGED`) - not streamed.
+
+## 68.9 OCR AND DOCUMENT UNDERSTANDING
+
+Pipeline: camera → text/document detection → OCR → extracted text → context.
+Inputs: books, notes, screens, documents, labels, diagrams, signs,
+handwriting where supported. **OCR activates when relevant** (on-demand mode
+or a document detected with sufficient confidence) - detected words are not
+auto-fed to the LLM as a stream (§68.11). "What does this say?" / "Explain
+this diagram." / "Solve this." resolve through existing multimodal/document
+paths (§66.13 ingestion, file tools) - **no duplicate document-processing
+architecture**. Image understanding (files, uploads, screenshots) normalizes
+into the same context.
+
+## 68.10 SCREEN UNDERSTANDING
+
+A perception source for the Windows screen:
+
+```text
+Windows screen → capture → vision → UI/object detection → screen context →
+context engine → ULTRON reasoning
+```
+
+Potential results: visible applications, windows, dialogs, buttons, text,
+icons, errors, selected elements. This **complements** the existing Windows
+automation tools (T143/T262/T345, §59.15) and the §66.10 verification loop -
+it does not replace them:
+
+```text
+Vision perceives:      "VS Code, Chrome, a Terminal, an error dialog"
+User (voice):          "Open the terminal."
+Intent → tool request → permission (§15) → Windows node (§64.6) → execute
+```
+
+**Never vision → action.** On-demand "what's on my screen?" analysis is a
+*context request* handled by the same perception path in ON_DEMAND mode -
+the screenshot *tools* remain the action-side primitives (§66.10 amendment).
+
+## 68.11 EVENT MODEL, THROTTLING AND CONFIDENCE
+
+Event families, additive names on §19 per §66.8 (one event, one spelling):
+
+```text
+VISION_STATUS_CHANGED      (state: OFFLINE|STARTING|READY|ERROR, ...)
+VISION_CAPABILITIES_UPDATED
+GESTURE_STARTED / GESTURE_UPDATED / GESTURE_ENDED
+PERCEPTION_OBJECT_ENTERED / OBJECT_MOVED / OBJECT_LEFT / OBJECT_SELECTED
+PERCEPTION_SCENE_CHANGED
+PERCEPTION_DOCUMENT_DETECTED / PERCEPTION_TEXT_DETECTED
+PERCEPTION_PERSON_DETECTED
+```
+
+Rules:
+
+- **Meaningful events only.** 30 FPS in, event-rate out. Never raw frames
+  to the LLM, never `object.moved` per frame: each class has a threshold +
+  minimum interval + debounce; movement events fire on meaningful crossings;
+  gestures emit start/update/end, with updates suppressed unless the gesture
+  itself changed.
+- **Confidence everywhere**: 0-1 on every observation, with bands -
+  high ≥ 0.85, medium 0.5-0.85, low < 0.5. Low-confidence observations are
+  tagged and **never used to resolve references or trigger anything
+  sensitive** without confirmation; reference resolution prefers the highest
+  confidence candidate and says so.
+- Events fan out over the existing SSE stream (T023/T320) exactly as §19
+  events do; the spatial client consumes them (§67.9), context ingests them
+  (§68.14), logs and metrics observe them (§32).
+
+## 68.12 SECURITY - PERCEPTION NEVER ACTS
+
+Binding pipeline; the same for every source (camera, screen, sensor):
+
+```text
+camera/screen/sensors → perception → structured events → context engine →
+ULTRON reasoning → tool request (§16) → permission (§15/§64.12) →
+node (§64) → execution → verification (§17)
+```
+
+Incorrect architecture, forbidden: camera → vision → shell command. A
+detected object, a gesture, or screen content is **never** a privileged
+command; it is context. Confirmation rules (LEVEL 4-5, irreversible) apply
+unchanged to anything a perception ultimately inspires (§67.16 is the
+spatial instance of this rule). Perception modules have **no tool access at
+all** - they are sensors, not agents.
+
+## 68.13 PRIVACY AND VISION MODES
+
+Default: **camera → local processing → structured events.** Raw frames are
+not uploaded to cloud AI by default, not stored continuously, and not
+retained beyond the working frame buffer. Explicit modes:
+
+| Mode | Behaviour |
+|---|---|
+| `VISION_OFF` | no camera processing at all (default) |
+| `GESTURE_ONLY` | hand/gesture recognition only |
+| `OBJECT_MODE` | detection/tracking active |
+| `ON_DEMAND_VISION` | camera analysed only when requested |
+| `CONTINUOUS_VISION` | optional continuous perception (opt-in) |
+| `SCREEN_VISION` | Windows screen understanding |
+| `SPATIAL_MODE` | vision feeding spatial interaction (§67) |
+
+The client shows a **visible, unmissable indicator** whenever vision is
+active, and a control that turns it off immediately. Cloud vision (§68.15)
+is a separate, explicit opt-in per §68.13's rule: local first, always.
+
+## 68.14 MULTIMODAL FUSION - CONTEXT ENGINE
+
+Perception joins the existing context assembly - no new store:
+
+```text
+VOICE + TEXT + VISION + GESTURE + SPATIAL STATE + MEMORY + TASK STATE
+        → CONTEXT ENGINE (§66.3 / T380) → ULTRON REASONING
+```
+
+Worked examples: "What's that?" with vision showing `selected_object =
+laptop` in scene `desk` → answer names the laptop. "Show me that." with
+POINT at `object_42` → spatial focus on the laptop (§67.12). "Zoom into
+that." + selected object → resolved reference. **Reference resolution is a
+context problem**: gesture context + spatial selection + conversation
+context, all through T380's `resolve` - not a memory system of its own.
+Perception-derived session state (current scene, selected object, recent
+visual events, detected document, screen state) is typed context, persisted
+only when appropriate - **never raw video** (§29 of the request maps to §22's
+existing rules; §65.17's transcript discipline is the precedent).
+
+Voice commands the fusion makes natural: "What am I looking at?", "What is
+this?", "Explain that.", "Read this.", "What does this error mean?", "What
+changed?", "Show this in 3D."
+
+## 68.15 VISION PROVIDER ABSTRACTION AND CAPABILITY DISCOVERY
+
+Mirrors the AI provider adapters (§59.7-§59.9 discipline):
+
+```text
+VisionProvider
+    ├── initialize() → config, model paths
+    ├── capabilities() → enabled modules + model presence
+    ├── process(input) → normalized perception events
+    ├── health() → fps, latency, errors
+    └── shutdown()
+```
+
+Implementations: `LocalVision` (default), `CloudVision` (future, optional),
+future providers. **ULTRON core is never coupled to a specific vision
+library.** Capability discovery publishes a status document the client and
+planner can read:
+
+```json
+{ "vision": true, "hand_tracking": true, "gesture_recognition": true,
+  "object_detection": false, "ocr": false, "screen_vision": false,
+  "depth": false, "camera": "available", "mode": "GESTURE_ONLY" }
+```
+
+Consumers adapt: no hand tracking → gesture UI disabled; no camera → mouse;
+no depth → approximate 2D relationships; no OCR → document commands answer
+with a clear capability error, not a hang.
+
+## 68.16 SERVICE LIFECYCLE, STATUS AND OBSERVABILITY
+
+Service lifecycle: `START · STOP · RESTART · HEALTH · VERSION ·
+CAPABILITIES`. Client-visible states (exposed via status endpoint +
+`VISION_STATUS_CHANGED`): `VISION_OFFLINE`, `VISION_STARTING`,
+`VISION_READY`, `CAMERA_AVAILABLE`, `CAMERA_UNAVAILABLE`,
+`TRACKING_ACTIVE`, `TRACKING_LOST`, `PROCESSING`, `ERROR` - integrated with
+existing system status/events (§32, §66.15 self-diagnostics can consume
+them). Metrics added to §32: camera FPS, processing FPS, inference latency,
+gesture latency, dropped frames, tracking confidence, detection counts,
+service CPU/memory, model load time. Electron can always answer: is vision
+available, is the camera available, which capabilities are enabled, what
+mode are we in.
+
+## 68.17 NODE ARCHITECTURE
+
+The node owns the physical capability; core orchestrates (§64):
+
+- **Windows node (§64.6)**: webcam, screen, Windows UI, local vision
+  service, gesture input - the primary perception host.
+- **Ubuntu (§64.7)**: optional camera/server vision, Linux screen, server
+  monitoring - its metrics already feed scenes (§67.19).
+- **ESP32 (§64.9)**: sensors, microphone, device state (existing
+  `DEVICE_*`), future camera if hardware supports it - as perception
+  *sources*, never as renderers.
+- **Mobile (§64.8)**: UI only; optional camera input later if explicitly
+  supported.
+
+A future depth camera, IMU, or wearable joins as another
+`PerceptionSource` on whichever node physically has it.
+
+## 68.18 PERFORMANCE
+
+The development environment is resource constrained (§59.25): frame skipping,
+resolution control, model selection lightest-first, lazy model loading,
+event throttling (§68.11), asynchronous processing, CPU-friendly defaults,
+optional GPU acceleration, configurable FPS with conservative defaults. The
+system must be fully usable with every advanced capability disabled - vision
+is an enhancement layer, never a dependency (§68.20).
+
+## 68.19 FEATURE FLAGS
+
+All default **off** in the current lightweight environment; each gates its
+module independently: `VISION_ENABLED` (master), `CAMERA_ENABLED`,
+`HAND_TRACKING_ENABLED`, `GESTURE_ENABLED`, `OBJECT_DETECTION_ENABLED`,
+`OBJECT_TRACKING_ENABLED`, `OCR_ENABLED`, `SCREEN_VISION_ENABLED`,
+`SPATIAL_VISION_ENABLED`, `CONTINUOUS_VISION_ENABLED`, `CLOUD_VISION_ENABLED`.
+Flags live in §34 settings and are reported through capability discovery
+(§68.15) - no parallel configuration system.
+
+## 68.20 FALLBACK - PERCEPTION IS NEVER A SINGLE POINT OF FAILURE
+
+```text
+camera vision → mouse/touch → keyboard → voice → text
+spatial UI fails → dynamic 2D UI → normal chat
+vision service dies → camera states go OFFLINE → all non-gesture input works
+```
+
+ULTRON must remain fully usable without vision, without a camera, and
+without the spatial renderer - in that layered order. A camera disconnect
+mid-session is an ordinary state transition (§68.3/§68.16); the service
+restarting must not disturb chat, tasks, tools, or voice.
+
+## 68.21 TESTING - SIMULATED PERCEPTION, NO CAMERA HARDWARE
+
+Fixtures of simulated landmarks, detections, scenes, and frames live in the
+test tree; unit tests never open a camera (same spirit as §65.23 "no real
+calls, ever"). Coverage targets: landmark → gesture recognition (pure
+function), gesture event schema + confidence thresholds, throttling
+properties (no per-frame spam under synthetic load), object tracking id
+stability, scene construction and relationships, OCR result normalization,
+context fusion and voice+vision reference resolution, gesture → spatial
+action through §67.10, permission enforcement on anything downstream,
+camera disconnect / service restart / tracking loss state machines, and
+fallback behaviour with vision flags all off.
+
+## 68.22 DUPLICATE-SYSTEM CHECK
+
+| Check | Result |
+|---|---|
+| Second event bus? | No - additive `VISION_*`/`GESTURE_*`/`PERCEPTION_*` names on §19 (§66.8) |
+| Second memory system for perception state? | No - context engine session state + §22 scopes (§68.14) |
+| Second tool system / perception-tools? | No - perception has no tools; on-demand analysis rides §16/§66.10 |
+| Second AI router for vision models? | No - VisionProvider is a *sensor* adapter (§68.15), the model router stays for LLMs |
+| Duplicate of §66.10 computer use? | No - §66.10 acts, §68 observes (amendment recorded there) |
+| Duplicate screenshot capabilities? | No - ScreenSource reuses T143/T262/T345 captures as *inputs* |
+| Own vision inside the spatial UI? | No - §67 consumes §68 events |
+| Cloud vision required? | No - local default, cloud optional behind `CLOUD_VISION_ENABLED` |
+| Raw frames to LLM/cloud by default? | No - §68.13 |
+| Camera → OS bypass? | No - §68.12 |
+
+## 68.23 ROADMAP - PHASES V1-V10
+
+Specified in tasks.md as **T452-T491**, one contiguous block immediately
+after §67's S tasks (T395-T451), appended after the §66 block: **V1** perception architecture
+(source abstraction, event schema, VisionProvider, capability discovery) →
+**V2** camera (service, lifecycle, health, privacy, configuration) →
+**V3** hand vision (tracking, landmarks, gesture recognition, semantic
+events) → **V4** object vision (detection, tracking, stable ids, visual
+events) → **V5** scene (representation, relationships, change events) →
+**V6** OCR (text detection, OCR, document understanding) → **V7** screen
+vision (capture reuse, UI detection, screen context) → **V8** multimodal
+(voice+vision, gesture+voice, spatial references, context fusion) →
+**V9** spatial wiring (vision → §67 interaction, dashboards, mode switching)
+→ **V10** advanced (depth, multi-hand/multi-object, cloud vision adapter,
+multiple cameras, future sensors). Every task carries objective,
+dependencies, implementation requirements, testing, and acceptance criteria
+in tasks.md. USI phases S1-S9 and V1-V10 interleave: S4 consumes V2-V4;
+S5/S6/V8/V9 are one interaction stack seen from two sides - the task block
+records the merge so nothing is built twice.
+
+## 68.24 DOCUMENTATION-ONLY DISCLAIMER
+
+**This section is documentation.** Nothing in §68 is implemented by virtue of
+being written here. No camera service, vision module, gesture, or perception
+event exists until its tasks.md entry is `[x]` with a passing gate (§54):
+"ULTRON can SEE" is a roadmap line, not a status line.

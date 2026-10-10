@@ -45,6 +45,8 @@ from app.security.audit import ACTOR_ANONYMOUS, AuditLogger
 from app.security.authentication import Authenticator, Principal
 
 if TYPE_CHECKING:
+    from app.agents.manager import AgentManager
+    from app.agents.registry import AgentRegistry
     from app.config import Settings
     from app.container import Container as _RealContainer
     from app.database.repositories import (
@@ -54,6 +56,8 @@ if TYPE_CHECKING:
         UserRepository,
     )
     from app.observability.health import HealthService
+    from app.tasks.manager import TaskManager
+    from app.tools.registry import ToolRegistry
 
     def _accepts_protocol(container: ContainerProtocol) -> None:
         """Signature only. Never defined at runtime."""
@@ -100,6 +104,31 @@ class ContainerProtocol(Protocol):
     def get_device_repository(self, session: AsyncSession) -> DeviceRepository: ...
 
     def get_audit_log_repository(self, session: AsyncSession) -> AuditLogRepository: ...
+
+    def get_task_manager(self, session: AsyncSession) -> TaskManager:
+        """The task manager (T039), bound to this request's session.
+
+        Read by the ``/tasks`` routes (T051). Declared here so the routes reach
+        no global and a test can substitute an in-memory double.
+        """
+        ...
+
+    def get_agent_manager(self, session: AsyncSession) -> AgentManager:
+        """The agent manager (T044), bound to this request's session.
+
+        Read by the ``/agents`` routes (T051).
+        """
+        ...
+
+    @property
+    def agents(self) -> AgentRegistry:
+        """The spawnable agent types (T043), read by ``GET /agents/types``."""
+        ...
+
+    @property
+    def tools(self) -> ToolRegistry:
+        """The registered tools (T035), read by the ``/tools`` routes."""
+        ...
 
     @property
     def health(self) -> HealthService:

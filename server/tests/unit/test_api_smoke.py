@@ -157,6 +157,10 @@ def test_openapi_schema_generates(client: Any) -> None:
     schema = response.json()
     assert "/auth/login" in schema["paths"]
     assert "/health" in schema["paths"]
+    # The Core REST surface (T051) is mounted alongside the T022-T024 routes.
+    assert "/tasks" in schema["paths"]
+    assert "/agents" in schema["paths"]
+    assert "/tools" in schema["paths"]
 
 
 # --------------------------------------------------------------------------- #

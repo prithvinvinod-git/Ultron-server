@@ -39,6 +39,7 @@ dependencies = [
     "prometheus-client>=0.21",
     "apscheduler>=3.10,<4.0",
     "psutil>=6.1",
+    "jsonschema>=4.26.0",
 ]
 
 [project.optional-dependencies]
@@ -236,4 +237,9 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
     "\\.\\.\\.",
+]
+
+[dependency-groups]
+dev = [
+    "types-jsonschema>=4.26.0.20261006",
 ]

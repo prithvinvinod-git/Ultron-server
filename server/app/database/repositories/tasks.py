@@ -91,6 +91,21 @@ class TaskRepository(UuidRepository[Task]):
         statement = select(Task).where(Task.status == status).order_by(Task.created_at)
         return await self._fetch_all(apply_limit(apply_offset(statement, offset), limit))
 
+    async def list_all(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[Task]:
+        """Return every task, newest first, bounded by ``limit``.
+
+        The unfiltered read behind ``GET /tasks`` when the caller names no
+        status. Ordered by ``created_at`` descending so the page a client sees
+        first is the work that was requested most recently.
+        """
+        statement = select(Task).order_by(Task.created_at.desc())
+        return await self._fetch_all(apply_limit(apply_offset(statement, offset), limit))
+
     async def list_scheduled_due(
         self,
         *,
@@ -365,6 +380,23 @@ class TaskStepRepository(UuidRepository[TaskStep]):
         step.status = StepStatus.FAILED
         step.completed_at = now or datetime.now(UTC)
         step.error = error[:4000]
+        await self._session.flush()
+        return step
+
+    async def mark_pending(self, step_id: uuid.UUID | str) -> TaskStep:
+        """Return a step to pending — the restart-recovery reset (T041).
+
+        A step left RUNNING by a crashed worker is neither finished nor
+        runnable, and the graph (which only starts PENDING steps) would wait
+        on it forever. Recovery resets it so the DAG can re-run it: the
+        ``attempt`` is *kept* (it counts the try that was interrupted, and the
+        next `mark_running` increments from there), while ``started_at`` and
+        ``completed_at`` are cleared because the step is no longer in flight.
+        """
+        step = await self.get_required(step_id)
+        step.status = StepStatus.PENDING
+        step.started_at = None
+        step.completed_at = None
         await self._session.flush()
         return step
 

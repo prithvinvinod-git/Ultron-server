@@ -436,86 +436,409 @@ spec; these are the open questions to resolve before the deployment phase
 
 ---
 
-## J. Session progress report (2026-10-08)
+## J. Session progress report (2026-10-10)
 
-**State at stop: 32 of 264 tasks `[x]`.** T025 remains `DEFERRED` (no Docker).
-Branch `feature/phase-1-foundation`, last commit `3c243ec` (T030-T032) pushed to
-origin; **T033's changes are written and gated but NOT yet committed** — working
-tree has uncommitted changes (see below).
+**State at stop: 60 T-tasks `[x]` of 361 defined (301 `[ ]` remaining; T025
+`DEFERRED` no Docker). Phase 2 (T030-T053) is complete and verified locally;
+Phase 3 (model system) is under way — T060 (provider ABC + vocabulary), the four
+adapters T061-T064 (Ollama, OpenAI, Gemini, Anthropic), the scripted fake
+provider T065, the model router T066, and **model usage recording T067 done.**
+Branch `feature/phase-1-foundation`, HEAD `8ed6a4b` "T033/34 not finished"
+pushed to origin; **T033-T053 + T060-T067 are written, tested and marked but NOT yet
+committed**, and the §67/§68 documentation addendum (appended to `server_arc.md`
+and `tasks.md`, tasks T395-T491 + decisions D032-D039) is likewise uncommitted.
+Working tree has uncommitted changes.
 
-### Done this session
+### Next up: Phase 3 — model system (T068 onward)
 
-- **T030 `[x]`** — `app/events/types.py`: canonical 71-name `EventType` StrEnum
-  (spec §19 + §27/§28/§64.9/§64.15/§65.15/§66.8 additions under the no-rename
-  rule), `topic_for`/`KNOWN_TOPICS` moved out of `bus.py`, SSE route 422 gate now
-  reads the catalog. 36 tests; 1058 total at the time.
-- **T031 `[x]`** — `app/events/bus.py` assessed as already delivered under T023;
-  50 tests cover wildcard/backpressure/replay/cap. Redis bridge deliberately
-  absent (project-wide Redis deferral, `todo.md` C5).
-- **T032 `[x]`** — `app/events/handlers.py` (`PersistEvents` durable
-  write-through for the `events` table), `EventEnvelope.persist` flag +
-  `EventBus.publish(persist=...)`, container wiring behind
-  `settings.observability.events_persist`. Found and fixed a real deadlock:
-  `Subscription.close()`'s wake-up `None` sentinel was suppressed on a full
-  queue, so a draining consumer could wait forever — close now evicts the
-  oldest event to make room (counted as a drop). 10 deterministic tests.
-  Committed as `3c243ec`.
-- **T033 `[x]`** (this stop) — permission engine, split in two:
-  - `app/security/permissions.py` — pure policy: `PermissionDecision`
-    (ALLOWED/DENIED/CONFIRM_REQUIRED, values identical to `AuditOutcome`),
-    frozen `PermissionRequest` (§64.12 dimensions), `scope_of()`,
-    `confirmation_required()`, `evaluate()`. Rule table: 0-1 never ask; 2
-    unless workspace pre-auth; 3 unless operation pre-auth; 4-5 every
-    invocation; irreversible always (§66.17); risk follows the operation, not
-    the caller; **denial outranks confirmation**; ungranted scope = denial.
-  - `app/core/permissions.py` — `PermissionManager`: `GrantStore` Protocol +
-    `default_level` fallback, `check()` (returns decision), `enforce()` (raises
-    `PermissionDeniedError` 403 / `ConfirmationRequiredError` 409 with
-    node/client/tool/operation/scope in `error.details`), every decision audited
-    with §64.13's full tuple; refusals `durable=True` (outlive the rollback of
-    the raise), allows transactional. No container wiring (no caller until
-    T036); no event emission (pipeline owns `permission.*` events).
-  - `tests/unit/test_permissions.py` — 25 tests.
-  - **Gate green**: ruff format/check + mypy clean over **115 source files**,
-    **1093 tests passed**. Marked `[x]` in `tasks.md` with full evidence.
+Phase 3 (`server_arc.md` §20-§21, tasks.md:539-551 "Phase 3 — Model system") is
+under way: **T060-T067** are done (see tasks.md). The next task is **T068**
+wire the model-driven tool-calling loop into the agent base, then Phase 3 tests
+(T069) and the Phase 3 verification (T070).
 
-### In progress when stopped: T034 `app/tools/base.py` (research only, NO code)
+### Done this session (continuation from 2026-10-08)
 
-Spec read; design not yet written to disk. Facts to carry forward:
-
-- §14 defines the ABC: `name`, `description`, `input_schema`,
-  `permission_level`, `execute()`, `verify()`. §59.6 makes `timeout` mandatory
-  ("always declared") and adds `logging`/`audit`/typed-errors; §66.14 adds
+- **T067 `[x]`** — Model usage recording: the router now records every model call
+  to `model_usage` when `MODEL_USAGE_TRACKING` is enabled. Captures model, provider,
+  status, tokens, cost, latency, request_id, and error detail. Streaming aggregates
+  the terminal chunk's usage. Container wires providers + session_factory + bus.
+  Evidence: `app/models/router.py` + `app/container.py`. Gates: lint clean over
+  **173 files**, mypy clean, 28 router tests pass.
+- **T066 `[x]`** — `app/models/router.py`: the single model selector with
+  capability→model resolution, fallback chain, `speed`/`prefer_local`/`preferred`
+  reordering, availability/resource filters, per-capability defaults, bounded
+  retry with injected backoff, health tracking & circuit breaking (§66.6),
+  non-retryable error surfacing, and `MODEL_SELECTED`/`MODEL_FAILED` events.
+  Evidence: `tests/unit/test_router.py` (**28 tests** covering selection matrix,
+  fallback+retry, circuit open/close, health caching, events). Gates: lint clean
+  over **173 files**, **1822 passed** (1793 + 28 + 1 lint-check).
+- **T065 `[x]`** — `app/models/fake.py`: the deterministic, scripted
+  `ModelProvider` for tests (FIFO `queue`/`queue_stream`/`queue_error`, request
+  recording, constructor-scriptable config/availability/models/health, default
+  `chat`/`stream`). Implements the same T060 contract as the real adapters.
+  Evidence: `tests/unit/test_fake.py` (14). Gates: lint clean over **172 files**,
+  **1793 passed**.
+- **T064 `[x]`** — `app/models/anthropic.py`: the optional Anthropic adapter
+  (Messages API, `x-api-key` + `anthropic-version`). Lazy key check
+  (unconfigured ⇒ unavailable, not broken); maps the T060 vocabulary to/from
+  top-level `system`, `content` blocks (`text`/`tool_use`/`tool_result`) and
+  `input_schema` tools; defaults `max_tokens`; normalises `usage` and
+  `stop_reason`; typed-SSE streaming with tool-use assembly; `/v1/models`
+  discovery + health (never raises); the full §33 error map. Owned client closed,
+  injected client left open. Evidence: `tests/unit/test_anthropic.py` (30,
+  respx). Gates: lint clean over **170 files**, **1780 passed**.
+- **T063 `[x]`** — `app/models/gemini.py`: the optional Gemini adapter
+  (Generative Language REST, `x-goog-api-key`). Lazy key check (unconfigured ⇒
+  unavailable, not broken); maps T060 vocabulary to/from `contents`/`parts`,
+  `systemInstruction`, `functionDeclarations`, `functionCall`/`functionResponse`;
+  normalises `usageMetadata` and `finishReason`; SSE streaming; `/v1beta/models`
+  discovery + health (never raises); the full §33 error map. Owned client closed,
+  injected client left open. Evidence: `tests/unit/test_gemini.py` (29, respx).
+  Gates: lint clean over **168 files**, **1750 passed**.
+- **T062 `[x]`** — `app/models/openai.py`: the optional OpenAI/OpenAI-compatible
+  adapter (Chat Completions). Configurable `OPENAI_BASE_URL` (§59.7 OpenRouter),
+  lazy key check (unconfigured ⇒ unavailable, not broken), chat, SSE streaming
+  with index-keyed tool-fragment assembly, `/models` discovery, health (never
+  raises), and the full §33 error map. Owned client closed, injected client left
+  open. Evidence: `tests/unit/test_openai.py` (29, respx). Gates: lint clean over
+  **166 files**, **1721 passed**.
+- **T061 `[x]`** — `app/models/ollama.py`: the local provider over the Ollama
+  HTTP API (httpx, not the SDK). `/api/chat` chat + NDJSON streaming, `/api/tags`
+  discovery (honours the `OLLAMA_MODELS` allowlist), `is_available` (exact tag or
+  base-name), `health` (connect-budget probe that never raises), configurable
+  host + `auth_headers()`, and full §33 error mapping (unreachable→
+  `LOCAL_MODEL_UNAVAILABLE` 503 retryable, timeout→504, 404→400, 429, 401/403→
+  `ProviderNotConfiguredError`, 5xx→`ModelError`, bad JSON→`ModelResponseInvalidError`).
+  Owned client closed, injected client left open. Evidence:
+  `tests/unit/test_ollama.py` (26, respx). Gates: lint clean over **164 files**,
+  **1692 passed**.
+- **T060 `[x]`** — `app/models/base.py`: the model-layer contract (Phase 3).
+  Enums `ModelCapability` (values == `ModelRouterSettings` keys, drift-pinned),
+  `FinishReason`, `ProviderStatus`; frozen value objects `TokenUsage`,
+  `ToolDefinition`, `ToolCall`, `ModelMessage` (reuses `MessageRole`),
+  `CompletionRequest` (model pre-selected by the router), `ModelResponse`,
+  `ModelStreamChunk` (`is_final`), `ProviderHealth` (`is_usable`). `ModelProvider`
+  ABC: non-empty `name` + honest ClassVar defaults (`local`/`supports_tools`/
+  `supports_streaming`), one required `async chat()`, and graceful defaults —
+  `stream` degrades to one terminal chunk from `chat`, `health` reports
+  configuration not liveness (§17), `list_models`→`[]`, `is_available` follows
+  config, `aclose` no-op. Import-time guards: blank `name` or sync `chat` fails;
+  abstract intermediates exempt. Evidence: `tests/unit/test_model_base.py` (17).
+  Gates: lint clean over **162 files**, **1666 passed**.
+- **T034 `[x]`** — `app/tools/base.py`: `BaseTool` ABC per §14/§59.6/§64.11/
+  §66.14 — declarative class fields (`name`, `description`, `input_schema`,
+  `permission_level`, `timeout`, `logging`, `audit`, `node_scope`,
   `output_schema`, `node_requirements`, `risk_level`, `availability`,
-  `version`, `reversibility` (§66.17: `reversible | partially_reversible |
-  irreversible`); §64.11 adds `node_scope`. "Tools declare, the pipeline
-  decides" (§66.7) — the ABC must contain **zero permission logic**.
-- §16 pipeline order: schema → permission → policy → target selection → execute
-  → result → verify → event (target-selection stage added by §64.11; tools
-  that declare no node run on the cloud server).
-- Already available: `PermissionLevel`, `VerificationOutcome`
-  (SUCCESS/PARTIAL/FAILED/UNVERIFIED, verbatim §17), `ToolExecutionStatus`
-  (incl. `AWAITING_CONFIRM`) in `app/database/models/enums.py`; errors module
-  has no `Tool*` error yet (T036 will need one); `app/tools/__init__.py` exists
-  (docstring only); scaffold subdirs `browser/ computer/ filesystem/ git/ mock/
-  notifications/ python/ system/ terminal/ web/` are empty (`__init__.py` only,
-  from T002); `app/verification/` empty too.
-- Design leaning (not final): ABC with abstract `execute()`, `verify()` default
-  honest-but-not-magic (§17 "never assume success" argues against a silent pass
-  — candidate: default returns `VerificationOutcome.UNVERIFIED` with a reason),
-  declarative class attributes for §59.6/§66.14 fields, and a small typed
-  result carrier for `execute()` so T036's executor has one shape to move
-  through the pipeline. Registry (`T035`) consumes these fields as data.
-- Tests will go in `tests/unit/test_base.py` or `test_tool_base.py`; follow
-  `pytestmark = pytest.mark.unit`.
+  `version`, `reversibility`), abstract `execute()`, `verify()` default returns
+  `VerificationOutcome.UNVERIFIED` with an honest reason (§17, no magic
+  success). **Zero permission logic in the ABC.** `ToolResult` typed carrier.
+- **T035 `[x]`** — `app/tools/registry.py`: registry consumes the ABC's
+  declarative fields, `validate`/`register`/`resolve_available_for`/
+  `resolve_permitted_for` against `PermissionManager` (T033); unknown/duplicate
+  tool enforced; reversible flags surface for §66.17.
+- **T036 `[x]`** — `app/tools/executor.py`: §16 pipeline order (schema →
+  permission → policy → target selection → execute → result → verify →
+  event); `AWAITING_CONFIRM` for LEVEL 4-5/irreversible; typed `ToolError`.
+- **T037 `[x]`** — `app/tools/mock/` providers: `echo`, `fail`, `sleep`,
+  `write_state` implementing the ABC with declared schemas/levels.
+- **T038 `[x]`** — `app/tasks/state.py`: task state machine (strata per §66.4)
+  with `TaskState` StrEnum + guarded transitions.
+- **T039 `[x]`** — `app/tasks/manager.py`: `TaskManager` over the container
+  (`container.get_task_manager(session)`); handler callers must route lifecycle
+  through the manager and publish `TASK_*` events — never the repository
+  helpers directly (T041 rule).
+- **T040 `[x]`** — `app/tasks/graph.py`: `StepGraph`/`StepNode` —
+  construction-order validation (duplicate/missing-dep/cycle with `details`
+  naming the loop), `topological_order()` (Kahn), `waves()`,
+  `runnable/blocked/waiting_on` with status-key validation, `dependents_of`/
+  `descendants`, `from_task_steps(rows)`, `__contains__` (UUID + str).
+  T040 `[x]` evidence at tasks.md line 520.
+- **T041 `[x]`** — `app/tasks/executor.py`: `TaskExecutor(session, *, events,
+  run_step)` composes T038/T039/T040 on one session and routes **every** task
+  write through `TaskManager.transition` (no direct repository lifecycle
+  helpers). Load-boundary `StepStatus(...)` coercion (enum columns reload as
+  plain strings; `StepGraph` compares with `is`); sequential `StepGraph.
+  runnable()` loop (single `AsyncSession` is not concurrency-safe; parallel is
+  T049/T050); fail-fast with the failing step named in `TASK_FAILED`;
+  `TASK_CREATED/STARTED/COMPLETED/FAILED` persist=True + `TASK_PROGRESS`
+  persist=False; `recover()` resets in-flight steps via new
+  `TaskStepRepository.mark_pending` (keeps `attempt`) and requeues RUNNING→
+  QUEUED; `trigger_due()` emits the one-shot `SCHEDULE_TRIGGERED`.
+  `Container.get_task_executor(session, *, run_step)` wired to `self.events`.
+  T041 `[x]` evidence at tasks.md line 521.
+- **Gate green after T041**: ruff format/check + mypy clean over **134 source
+  files**, **1338 passed** (1322 → +16 from `test_task_executor.py`).
+- **T042 `[x]`** — `app/agents/base.py`: `Agent` ABC (12 §6 attributes +
+  lifecycle). `LEGAL_AGENT_TRANSITIONS` + `ensure_legal_agent_transition`
+  (409 naming current/target/legal_targets/agent) mirroring T038's pure
+  machine; `ACTIVE_STATUSES`/`AGENT_TERMINAL_STATUSES` exactly the row
+  model's is_active/is_terminal partition; WAITING doubles as §7 pause with
+  resume only through RUNNING; terminal states absolute (one-shot worker,
+  retry = T044 spawn); ClassVar `agent_type`/`description` required with
+  definition-time guards incl. sync-`run` refusal; instance attrs for the
+  other ten; abstract `async run(context)`. Event publication left to T044
+  (like TASK_* is the executor's). T042 `[x]` evidence at tasks.md line 522.
+- **Gate green after T042**: ruff format/check + mypy clean over **136 source
+  files**, **1362 passed** (1338 → +24 from `test_agent_base.py`).
+- **T043 `[x]`** — `app/agents/registry.py`: agent-type registry holding
+  *classes* (agents carry lifecycle state, unlike stateless tools/instances),
+  `create(agent_type, **kwargs)` as T044's spawn seam (fresh CREATED
+  instance, §6 assignment kwargs), duplicate type → ConflictError 409, unknown
+  type → new `AgentTypeNotFoundError` 404 (code `AGENT_NOT_FOUND`,
+  distinct from `AgentNotFoundError`), abstract/non-Agent refused, sorted
+  `list()`. No hard-coded docs/Windows types (wiring is T045+'s).
+  T043 `[x]` evidence at tasks.md line 523.
+- **Gate green after T043**: ruff format/check + mypy clean over **138 source
+  files**, **1375 passed** (1362 → +13 from `test_agent_registry.py`).
+- **T044 `[x]`** — `app/agents/manager.py`: `AgentManager(session, *, agents,
+  events=None, max_concurrent=None)` — the agent analog of `TaskManager`
+  (flush-only, caller owns commit). **Create** copies the type's declared
+  `description` (§6/§40), validates name/ids, 404s a missing parent/task, copies
+  `tools`/`permissions`, starts CREATED, publishes `AGENT_CREATED` persist=True.
+  **One status door**: `transition` + the §7 doors `pause`/`resume`/`cancel`/
+  `complete`/`fail` all route through T042's `ensure_legal_agent_transition`
+  (bare string → 422; illegal move → 409 naming current/target/legal_targets).
+  **Resume is the RUNNING target**, legal from WAITING *and* READY (the machine's
+  only authority; the door adds no rule) — docstrings corrected, test-pinned.
+  **Events**: `_AGENT_EVENTS` maps RUNNING→STARTED, WAITING→PAUSED,
+  COMPLETED→COMPLETED, FAILED→FAILED, CANCELLED/TIMEOUT→STOPPED persist=True;
+  CREATED/INITIALIZING/READY publish nothing (no §19 name). `cancel(reason)`/
+  `fail(error)` merge into the payload only (blank failure 422). **Destroy**
+  refuses live agents (409, cancel first), emits nothing. **Assignment**:
+  `assign_task` 404s a missing task and 409s a repoint, `assign_model`/`tools`/
+  `permissions` are validated replacements (names, not wiring). **Concurrency**
+  `max_concurrent` (None = no ceiling) enforced at the moment an agent would
+  *become* active; intra-active moves skip it; 409 names active/limit/target;
+  `count_active()` sums the repository counts over `ACTIVE_STATUSES`. Tests
+  `tests/unit/test_agent_manager.py` (36): create, the door + per-status events,
+  the §7 doors (incl. resume's READY edge and refusals), destroy, assignment,
+  and the ceiling. T044 `[x]` evidence at tasks.md line 524.
+- **Gate green after T044**: ruff format/check + mypy clean over **140 source
+  files**, **1411 passed** (1375 → +36 from `test_agent_manager.py`).
+- **T045 `[x]`** — `app/agents/mock/`: three deterministic probes, one module
+  each, mirroring `app/tools/mock/` (T037) — `mock.agent` (returns a fresh
+  `dict(context)`), `mock.long_running` (bounded `asyncio.sleep`, default 0.05,
+  `MAX_SECONDS`=5; `AgentError` for a non-number/unbounded value; cancellable
+  mid-flight), `mock.failing` (raises `AgentError` 500/`AGENT_FAILED` with the
+  caller's message or a default). Concrete `Agent` subclasses whose
+  `agent_type`/`description` face T042's definition-time guards; spawned
+  through the **real** `AgentRegistry` (no doubles), never registered by the
+  app. Tests `tests/unit/test_mock_agents.py` (12): register/spawn, echo
+  round-trip + fresh dict, long-running delay/default/refusals/mid-flight
+  cancel, failing typed error/message/id. T045 `[x]` evidence at tasks.md
+  line 525.
+- **Gate green after T045**: ruff format/check + mypy clean over **145 source
+  files**, **1423 passed** (1411 → +12 from `test_mock_agents.py`).
+- **T046 `[x]`** — `app/core/context.py`: the one §66.3 context layer, first
+  small step — a **pure, in-memory** conversation-state store scoped by §22
+  namespaces (no DB/Redis; §22's Redis is permission and C5 keeps it out).
+  **`Namespace`** frozen value object: `parse` is the only string→namespace door
+  (422 `InvalidInputError`, never a silent bucket), bare `user` or `kind:name`,
+  `project()`/`agent()` helpers, `USER_NAMESPACE`; shape enforced on
+  construction (lowercase kind, no `:`/whitespace in name). **`ConversationContext`**
+  — `{namespace: {key: value}}` with set/get/has/delete/snapshot/namespaces/
+  clear, keyed by validated namespace, **bounded** (`max_entries` default 256:
+  new key at cap → 409 `ConflictError` naming the limit; overwrite at cap
+  allowed; non-positive/`bool` cap → `ValueError`); `snapshot` returns a copy
+  ordered by namespace string. **`ContextManager`** — `for_conversation`
+  (idempotent, adopts unowned, 422 malformed id), `get`/`require` (404
+  `NotFoundError` naming `conversation`), `drop`/`clear`/`conversation_ids`, and
+  the **tenancy check**: a context carries its `user_id`, a read as a different
+  principal is "not found". No subsystem import (only `app.core.errors`). Tests
+  `tests/unit/test_context.py` (61). T046 `[x]` evidence at tasks.md line 526.
+- **Gate green after T046**: ruff format/check + mypy clean over **147 source
+  files**, **1484 passed** (1423 → +61 from `test_context.py`).
+- **T047 `[x]`** — `app/core/router.py`: the INTENT stage as a deterministic,
+  **declared-rules** router (no hard-coded kinds — §40 applied to routing, like
+  T035/T043). `Intent` StrEnum (`conversation`/`question`/`task`/`command`/
+  `tool`/`unknown` — pipeline paths, not agent types); `RoutingRequest(text,
+  context)`; `RouteRule(name/intent/handler/matches/priority/description)` where
+  `matches=None` = always (declared catch-all); `Routing` (intent/handler/rule/
+  matched/reason). `IntentRouter`: first match by **lowest priority** (stable tie
+  = registration order), `register` validates eagerly (422 on bad name/handler/
+  intent/priority, `TypeError` on non-callable matcher) and 409s a duplicate
+  name; `unregister`/`rules`/`intents`/`__len__`/`__contains__`/`__repr__`;
+  `route` propagates a matcher's exception and returns `Intent.UNKNOWN`+
+  `handler=None` when nothing matches. `keyword_matcher` = the explicit Phase-2
+  placeholder (`(?<!\w)…(?!\w)` boundaries, case-insensitive, refuses empty).
+  Pure Core (imports only `app.core.errors`); **not wired into the container**
+  (T049 declares the rules). Tests `tests/unit/test_router.py` (36). T047 `[x]`
+  evidence at tasks.md line 527.
+- **Gate green after T047**: ruff format/check + mypy clean over **149 source
+  files**, **1520 passed** (1484 → +36 from `test_router.py`).
+- **T048 `[x]`** — `app/core/planner.py`: the PLAN stage as a **pure builder of
+  task graphs, not an isolated agent** (§66.4's exact wording — the design
+  constraint). `PlanStep(key, name, description="", depends_on=())` frozen value
+  object (plan-local key, no agent/tool field — that is T049's §66.4 *next*
+  stage); `Plan(goal, steps)` validates on construction (empty goal/no steps/
+  non-step/duplicate key/dangling dependency → 422) and delegates cycle
+  detection to **T040's `StepGraph`** via a deterministic `uuid5` key→node-id
+  bridge, so the codebase has one cycle detector and the plan cannot disagree
+  with the executor. `Plan.graph()`/`topological_order()`/`waves()` read from
+  that graph (waves = §66.4's parallel-where-safe batches); `keys`/`get`/
+  `__contains__`/`__len__`/`__repr__`. **Declared, not invented** (no model in
+  Phase 2, like T047): a `Planner` holds `PlanStrategy(name, decompose,
+  matches=None, priority=100, description)`; `register` validates eagerly (422
+  bad name/priority, `TypeError` non-callable `decompose`/`matches`) and 409s a
+  duplicate name; `plan(PlanningRequest(goal, context))` picks the **first match
+  by lowest priority** (stable tie = registration order), `matches=None` = the
+  declared catch-all, a raising matcher/decomposer propagates, and **no match →
+  a single-step plan of the goal**. `PlanningRequest` = goal (non-empty, 422) +
+  open `context` (no router/context coupling). Deliberately absent: model
+  decomposition (T066); agent/model selection (T049); retry/replan/
+  verification/confirmation (T041/T050); persistence (T049 materialises through
+  `TaskManager` — the planner is import-only-downward: `app.core.errors` +
+  `app.tasks.graph`). Tests `tests/unit/test_planner.py` (51). T048 `[x]`
+  evidence at tasks.md line 528.
+- **Gate green after T048**: ruff format/check + mypy clean over **151 source
+  files**, **1571 passed** (1520 → +51 from `test_planner.py`).
+- **T049 `[x]`** — `app/core/orchestrator.py`: the **joint** between the stages
+  (§5's diagram, §50's line, §66.4's "not a new runtime") — the one place that
+  knows the order they run in and owns their effects (the `AsyncSession` and the
+  `EventBus`). `Orchestrator(session, *, router, planner, agents, events,
+  agent_type=None, selector=None, max_concurrent=None)` (events required, since
+  the executor needs a bus; declarations come from the app — §40 keeps the kind
+  on the agent). `OrchestrationRequest(goal, context={}, priority, project_id,
+  conversation_id)` frozen (non-empty goal, Mapping context → 422);
+  `AgentSelector = Callable[[request, routing, plan], str | None]` (selector
+  authoritative incl. its `None` = "no agent" → stop with routing+plan only;
+  else the default `agent_type`; blank/non-str → 422; unknown type → registry
+  404); `OrchestrationResult` frozen with `executed`/`intent`/`status`/`result`/
+  `error`. Pipeline in §66.4 order: route → plan → `PLAN_CREATED` (best-effort,
+  the module's only self-written event) → select → materialise → spawn → walk →
+  execute → finish. Materialises through the executor's `create` so §19's
+  `TASK_CREATED` is announced (the manager has no bus), then `add_step` in
+  `Plan.topological_order()` mapping plan-local keys → real row ids once.
+  **One agent per task**: manager creates the row, registry spawns the instance
+  sharing its id, walked `CREATED → INITIALIZING → READY → RUNNING` through
+  `AgentManager.transition`; a `TaskExecutor` whose injected `run_step` gives
+  each step's context (nested request `context`, so a caller key cannot shadow
+  `task_id`). Finish: COMPLETED → agent `VERIFYING → COMPLETED`; FAILED → agent
+  FAILED carrying the task error. Cancellation cancels the agent best-effort
+  before re-raising; `max_concurrent` forwarded, no new policy. Deliberately
+  absent: model selection (§66.6/T066), retry/replan/verification policy
+  (§66.11/T050), parallel steps (one session). Container: `get_orchestrator(
+  session, *, router, planner, agents)` wired to `self.events`. Tests
+  `tests/unit/test_orchestrator.py` (27). T049 `[x]` evidence at tasks.md line
+  529.
+- **Gate green after T049**: ruff format/check + mypy clean over **153 source
+  files**, **1598 passed** (1571 → +27 from `test_orchestrator.py`).
+- **T050 `[x]`** — `app/core/executor.py`: the **retry/replan policy** §66.4 left
+  for after T041/T049 (each runs once and fails fast). `ExecutionPolicy`
+  (frozen; `max_replans: int = 0`, the §66.11 loop guard — straight retries are
+  bounded by the task row's own `max_retries`, which `TaskManager.retry`
+  enforces) + `RetryAction{STOP,RETRY,REPLAN}` + `decide(task, *, replans)`
+  (retry preferred while the row has budget, then replan, then stop).
+  `CoreExecutor(session, *, events, run_step, policy=None, replanner=None)` is
+  the loop **around** `TaskExecutor`: run → on FAILED retry (reset failed steps
+  to PENDING, then `manager.retry`), replan (callback while FAILED, reset, then
+  `manager.transition` FAILED → PENDING), or stop. **Critical repair:** T041
+  leaves a failed step FAILED and the graph only starts PENDING steps, so a
+  re-entry without the reset would falsely complete the task around its
+  failure. Events: a retry re-emits `TASK_STARTED` (no new name, §64.15); a
+  replan publishes §66.8 `PLAN_UPDATED` (best-effort) when the callback returns
+  a plan; no `TASK_CREATED` (already materialised) and no `TASK_RETRIED`.
+  `ExecutionOutcome(task, attempts, retries, replans)` (`attempts == retries +
+  replans + 1`). Verification/confirmation deliberately deferred (they act on
+  T041's completion door; COMPLETED has no exit, §66.16). Tests
+  `tests/unit/test_core_executor.py` (26). T050 `[x]` evidence at tasks.md line
+  530.
+- **Gate green after T050**: ruff format/check + mypy clean over **155 source
+  files**, **1624 passed** (1598 → +26 from `test_core_executor.py`).
+- **Documentation addendum (today)** — user brief: append two large sections
+  to `server_arc.md` + roadmap blocks to `tasks.md`:
+  - **§67 ULTRON Spatial Interface (USI)** 67.0-67.25: interface modes,
+    SpatialUIEngine's 12 modules, strict `SpatialScene` schema (Draft
+    2020-12, `additionalProperties:false`, no executable content, closed
+    type set), **one ComponentSpec protocol with COMPONENT/SPATIAL renderer
+    namespaces** (honest audit — this repo has no "Dynamic UI" today),
+    renderer tech gate (three.js default), glTF/GLB assets, spatial panels/
+    images/graphs/flowcharts/dashboards/timelines, gesture pipeline
+    consuming §68, interaction resolver rule table + priority order,
+    local-vs-AI split, voice+gesture fusion via context engine (T380),
+    `spatial.*` action protocol, bounded/interruptible/reduced-motion
+    animation, mandatory 3D→2D→text fallback, security pipeline
+    (validation → §15 permission → confirmation → tool → node → verify →
+    audit, Electron hardening), performance/privacy/flags, roadmap S1-S9.
+  - **§68 ULTRON Perception Layer** 68.0-68.24: perception sources
+    (camera/screen/voice/ESP32), camera service, **local Python vision
+    service** (localhost WebSocket transport, never a second bus; tech gate
+    OpenCV/MediaPipe/ONNX), capability modules (hand tracking, gesture
+    recognition, object detection/tracking with session-stable ids, scene +
+    spatial relationships with 3D-ready coords, OCR/document, screen
+    understanding reusing T143/T262/T345), event model with throttling +
+    confidence bands, **perception never acts** (§68.12), privacy + vision
+    modes (OFF/GESTURE_ONLY/.../SPATIAL_MODE), fusion through T380,
+    VisionProvider ABC + capability discovery, service lifecycle/status,
+    node architecture, flags default-off, fallback hierarchy, fixture-only
+    testing (no camera hardware ever), roadmap V1-V10.
+  - Existing §50/§66.10/§66.21 amended with additive blockquotes (nothing
+    deleted); cross-ref typo fixes in §67/§68.
+  - **tasks.md**: appended two blocks — spatial S1-S9 **T395-T451** (57
+    tasks) + decisions **D032-D035**; perception V1-V10 **T452-T491** (40
+    tasks) + decisions **D036-D039**. Every task carries
+    objective/deps/impl/test/accept labels. S4 blocks on V2-V4; none of the
+    new tasks are `[x]` (documentation only, no faked features). Encoding
+    verified: both files BOM-less, 0 U+FFFD, 0 mojibake; IDs contiguous.
+
+### What Phase 2 delivered (context for the next phase)
+
+T051, T052 and T053 are done and marked (see tasks.md). The T051-plan facts
+below are kept for context; the ones that still apply are about the gate, the
+routes now mounted, and the uncommitted state.
+
+Facts that carried the Core/REST work (now delivered):
+
+- T051 is `app/api/routes/{agents,tasks,tools,events}.py` — the **REST surface
+  for the Core** over the seam T022 already laid (`app/api/` app factory, router
+  inclusion, dependencies, error handlers). It wraps services that are all built
+  and tested: `Orchestrator` (T049) + `CoreExecutor` (T050) for requests,
+  `TaskManager` (T039) for task records, `AgentRegistry`/`AgentManager`
+  (T043/T044) for agents, the tool registry/router (T032/T030) for tools, and
+  the `EventBus` (T031) for events.
+- **Thin HTTP only**: parse/validate/serialise and delegate — no business logic,
+  no direct repository access, no `session.commit()` in a route. Build/reuse a
+  service per route and let the session dependency own the transaction boundary.
+- **Reuse the container** `app/container.py` (`get_orchestrator` is already
+  wired; add getters for whatever the routes need rather than building services
+  inline).
+- **Agent-run entry**: run a goal via `Orchestrator.run(OrchestrationRequest(...))`
+  (T049) — blank goal → 422; unknown agent type → 404 (the registry's).
+- **Errors → status codes** through the existing `UltronError` hierarchy
+  (`InvalidInputError` 422, `NotFoundError` 404, `ConflictError` 409, denied from
+  T033); the app-level handlers already map them — raise the domain error, do
+  not hand-roll responses.
+- **Events**: the bus is `async` fan-out (T031); prefer a list/recent endpoint
+  over a blocking stream unless a websocket/SSE layer already exists in
+  `app/api/` (check before inventing transport).
+- **Verification/confirmation stay out of scope** (T050 deferred them, too):
+  they act on T041's completion door and are not part of a thin REST wrapper.
+- After T051 come **T052** (Phase 2 tests: event bus, permissions, registry,
+  executor, task lifecycle, agent lifecycle, concurrency, E2E request→result)
+  and **T053** (**PHASE 2 verification**).
+- CRITICAL enum gotcha (empirically verified): freshly loaded ORM rows carry
+  plain lowercase enum strings, not members — coerce with `TaskStatus(...)` /
+  `StepStatus(...)` / `AgentStatus(...)` at the load boundary.
+- Gate order: `scripts/lint.ps1` then `scripts/test.ps1` from repo root
+  (`lint.ps1` runs with `PYTHONIOENCODING=utf-8`; mypy checks `tests`
+  too — every `# type: ignore[...]` must suppress a real error,
+  `warn_unused_ignores`; RUF022 sorts `__all__`; line-length 100; W292).
+  Tests only via `uv run pytest …` from `server/`.
+- Completed-task marking rule: `[x]` only with passing gate; evidence line
+  in tasks.md uses em-dashes, `§` refs, `→` arrows; update the sidebar
+  `todowrite` after every completion.
+- Commit nothing unless the user asks (T033-T050 + doc addendum are all
+  uncommitted; user commits manually).
 
 ### Reminders
 
 - Gate commands: `powershell -File scripts/lint.ps1` (ruff format+check, mypy)
   and `powershell -File scripts/test.ps1` (pytest, non-integration). Run from
-  repo root; tests only via `uv run pytest …` from `server/`.
+  repo root with `$env:PYTHONIOENCODING='utf-8'`; tests only via `uv run
+  pytest …` from `server/`.
 - Never run ULTRON on this Windows machine (no uvicorn/startup/clients).
-- **Commit T033 before starting T034** — it is gated, marked, and otherwise
-  complete; only the commit is missing.
 - Encoding: always write files with the edit/write tools, never PowerShell
   `-replace` (it mangled UTF-8 `§`/dashes once already).
+- The doc addendum added 97 roadmap tasks (T395-T491) + decisions; none are
+  implemented — §67/§68 are documentation-only, and no camera/vision/gesture/
+  spatial code exists until those tasks go `[x]`.

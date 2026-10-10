@@ -27,7 +27,12 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from app.agents.manager import AgentManager
+from app.agents.registry import AgentRegistry
 from app.config import Settings, get_settings
+from app.core.orchestrator import Orchestrator
+from app.core.planner import Planner
+from app.core.router import IntentRouter
 from app.database.redis_client import RedisClient, create_redis_client
 from app.database.repositories import (
     AgentLogRepository,
@@ -63,6 +68,8 @@ from app.database.session import (
 )
 from app.events.bus import EventBus
 from app.events.handlers import PersistEvents
+from app.models.base import ModelProvider
+from app.models.router import ModelRouter
 from app.observability.health import (
     HealthService,
     check_filesystem,
@@ -70,6 +77,9 @@ from app.observability.health import (
     check_postgresql,
     check_redis,
 )
+from app.tasks.executor import StepRunner, TaskExecutor
+from app.tasks.manager import TaskManager
+from app.tools.registry import ToolRegistry
 
 
 class Container:
@@ -92,6 +102,8 @@ class Container:
         redis: RedisClient | None = None,
         health: HealthService | None = None,
         events: EventBus | None = None,
+        agents: AgentRegistry | None = None,
+        tools: ToolRegistry | None = None,
     ) -> None:
         self._settings = settings
         self._engine = engine
@@ -100,6 +112,9 @@ class Container:
         self._events = events
         self._persist: PersistEvents | None = None
         self._health = health or HealthService()
+        self._agents = agents
+        self._tools = tools
+        self._model_router: ModelRouter | None = None
         self._register_default_checks()
 
     # --------------------------------------------------------------------- #
@@ -134,6 +149,30 @@ class Container:
         return self._redis
 
     @property
+    def agents(self) -> AgentRegistry:
+        """Return the spawnable agent types (T043).
+
+        Empty by default: §40 keeps the concrete kinds out of the core, so the
+        deployment registers them at startup (T045+). The property builds the
+        registry on first access so a test can inject a populated one without
+        constructing the whole graph.
+        """
+        if self._agents is None:
+            self._agents = AgentRegistry()
+        return self._agents
+
+    @property
+    def tools(self) -> ToolRegistry:
+        """Return the tool instances (T035).
+
+        Empty by default, for the same §59.22 reason: the registry is the
+        inventory a deployment fills, not a catalogue the core invents.
+        """
+        if self._tools is None:
+            self._tools = ToolRegistry()
+        return self._tools
+
+    @property
     def health(self) -> HealthService:
         """Return the health service with the default checks registered."""
         return self._health
@@ -154,6 +193,52 @@ class Container:
                 max_subscribers=config.max_subscribers,
             )
         return self._events
+
+    @property
+    def model_router(self) -> ModelRouter:
+        """Return the model router, building it with configured providers on first access.
+
+        The router is created with the container's session factory so it can
+        record usage to the database when ``MODEL_USAGE_TRACKING`` is enabled.
+        """
+        if self._model_router is None:
+            router_settings = self.settings.model_router
+            providers: list[ModelProvider] = []
+
+            # Local provider (Ollama) — always registered, availability checked lazily
+            from app.models.ollama import OllamaProvider
+
+            providers.append(OllamaProvider(settings=self.settings.ollama))
+
+            # Cloud providers — registered only when configured (lazy key check)
+            if self.settings.providers.openai_configured:
+                from app.models.openai import OpenAIProvider
+
+                providers.append(OpenAIProvider(settings=self.settings.providers))
+
+            if self.settings.providers.gemini_configured:
+                from app.models.gemini import GeminiProvider
+
+                providers.append(GeminiProvider(settings=self.settings.providers))
+
+            if self.settings.providers.anthropic_configured:
+                from app.models.anthropic import AnthropicProvider
+
+                providers.append(AnthropicProvider(settings=self.settings.providers))
+
+            self._model_router = ModelRouter(
+                providers,
+                settings=router_settings,
+                bus=self.events,
+                health_ttl=float(router_settings.health_refresh),
+                circuit_threshold=3,
+                circuit_cooldown=30.0,
+                max_in_flight=None,
+                resource_guard=None,
+                session_factory=self.session_factory,
+            )
+
+        return self._model_router
 
     # --------------------------------------------------------------------- #
     # Lifespan
@@ -359,3 +444,67 @@ class Container:
 
     def get_uuid_repository(self, session: AsyncSession) -> UuidRepository:
         return UuidRepository(session)
+
+    # --------------------------------------------------------------------- #
+    # Service factories (session-bound, like the repositories above)
+    # --------------------------------------------------------------------- #
+    def get_task_manager(self, session: AsyncSession) -> TaskManager:
+        """Return the task manager (T039) bound to the session's unit of work.
+
+        A manager rather than a repository because every status write must
+        consult the T038 state machine first; the repositories stay the
+        query layer underneath it. Like them it never commits — the caller
+        owns the unit of work.
+        """
+        return TaskManager(session)
+
+    def get_agent_manager(self, session: AsyncSession) -> AgentManager:
+        """Return the agent manager (T044) bound to the session's unit of work.
+
+        Built from the container's registry, so the manager can only spawn
+        types this deployment declared (T043), and the shared bus, so its
+        ``AGENT_*`` events reach the same subscribers as everything else. Like
+        the repositories it never commits — the caller owns the unit of work.
+        """
+        return AgentManager(session, agents=self.agents, events=self.events)
+
+    def get_task_executor(
+        self,
+        session: AsyncSession,
+        *,
+        run_step: StepRunner,
+    ) -> TaskExecutor:
+        """Return the task executor (T041) bound to the session's unit of work.
+
+        The `run_step` runner is injected rather than built here: performing a
+        step is the agent runtime's job (T042+), and the executor stays pure
+        orchestration. The bus is the container's shared one, so the executor's
+        `TASK_*` events reach the same subscribers as everything else.
+        """
+        return TaskExecutor(session, events=self.events, run_step=run_step)
+
+    def get_orchestrator(
+        self,
+        session: AsyncSession,
+        *,
+        router: IntentRouter,
+        planner: Planner,
+        agents: AgentRegistry,
+    ) -> Orchestrator:
+        """Return the Core orchestrator (T049) bound to the session's unit of work.
+
+        The router, planner and agent registry are passed in rather than built
+        here, for the same reason `get_task_executor` takes its `run_step`: the
+        routing rules (T047), planning strategies (T048) and agent types (T043)
+        are declarations the running app owns — the container wires the pieces,
+        it does not invent policy (§40 keeps the kinds on the agents). The bus
+        is the container's shared one, so the plan, task and agent events reach
+        the same subscribers as everything else.
+        """
+        return Orchestrator(
+            session,
+            router=router,
+            planner=planner,
+            agents=agents,
+            events=self.events,
+        )

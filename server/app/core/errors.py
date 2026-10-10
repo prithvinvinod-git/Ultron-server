@@ -729,6 +729,24 @@ class AgentNotFoundError(NotFoundError):
         super().__init__("agent", agent_id)
 
 
+class AgentTypeNotFoundError(NotFoundError):
+    """A requested agent *type* (the §6 registry key) is unknown.
+
+    Distinct from :class:`AgentNotFoundError`, which names a missing agent
+    *instance*. The registry answers "is 'coding' a type we can spawn?"; the
+    manager answers "does agent a-1 exist?". Both surface as
+    ``AGENT_NOT_FOUND``/404 — what a client needs to know — and the resource
+    label tells it which was asked about.
+    """
+
+    code = ErrorCode.AGENT_NOT_FOUND
+    http_status = 404
+
+    def __init__(self, agent_type: str) -> None:
+        super().__init__("agent type", agent_type)
+        self.agent_type = agent_type
+
+
 class WorkspaceError(UltronError):
     code = ErrorCode.WORKSPACE_ERROR
     http_status = 500

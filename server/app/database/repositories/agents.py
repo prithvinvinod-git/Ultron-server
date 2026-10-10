@@ -171,6 +171,20 @@ class AgentRepository(UuidRepository[Agent]):
         statement = select(Agent).where(Agent.status == status).order_by(Agent.created_at)
         return await self._fetch_all(apply_limit(apply_offset(statement, offset), limit))
 
+    async def list_all(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[Agent]:
+        """Return every agent, newest first, bounded by ``limit``.
+
+        The unfiltered read behind ``GET /agents`` when the caller names no
+        status.
+        """
+        statement = select(Agent).order_by(Agent.created_at.desc())
+        return await self._fetch_all(apply_limit(apply_offset(statement, offset), limit))
+
     async def count_by_status(self) -> dict[str, int]:
         """Return an agent count per status, for a health endpoint.
 
