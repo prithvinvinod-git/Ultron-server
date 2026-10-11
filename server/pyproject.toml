@@ -101,7 +101,7 @@ packages = ["app"]
 line-length = 100
 target-version = "py312"
 src = ["."]
-extend-exclude = ["migrations/versions", ".venv"]
+extend-exclude = ["migrations/versions", ".venv", "tests/fixtures/sample_repo"]
 
 [tool.ruff.lint]
 select = [
@@ -168,7 +168,7 @@ disallow_incomplete_defs = true
 no_implicit_optional = true
 check_untyped_defs = true
 plugins = ["pydantic.mypy"]
-exclude = ["^migrations/versions/", "^\\.venv/"]
+exclude = ["^migrations/versions/", "^\\.venv/", "^tests/fixtures/sample_repo/"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -201,6 +201,7 @@ check_untyped_defs = false
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+norecursedirs = ["tests/fixtures/sample_repo", ".*", "build", "dist", ".venv"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

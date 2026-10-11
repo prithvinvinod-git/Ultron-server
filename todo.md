@@ -4,9 +4,13 @@ Every known unfinished thing, in the order it should be dealt with. Nothing here
 is lost in `tasks.md` or `server_arc.md`; this file is the short list of what is
 *not done* and what only the author can do.
 
-Last updated 2026-10-11: T080 committed (Phase 4 opened). See section J; next
-task is T081 (`app/agents/coding/engine.py`). Not yet committed: nothing beyond
-T080 in Phase 4.
+Last updated 2026-10-11: **Phase 4 complete** — T085 (sample repo), T086 (Phase-4
+e2e suite) and T087 (phase gate) are done. The `CodingAgent` now runs end to end
+against a real sample repository and verifies. Full gate green: lint and type
+check clean over **187 files**, `test.ps1 -All` → **1922 passed** (unit +
+integration + e2e). All of T081–T087 is uncommitted (only T080 is committed).
+Next: commit Phase 4 if the author wants, then start **Phase 5 — Tool runtime**
+(T090 filesystem tools). See section J.
 
 ## Platform, in one line
 
@@ -440,6 +444,63 @@ spec; these are the open questions to resolve before the deployment phase
 
 ## J. Session progress report (2026-10-10)
 
+**Update 2026-10-11 — Phase 4 COMPLETE (T085-T087 done):** 71 of 361 T-tasks now
+`[x]` (290 `[ ]`; T025 still `DEFERRED`, no Docker). **T085**
+`server/tests/fixtures/sample_repo/` is a real, minimal project (`calculator.py`
+with add/subtract, `test_calculator.py`, `README.md`, `requirements.txt`) with no
+committed `.git` — the test copies it and `git init -b main` + commits, so the
+fixture stays plain files rather than a submodule. **T086**
+`server/tests/e2e/test_phase4_coding.py` (**5 tests**, real git, skip cleanly
+without git) is the phase-gate executable: it copies + initialises + registers the
+fixture, a real `WorkspaceManager` clones it, and the engine is the test
+interpreter running an OpenCode stand-in script — real git, real isolated clone,
+real subprocess, real verification. Covers end-to-end (write `feature.py` + a
+test, run the suite → `SUCCESS`, "3 passed"), engine cwd == workspace, timeout →
+`OperationTimeoutError`, workspace/source isolation, and cleanup. **T087**
+verification: `scripts/lint.ps1` → **lint and type check clean over 187 files**;
+`scripts/test.ps1 -All` → **1922 passed** (unit + integration + e2e). Supporting
+change: `tests/fixtures/sample_repo` is excluded from ruff/mypy and pytest
+collection so the sample stays an external-looking project. All of T081–T087 is
+uncommitted (only T080 is committed). Next: Phase 5 — tool runtime (T090).
+
+**Update 2026-10-11 — T083 + T084 done:** 68 of 361 T-tasks now `[x]` (293
+`[ ]`). `app/agents/coding/agent.py` — the `CodingAgent` (§8): injects the
+`CodingEngine` interface (never OpenCode), a `WorkspaceManager` and an optional
+`EventBus`; `run(context)` does inspect → plan → engine-run (each `CodingEvent`
+republished as an ephemeral `TASK_PROGRESS`) → verify → report; typed errors
+pass through, others wrap in `AgentError`; no self-transition. And
+`app/agents/coding/verify.py` (T084) — pure `verify_coding_result` mapping the
+§9 exit code + expected files to `VerificationOutcome` (FAILED / UNVERIFIED /
+SUCCESS / PARTIAL). Tests: `test_coding_agent.py` (**14**) + `test_coding_verify.py`
+(**8**); Phase 4 now has **65** unit tests across four suites. Next is **T085**
+(`server/tests/fixtures/sample_repo/`).
+
+**Update 2026-10-11 (earlier) — T083 recon:** the decisions above were fixed
+after reading the Agent ABC, `EventBus.publish`, the `WorkspaceManager` API and
+`VerificationOutcome`; `verify.py` was written before `agent.py` because the
+agent's report carries the verification outcome.
+
+**Update 2026-10-11 — T082 done:** 66 of 361 T-tasks now `[x]` (295 `[ ]`;
+T025 still `DEFERRED`, no Docker). `app/agents/coding/opencode_engine.py` — the
+§9 OpenCode adapter over the T081 interface: configurable exe/model/provider,
+literal argv with the prompt last, streamed + captured output (bounded,
+`truncated`), non-zero exit returned not raised, `wait_for` timeout →
+`OperationTimeoutError`, `stop`/cancellation → reaped termination →
+`OperationCancelledError`, `_settle` terminate→grace→kill, `env` overlaid on
+`os.environ` with `PYTHONPATH` scrubbed (§9 isolation), and
+`from_settings(OpenCodeSettings)`. Tests: `tests/unit/test_opencode_engine.py`
+(**19**, real-subprocess via `sys.executable -c`). Next task is T083
+(`app/agents/coding/agent.py`).
+
+**Update 2026-10-11 — T081 done:** 65 of 361 T-tasks now `[x]` (296 `[ ]`;
+T025 still `DEFERRED`, no Docker). Phase 4's abstn (§8) is in:
+`app/agents/coding/engine.py` (`CodingEngine` ABC — declaration-time guards
+`name`/async `run`, abstract `run(task, *, on_event, stop)`; frozen `CodingTask`
+with a mandatory explicit workspace and validated relative expected files;
+`CodingEvent`, `CodingRunResult`, `dispatch_event`) plus its package
+`__init__.py` and `tests/unit/test_coding_engine.py` (**24 tests**). Uncommitted
+with T081's evidence; next task is T082 (`app/agents/coding/opencode_engine.py`).
+
 **Update 2026-10-11 — T080 committed:** 64 of 361 T-tasks now `[x]` (297 `[ ]`;
 T025 still `DEFERRED`, no Docker). Phase 4 is open: `app/workspaces/manager.py`
 is committed along with `tests/unit/test_workspaces.py`. Branch
@@ -458,36 +519,29 @@ T069, and the phase verification T070. Branch `feature/phase-1-foundation`, HEAD
 are committed**; T068, T069, T070 and this todo refresh are the uncommitted
 working-tree changes.
 
-### In progress: Phase 4 — coding agent (T080 onward)
+### Phase 4 — coding agent (T080 onward) — COMPLETE
 
-Phase 3 is complete: **T060-T070** are done (see tasks.md:539-554). Phase 4
-opens with **T080** — `app/workspaces/manager.py` (register projects, locate
-repos, create isolated workspaces, branches/worktrees, status, diffs, cleanup,
-`server_arc.md` §46/§59.3/§59.4).
+Phase 4 is complete: **T080-T087** are all `[x]` in tasks.md. `app/workspaces/manager.py`
+(T080, committed) and `app/agents/coding/{engine,opencode_engine,verify,agent}.py`
+(T081-T084) are written, with T085 (sample repo), T086 (Phase-4 e2e) and T087
+(gate) done; the phase gate holds (see updates at the top of this section).
 
-**T080 DONE (`[x]` is in tasks.md):** `app/workspaces/manager.py` is committed —
-frozen `Project`/`Workspace`/`GitResult` dataclasses, a runtime-checkable
-`GitRunner` Protocol + `SubprocessGitRunner` (literal argv →
-`asyncio.create_subprocess_exec`, never a shell), and the `WorkspaceManager`
-covering the six §46 responsibilities with a mandatory allow-list guard
-(`_ensure_allowed`, resolved paths, re-checked before clone and cleanup).
-Two lint rules were learned on the way: **ASYNC109** (async functions must not
-have a parameter named `timeout` — used `timeout_seconds`) and **UP041** (use
-builtin `TimeoutError`, not `asyncio.TimeoutError`). A PowerShell `-replace`
-edit corrupted the first draft (encoding + line collapse; ruff parse error) —
-it was rewritten from scratch with the write tool. **Standing rule: no file
-edits through PowerShell.** Tests: `tests/unit/test_workspaces.py` (**24**) —
-recording-runner unit tests + 2 real-git integration tests (skipped without
-git). Gate: lint clean over **178 files**, full suite **1852 passed**.
-
-**T080 not yet marked `[x]`:** `tests/unit/test_workspaces.py` exists but its
-first draft is being cleaned up — it contains leftover test placeholders
-(`pytest.looming`, in-function `asyncio.run` calls, a stray `# noqa: B018`)
-and has not passed a single run yet. Plan: rewrite it cleanly using
-`asyncio_mode = "auto"` (async tests directly, no `asyncio.run`), cover the six
-responsibilities with a recording runner plus real-`git` integration tests
-(truthfully skipped when git is absent), then run `scripts/test.ps1` and mark
-T080 `[x]` with the evidence in tasks.md.
+**T081 DONE (`[x]` is in tasks.md):** `app/agents/coding/engine.py` plus its
+package `__init__.py` and `tests/unit/test_coding_engine.py` (**24 tests**) are
+written. The §8 abstraction: `CodingEngine` ABC with declaration-time guards
+(`name` non-empty, async `run` — the same wall T042 builds for agents), an
+abstract `run(task, *, on_event, stop)` that streams `STARTED`/`OUTPUT`/
+terminal `CodingEvent`s, and the value objects the agent and its verification
+share: frozen `CodingTask` (mandatory explicit `workspace`; expected `files`
+validated relative — absolute/`..`/empty refused), `CodingEvent` (UTC
+timestamped), `CodingRunResult` (exit_code, bounded `output`, `truncated`,
+`ran_seconds`, `output_text`). Contract rules fixed: nonzero exit is *returned,
+never raised* (verification T084 decides), timeouts/cancellation/missing
+workspace raise typed errors, `stop`-event + `CancelledError` stay cooperative.
+ruff + mypy clean. **Phase 4 is now complete:** T085 (sample repo), T086 (5
+Phase-4 e2e tests) and T087 (gate: lint clean 187 files, `test.ps1 -All` 1922
+passed) are done — see updates at the top of this section. Next phase is **Phase
+5 — tool runtime** (T090 filesystem tools). The T080 block below is historical.
 
 One Phase 3 item is a **server-only** check tracked here (below): running with
 `OLLAMA_URL` unreachable and an online provider key set to confirm §33

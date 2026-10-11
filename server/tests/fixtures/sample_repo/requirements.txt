@@ -1,0 +1,2 @@
+# No third-party dependencies: the sample repository runs on the standard
+# library plus pytest, which the server's test environment already provides.
