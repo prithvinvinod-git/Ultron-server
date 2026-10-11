@@ -70,6 +70,7 @@ from app.events.bus import EventBus
 from app.events.handlers import PersistEvents
 from app.models.base import ModelProvider
 from app.models.router import ModelRouter
+from app.notifications import NotificationService, build_notification_service
 from app.observability.health import (
     HealthService,
     check_filesystem,
@@ -79,7 +80,10 @@ from app.observability.health import (
 )
 from app.tasks.executor import StepRunner, TaskExecutor
 from app.tasks.manager import TaskManager
+from app.tools.bootstrap import build_tool_registry
+from app.tools.filesystem.sandbox import FilesystemSandbox
 from app.tools.registry import ToolRegistry
+from app.workspaces.manager import SubprocessGitRunner
 
 
 class Container:
@@ -104,6 +108,9 @@ class Container:
         events: EventBus | None = None,
         agents: AgentRegistry | None = None,
         tools: ToolRegistry | None = None,
+        sandbox: FilesystemSandbox | None = None,
+        git_runner: SubprocessGitRunner | None = None,
+        notifications: NotificationService | None = None,
     ) -> None:
         self._settings = settings
         self._engine = engine
@@ -114,6 +121,9 @@ class Container:
         self._health = health or HealthService()
         self._agents = agents
         self._tools = tools
+        self._sandbox = sandbox
+        self._git_runner = git_runner
+        self._notifications = notifications
         self._model_router: ModelRouter | None = None
         self._register_default_checks()
 
@@ -162,14 +172,43 @@ class Container:
         return self._agents
 
     @property
-    def tools(self) -> ToolRegistry:
-        """Return the tool instances (T035).
+    def sandbox(self) -> FilesystemSandbox:
+        """Return the filesystem boundary every path-touching tool shares (T090).
 
-        Empty by default, for the same §59.22 reason: the registry is the
-        inventory a deployment fills, not a catalogue the core invents.
+        Built from ``WorkspaceSettings`` so §59.4's resolve-before-trust rule has
+        a single, container-wide source of allowed roots.
+        """
+        if self._sandbox is None:
+            self._sandbox = FilesystemSandbox(self.settings.workspaces)
+        return self._sandbox
+
+    @property
+    def git_runner(self) -> SubprocessGitRunner:
+        """Return the git runner the git tools share (T092)."""
+        if self._git_runner is None:
+            self._git_runner = SubprocessGitRunner()
+        return self._git_runner
+
+    @property
+    def notifications(self) -> NotificationService:
+        """Return the notification facade (T096, spec §45)."""
+        if self._notifications is None:
+            self._notifications = build_notification_service(self.settings.notifications)
+        return self._notifications
+
+    @property
+    def tools(self) -> ToolRegistry:
+        """Return the registered tools (T035/T097).
+
+        Populated with every default tool family (filesystem, git, terminal,
+        python, web, system) at first access; each tool carries its declared
+        permission level, so §16 can enforce it. A deployment may inject its own
+        registry to override the inventory.
         """
         if self._tools is None:
-            self._tools = ToolRegistry()
+            self._tools = build_tool_registry(
+                self.settings, sandbox=self.sandbox, git_runner=self.git_runner
+            )
         return self._tools
 
     @property

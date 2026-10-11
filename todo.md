@@ -4,13 +4,14 @@ Every known unfinished thing, in the order it should be dealt with. Nothing here
 is lost in `tasks.md` or `server_arc.md`; this file is the short list of what is
 *not done* and what only the author can do.
 
-Last updated 2026-10-11: **Phase 4 complete** — T085 (sample repo), T086 (Phase-4
-e2e suite) and T087 (phase gate) are done. The `CodingAgent` now runs end to end
-against a real sample repository and verifies. Full gate green: lint and type
-check clean over **187 files**, `test.ps1 -All` → **1922 passed** (unit +
-integration + e2e). All of T081–T087 is uncommitted (only T080 is committed).
-Next: commit Phase 4 if the author wants, then start **Phase 5 — Tool runtime**
-(T090 filesystem tools). See section J.
+Last updated 2026-10-11: **Phase 5 tool runtime was built out** — T090–T098 done
+(filesystem/terminal/git/python/web/system tool families, notifications §45,
+container registration + the Phase-5 runtime test suite in
+`server/tests/unit/test_tool_runtime.py`, **8 passed**). Full unit suite: **2001
+passed, 2 symlink-skipped**. All of Phase 5 is uncommitted (only Phase 4's
+T080–T087 is committed as `c1eb5e4`). Next: T099 — the phase gate
+(`scripts/lint.ps1` + `scripts/test.ps1 -All`), then Phase 6 at the author's go.
+See section J.
 
 ## Platform, in one line
 
@@ -443,6 +444,28 @@ spec; these are the open questions to resolve before the deployment phase
 ---
 
 ## J. Session progress report (2026-10-10)
+
+**Update 2026-10-11 — Phase 5 TOOL RUNTIME (T090–T098 done):** **T090**
+filesystem tools (`FilesystemSandbox` + read/write/list/search/delete,
+**32+2 tests**. **T091** terminal tools (`terminal.run`, literal-argv no-shell
+`create_subprocess_exec`, allow-list deny-by-default, `OperationTimeoutError`,
+**10 tests**). **T092** git tools (19 structured tools across SAFE / CONTROLLED /
+EXPLICIT-AUTHORIZATION tiers, literal argv, `DESTRUCTIVE`+`IRREVERSIBLE`+`audit`
+for push/reset/clean/delete_branch/rebase). **T093** python tool (`python.run`,
+`EXECUTE_PROGRAMS`, **6 tests**). **T094** web tool (`web.fetch`, SSRF guard
+`SsrfBlockedError`, manual redirect re-check, bounded read, **11 tests**).
+**T095** system tools (`system.cpu/.../docker`, READ_ONLY, psutil via
+`to_thread`, GPU/Docker fail-soft, **9 tests**). **T096** notifications (§45,
+log + webhook providers, `build_notification_service`, **8 tests**).
+**T097/T098**: `app/tools/bootstrap.py` (`build_tool_registry`) + `container.py`
+now wire every family (36 tools) with declared permission levels into the
+pipeline; `server/tests/unit/test_tool_runtime.py` (**8 passed**) covers the
+whole inventory, the §14 contract, §59.3 EXPLICIT git declarations, §66.17
+confirmation, below-level denial before execution, and a workspace escape
+refused through `ToolExecutor`. Full unit suite: **2001 passed, 2 skipped**.
+Shared `app/tools/arguments.py` (`as_int/as_bool/as_str`). Remaining: **T099**
+the phase gate. Everything since T081 is uncommitted (Phase 4 committed as
+`c1eb5e4`; `feature/phase-1-foundation`).
 
 **Update 2026-10-11 — Phase 4 COMPLETE (T085-T087 done):** 71 of 361 T-tasks now
 `[x]` (290 `[ ]`; T025 still `DEFERRED`, no Docker). **T085**
