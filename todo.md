@@ -4,8 +4,9 @@ Every known unfinished thing, in the order it should be dealt with. Nothing here
 is lost in `tasks.md` or `server_arc.md`; this file is the short list of what is
 *not done* and what only the author can do.
 
-Last updated during the T023 gate pass: the §64/§65/§66 blocks are appended to
-`server_arc.md` + `tasks.md` (T330–T394, D017–D031, cross-checked, uncommitted).
+Last updated 2026-10-11: T080 committed (Phase 4 opened). See section J; next
+task is T081 (`app/agents/coding/engine.py`). Not yet committed: nothing beyond
+T080 in Phase 4.
 
 ## Platform, in one line
 
@@ -78,6 +79,7 @@ only the server can close:
 |---|---|
 | `/health` returning healthy for a **real** PostgreSQL | testable here with doubles, which proves the 200/503 logic but not that it reports `true` against a live store |
 | `/ready` degraded path for a **real** unreachable Redis/Ollama | no Redis or Ollama is installed, by policy |
+| Phase 3 §33 degradation **live** — `OLLAMA_URL` unreachable + an online provider key set, call the router, confirm it answers from the cloud (T070) | no live Ollama or online provider on this machine; T069 proves the path with `respx` only |
 | Uvicorn / ASGI server startup, signal handling, graceful shutdown | needs a bound port |
 | `/events` SSE stream (T023) end to end — code exists (`277aac0`), never served live | needs a bound port |
 | T027 "server starts", event stream works | same |
@@ -438,26 +440,99 @@ spec; these are the open questions to resolve before the deployment phase
 
 ## J. Session progress report (2026-10-10)
 
-**State at stop: 60 T-tasks `[x]` of 361 defined (301 `[ ]` remaining; T025
+**Update 2026-10-11 — T080 committed:** 64 of 361 T-tasks now `[x]` (297 `[ ]`;
+T025 still `DEFERRED`, no Docker). Phase 4 is open: `app/workspaces/manager.py`
+is committed along with `tests/unit/test_workspaces.py`. Branch
+`feature/phase-1-foundation`, committed through the T080 message below; the
+working tree now carries only the T081+ next steps.
+
+**State at stop: 63 T-tasks `[x]` of 361 defined (298 `[ ]` remaining; T025
 `DEFERRED` no Docker). Phase 2 (T030-T053) is complete and verified locally;
-Phase 3 (model system) is under way — T060 (provider ABC + vocabulary), the four
-adapters T061-T064 (Ollama, OpenAI, Gemini, Anthropic), the scripted fake
-provider T065, the model router T066, and **model usage recording T067 done.**
-Branch `feature/phase-1-foundation`, HEAD `8ed6a4b` "T033/34 not finished"
-pushed to origin; **T033-T053 + T060-T067 are written, tested and marked but NOT yet
-committed**, and the §67/§68 documentation addendum (appended to `server_arc.md`
-and `tasks.md`, tasks T395-T491 + decisions D032-D039) is likewise uncommitted.
-Working tree has uncommitted changes.
+**Phase 3 (model system, T060-T070) is complete and verified locally** — the
+provider ABC + vocabulary T060, the four adapters T061-T064 (Ollama, OpenAI,
+Gemini, Anthropic), the scripted fake provider T065, the model router T066,
+model usage recording T067, the tool-calling loop T068, the composition suite
+T069, and the phase verification T070. Branch `feature/phase-1-foundation`, HEAD
+`cb6012e` "feat: Phase 2 runtime (T030-T053) and Phase 3 model system
+(T060-T067)" — **Phase 2 (T030-T053) and the Phase 3 model system through T067
+are committed**; T068, T069, T070 and this todo refresh are the uncommitted
+working-tree changes.
 
-### Next up: Phase 3 — model system (T068 onward)
+### In progress: Phase 4 — coding agent (T080 onward)
 
-Phase 3 (`server_arc.md` §20-§21, tasks.md:539-551 "Phase 3 — Model system") is
-under way: **T060-T067** are done (see tasks.md). The next task is **T068**
-wire the model-driven tool-calling loop into the agent base, then Phase 3 tests
-(T069) and the Phase 3 verification (T070).
+Phase 3 is complete: **T060-T070** are done (see tasks.md:539-554). Phase 4
+opens with **T080** — `app/workspaces/manager.py` (register projects, locate
+repos, create isolated workspaces, branches/worktrees, status, diffs, cleanup,
+`server_arc.md` §46/§59.3/§59.4).
+
+**T080 DONE (`[x]` is in tasks.md):** `app/workspaces/manager.py` is committed —
+frozen `Project`/`Workspace`/`GitResult` dataclasses, a runtime-checkable
+`GitRunner` Protocol + `SubprocessGitRunner` (literal argv →
+`asyncio.create_subprocess_exec`, never a shell), and the `WorkspaceManager`
+covering the six §46 responsibilities with a mandatory allow-list guard
+(`_ensure_allowed`, resolved paths, re-checked before clone and cleanup).
+Two lint rules were learned on the way: **ASYNC109** (async functions must not
+have a parameter named `timeout` — used `timeout_seconds`) and **UP041** (use
+builtin `TimeoutError`, not `asyncio.TimeoutError`). A PowerShell `-replace`
+edit corrupted the first draft (encoding + line collapse; ruff parse error) —
+it was rewritten from scratch with the write tool. **Standing rule: no file
+edits through PowerShell.** Tests: `tests/unit/test_workspaces.py` (**24**) —
+recording-runner unit tests + 2 real-git integration tests (skipped without
+git). Gate: lint clean over **178 files**, full suite **1852 passed**.
+
+**T080 not yet marked `[x]`:** `tests/unit/test_workspaces.py` exists but its
+first draft is being cleaned up — it contains leftover test placeholders
+(`pytest.looming`, in-function `asyncio.run` calls, a stray `# noqa: B018`)
+and has not passed a single run yet. Plan: rewrite it cleanly using
+`asyncio_mode = "auto"` (async tests directly, no `asyncio.run`), cover the six
+responsibilities with a recording runner plus real-`git` integration tests
+(truthfully skipped when git is absent), then run `scripts/test.ps1` and mark
+T080 `[x]` with the evidence in tasks.md.
+
+One Phase 3 item is a **server-only** check tracked here (below): running with
+`OLLAMA_URL` unreachable and an online provider key set to confirm §33
+degradation live.
 
 ### Done this session (continuation from 2026-10-08)
 
+- **T070 `[x]`** — **Phase 3 verification**: verified locally that §6's Phase 3
+  scope (server_arc.md §20-§21) is fully implemented and tested — **215 Phase 3
+  tests** across nine suites (T060 base 17, T061 Ollama 26, T062 OpenAI 29, T063
+  Gemini 29, T064 Anthropic 30, T065 fake 13, T066 router 28, T068 loop 18, T069
+  composition 25) — and that the gate ("works with only Ollama configured; no
+  crash when unavailable") holds. **Local half closed** by T069's only-Ollama +
+  unreachable → retryable `LocalModelUnavailableError` (no crash); the `REVISED`
+  **online-provider half closed** by T069's Ollama-unreachable → OpenAI-fallback
+  test. Full suite **1828 passed**, lint clean over **176 files**, mypy clean.
+  Server only: run with `OLLAMA_URL` unreachable + an online key to confirm §33
+  live (tracked below). Evidence: tasks.md:551.
+
+- **T069 `[x]`** — `server/tests/unit/test_phase3_models.py`: the Phase 3
+  composition suite (25) — a T052-pattern suite over *real* pieces. **Contract
+  conformance**: six T060 invariants asserted against all four real adapters
+  (Ollama/OpenAI/Gemini/Anthropic) via `respx`, parametrised over a `_Contract`
+  descriptor (build callable + wire coordinates) — declarations, normalised
+  `chat`, stream deltas + terminal chunk, `health()` available/unreachable, and
+  borrowed-client ownership. **Composition**: `router.stream` over real Ollama;
+  the §33 fallback (Ollama reachable but `chat` refuses → OpenAI answers); the
+  phase gate (only Ollama + both routes down → retryable
+  `LocalModelUnavailableError`, no crash); and the T068 loop driving a
+  `respx`-scripted Ollama tool call through `ToolExecutor.run` to a second-turn
+  answer. Evidence: `tests/unit/test_phase3_models.py` (**25**). Gates: lint
+  clean over **176 files**, mypy clean (176 source files), **1828 passed**
+  (1803 + 25).
+
+- **T068 `[x]`** — `app/agents/loop.py`: the model-driven tool-calling loop
+  (T068) — §16's model → tool → model cycle. `ToolCallingLoop` calls
+  `ModelRouter.complete` with advertised `ToolDefinition`s; each assistant
+  `tool_calls` turn is appended alongside one `tool` turn per call, executed
+  **through** `ToolExecutor.run` by name (never bypassing the pipeline). Typed
+  `UltronError`s are fed back as `{"ok": false, "error": ...}` so the model can
+  adjust (§33); ceilings `max_iterations`/`max_tool_calls` (validated positive)
+  stop with a recorded `StopReason`. `StopReason` + `ToolLoopResult` (transcript
+  + outcome); `definitions_from_registry` builds sorted, deep-copied
+  `ToolDefinition`s. Evidence: `tests/unit/test_agent_loop.py` (**18**). Gates:
+  lint clean over **175 files**, mypy clean, **1803 passed** (1785 + 18).
 - **T067 `[x]`** — Model usage recording: the router now records every model call
   to `model_usage` when `MODEL_USAGE_TRACKING` is enabled. Captures model, provider,
   status, tokens, cost, latency, request_id, and error detail. Streaming aggregates
