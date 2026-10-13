@@ -1,9 +1,8 @@
-"""`web.fetch` (T094, spec §31) — guarded HTTP fetch with text extraction.
+"""`web.fetch` (T094, spec §31) and `web.search` (T110) — web capabilities.
 
-The guard runs on the initial URL *and on every redirect hop*, because a public
-host may 308 to a private one; redirects are followed manually for exactly that
-reason. The body is read with a byte ceiling so a tool call can never pull an
-unbounded response into memory, and the result says whether it truncated.
+The fetch tool guards HTTP requests with SSRF protection, follows redirects with
+per-hop re-checks, and returns bounded text. The search tool delegates to a
+pluggable search provider so the LLM never makes HTTP calls directly.
 """
 
 from __future__ import annotations
@@ -21,6 +20,8 @@ from app.database.models import PermissionLevel, VerificationOutcome
 from app.tools.arguments import as_bool, as_int, as_str
 from app.tools.base import Reversibility, Tool
 from app.tools.web.extract import extract_text
+from app.tools.web.search_provider import SearchProvider
+from app.tools.web.search_tool import WebSearchTool
 from app.tools.web.ssrf import assert_url_allowed
 
 __all__ = ["WebFetchTool", "build_web_tools"]
@@ -140,6 +141,14 @@ async def _read_body(response: httpx.Response, limit: int) -> tuple[bytes, bool]
     return bytes(chunks), truncated
 
 
-def build_web_tools(settings: WebSettings) -> tuple[Tool, ...]:
-    """Construct the web tools bound to ``settings``."""
-    return (WebFetchTool(settings),)
+def build_web_tools(
+    settings: WebSettings, *, search_provider: SearchProvider | None = None
+) -> tuple[Tool, ...]:
+    """Construct the web tools bound to ``settings``.
+
+    If ``search_provider`` is provided, a `web.search` tool using it is included.
+    """
+    tools: list[Tool] = [WebFetchTool(settings)]
+    if search_provider is not None:
+        tools.append(WebSearchTool(search_provider))
+    return tuple(tools)

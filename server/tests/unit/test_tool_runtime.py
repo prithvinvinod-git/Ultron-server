@@ -70,6 +70,7 @@ _EXPECTED_TOOLS = frozenset(
         "terminal.run",
         "python.run",
         "web.fetch",
+        "web.search",
         "system.cpu",
         "system.memory",
         "system.disk",

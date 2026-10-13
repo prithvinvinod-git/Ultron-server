@@ -92,6 +92,64 @@ def _base_name(model: str) -> str:
     return model.split(":", 1)[0]
 
 
+#: The ``parameters`` of a Gemini function declaration is a proto ``Schema``, not
+#: arbitrary JSON Schema: any keyword outside this set is rejected with an HTTP 400
+#: ("Unknown name ..."). Tool authors write plain JSON Schema (``additionalProperties``,
+#: ``exclusiveMinimum``, ...), so the adapter filters each schema down to the fields
+#: the API actually accepts. Dropping a constraint only loosens the schema for the
+#: model; passing an unknown key would fail the entire request.
+_GEMINI_SCHEMA_KEYS = frozenset(
+    {
+        "type",
+        "format",
+        "title",
+        "description",
+        "nullable",
+        "enum",
+        "items",
+        "properties",
+        "required",
+        "minimum",
+        "maximum",
+        "minItems",
+        "maxItems",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "default",
+        "example",
+        "anyOf",
+        "propertyOrdering",
+    }
+)
+
+
+def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Filter a JSON Schema down to the keywords Gemini's ``Schema`` accepts.
+
+    Recurses through ``properties``, ``items`` and ``anyOf`` so nested schemas are
+    filtered too; ``properties`` keys are parameter names and are preserved as-is.
+    """
+    cleaned: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key not in _GEMINI_SCHEMA_KEYS:
+            continue
+        if key == "properties" and isinstance(value, dict):
+            cleaned[key] = {
+                name: _sanitize_schema(sub) if isinstance(sub, dict) else sub
+                for name, sub in value.items()
+            }
+        elif key == "items" and isinstance(value, dict):
+            cleaned[key] = _sanitize_schema(value)
+        elif key == "anyOf" and isinstance(value, list):
+            cleaned[key] = [
+                _sanitize_schema(item) if isinstance(item, dict) else item for item in value
+            ]
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 class GeminiProvider(ModelProvider):
     """The Google Gemini provider over the Generative Language REST API."""
 
@@ -202,7 +260,7 @@ class GeminiProvider(ModelProvider):
                         {
                             "name": tool.name,
                             "description": tool.description,
-                            "parameters": tool.parameters,
+                            "parameters": _sanitize_schema(tool.parameters),
                         }
                         for tool in request.tools
                     ]

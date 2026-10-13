@@ -81,6 +81,7 @@ from app.observability.health import (
 from app.tasks.executor import StepRunner, TaskExecutor
 from app.tasks.manager import TaskManager
 from app.tools.bootstrap import build_tool_registry
+from app.tools.browser import BrowserSessionManager
 from app.tools.filesystem.sandbox import FilesystemSandbox
 from app.tools.registry import ToolRegistry
 from app.workspaces.manager import SubprocessGitRunner
@@ -124,6 +125,7 @@ class Container:
         self._sandbox = sandbox
         self._git_runner = git_runner
         self._notifications = notifications
+        self._browser_sessions: BrowserSessionManager | None = None
         self._model_router: ModelRouter | None = None
         self._register_default_checks()
 
@@ -197,17 +199,33 @@ class Container:
         return self._notifications
 
     @property
+    def browser_sessions(self) -> BrowserSessionManager:
+        """Return the per-agent browser session manager (T111, spec §11).
+
+        Built from ``BrowserSettings``; the Playwright runtime is created lazily
+        by the manager on first use, so this is cheap and safe when the browser
+        subsystem is disabled (``BROWSER_ENABLED=false``).
+        """
+        if self._browser_sessions is None:
+            self._browser_sessions = BrowserSessionManager(self.settings.browser)
+        return self._browser_sessions
+
+    @property
     def tools(self) -> ToolRegistry:
         """Return the registered tools (T035/T097).
 
         Populated with every default tool family (filesystem, git, terminal,
-        python, web, system) at first access; each tool carries its declared
-        permission level, so §16 can enforce it. A deployment may inject its own
-        registry to override the inventory.
+        python, web, system) at first access; the browser family joins the
+        inventory only when ``BROWSER_ENABLED`` is set (T112). Each tool carries
+        its declared permission level, so §16 can enforce it. A deployment may
+        inject its own registry to override the inventory.
         """
         if self._tools is None:
             self._tools = build_tool_registry(
-                self.settings, sandbox=self.sandbox, git_runner=self.git_runner
+                self.settings,
+                sandbox=self.sandbox,
+                git_runner=self.git_runner,
+                browser=self.browser_sessions,
             )
         return self._tools
 
@@ -333,6 +351,8 @@ class Container:
             self._persist = None
         if self._events is not None:
             self._events.close()
+        if self._browser_sessions is not None:
+            await self._browser_sessions.shutdown()
         await self.redis.aclose()
         await dispose(self.engine)
 

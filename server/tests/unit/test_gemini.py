@@ -172,6 +172,43 @@ async def test_chat_builds_contents_tools_and_config() -> None:
 
 
 @respx.mock
+async def test_chat_strips_schema_keywords_gemini_rejects() -> None:
+    route = respx.post(GENERATE).mock(return_value=httpx.Response(200, json=_completion()))
+    provider = GeminiProvider(_settings())
+
+    await provider.chat(
+        _request(
+            tools=(
+                ToolDefinition(
+                    name="mock.echo",
+                    description="echo",
+                    parameters={
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "minLength": 1,
+                                "exclusiveMinimum": 0,
+                                "additionalProperties": False,
+                            },
+                            "recursive": {"type": "boolean", "default": False},
+                        },
+                        "required": ["path"],
+                    },
+                ),
+            ),
+        )
+    )
+
+    params = _json_body(route)["tools"][0]["functionDeclarations"][0]["parameters"]
+    assert "additionalProperties" not in params
+    assert params["required"] == ["path"]
+    assert params["properties"]["path"] == {"type": "string", "minLength": 1}
+    assert params["properties"]["recursive"] == {"type": "boolean", "default": False}
+
+
+@respx.mock
 async def test_chat_maps_assistant_tool_calls_and_tool_results() -> None:
     route = respx.post(GENERATE).mock(return_value=httpx.Response(200, json=_completion()))
     provider = GeminiProvider(_settings())

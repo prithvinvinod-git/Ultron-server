@@ -87,7 +87,7 @@ from app.core.permissions import PermissionManager
 from app.database.models import VerificationOutcome
 from app.events.bus import EventBus
 from app.events.types import EventType
-from app.observability.logging import get_logger
+from app.observability.logging import correlation, get_logger
 from app.security.audit import ACTOR_USER
 from app.security.permissions import PermissionRequest
 from app.tools.base import Reversibility, Tool
@@ -215,11 +215,17 @@ class ToolExecutor:
 
         started = perf_counter()
         try:
-            output = await asyncio.wait_for(
-                resolved.execute(validated),
-                timeout=resolved.timeout,
-            )
-            verification = await resolved.verify(output, validated)
+            # Bind the correlation ids for the duration of execution so a tool
+            # that needs ambient context (e.g. browser tools resolving their
+            # per-agent session) can read ``get_agent_id()``/``get_task_id()``.
+            # The context is copied into ``wait_for``'s task, so ``execute``
+            # sees it too.
+            with correlation(task_id=task_id, agent_id=agent_id):
+                output = await asyncio.wait_for(
+                    resolved.execute(validated),
+                    timeout=resolved.timeout,
+                )
+                verification = await resolved.verify(output, validated)
             if verification is VerificationOutcome.FAILED:
                 raise ToolVerificationError(
                     resolved.name,

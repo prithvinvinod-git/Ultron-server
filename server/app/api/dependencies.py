@@ -55,6 +55,7 @@ if TYPE_CHECKING:
         SessionRepository,
         UserRepository,
     )
+    from app.models.router import ModelRouter
     from app.observability.health import HealthService
     from app.tasks.manager import TaskManager
     from app.tools.registry import ToolRegistry
@@ -148,6 +149,17 @@ class ContainerProtocol(Protocol):
         as ``health``: the stream route needs the bus without importing the
         composition root, so a test can supply its own bus and drive real events
         through it.
+        """
+        ...
+
+    @property
+    def model_router(self) -> ModelRouter:
+        """The provider router, with its circuit breakers and usage tracking.
+
+        Read by the interactive chat route, which runs one agent turn inline.
+        Declared here for the same reason as ``events``: the route needs the
+        shared router the container already built, without importing the
+        composition root.
         """
         ...
 

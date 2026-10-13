@@ -184,7 +184,7 @@ def _include_routers(app: FastAPI) -> None:
     the complete list of routes the application exposes, and a missing entry is
     a visible omission instead of a silent one.
     """
-    from app.api.routes import agents, auth, events, health, tasks, tools
+    from app.api.routes import agents, auth, chat, events, health, tasks, tools
 
     app.include_router(auth.router)
     app.include_router(health.router)
@@ -192,6 +192,7 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(agents.router)
     app.include_router(tasks.router)
     app.include_router(tools.router)
+    app.include_router(chat.router)
 
 
 def _error_body(exc: UltronError) -> dict[str, Any]:
@@ -421,6 +422,20 @@ def create_app() -> FastAPI:
 
     # Include routers
     _include_routers(app)
+
+    # The bundled web interface. Mounted last so the API routes registered
+    # above always win; StaticFiles answers `/` with the page and every other
+    # unmatched path with a 404.
+    if settings.app.serve_ui:
+        from pathlib import Path
+
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount(
+            "/",
+            StaticFiles(directory=Path(__file__).parent / "static", html=True),
+            name="static",
+        )
 
     # `/health`, `/ready` and `/metrics` are served by the health router mounted
     # above. They used to also be defined inline here, after the mount -- which

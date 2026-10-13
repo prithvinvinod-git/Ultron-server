@@ -67,6 +67,7 @@ class AppSettings(BaseModel):
     shutdown_timeout: int = Field(default=30, ge=0, le=600)
     cors_origins: list[str] = Field(default_factory=list)
     allowed_hosts: list[str] = Field(default_factory=list)
+    serve_ui: bool = True
 
     @field_validator("cors_origins", "allowed_hosts", mode="before")
     @classmethod
@@ -422,6 +423,14 @@ class BrowserSettings(BaseModel):
     block_media: bool = True
 
 
+class ResearchSettings(BaseModel):
+    """Research agent settings (spec sections 10 and 59.10)."""
+
+    artifact_dir: str = "./data/research"
+    max_sources: int = Field(default=5, ge=1, le=50)
+    max_chars_per_source: int = Field(default=4000, ge=100)
+
+
 class ComputerNodeSettings(BaseModel):
     """Computer node gateway settings (spec sections 13, 42)."""
 
@@ -605,6 +614,7 @@ class Settings(BaseSettings):
     shutdown_timeout: Annotated[int, Field(alias="SHUTDOWN_TIMEOUT")] = 30
     cors_origins: Annotated[str, Field(alias="CORS_ORIGINS")] = ""
     allowed_hosts: Annotated[str, Field(alias="ALLOWED_HOSTS")] = ""
+    serve_ui: Annotated[bool, Field(alias="SERVE_UI")] = True
 
     jwt_secret: Annotated[SecretStr, Field(alias="JWT_SECRET")] = SecretStr(
         "CHANGE_ME_generate_a_random_secret"
@@ -755,6 +765,12 @@ class Settings(BaseSettings):
     browser_download_dir: Annotated[str, Field(alias="BROWSER_DOWNLOAD_DIR")] = "./data/downloads"
     browser_persist_profile: Annotated[bool, Field(alias="BROWSER_PERSIST_PROFILE")] = False
     browser_block_media: Annotated[bool, Field(alias="BROWSER_BLOCK_MEDIA")] = True
+
+    research_artifact_dir: Annotated[str, Field(alias="RESEARCH_ARTIFACT_DIR")] = "./data/research"
+    research_max_sources: Annotated[int, Field(alias="RESEARCH_MAX_SOURCES")] = 5
+    research_max_chars_per_source: Annotated[int, Field(alias="RESEARCH_MAX_CHARS_PER_SOURCE")] = (
+        4000
+    )
 
     computer_nodes_enabled: Annotated[bool, Field(alias="COMPUTER_NODES_ENABLED")] = True
     computer_node_token_ttl: Annotated[int, Field(alias="COMPUTER_NODE_TOKEN_TTL")] = 3600
@@ -1009,6 +1025,7 @@ class Settings(BaseSettings):
             shutdown_timeout=self.shutdown_timeout,
             cors_origins=self.cors_origins,
             allowed_hosts=self.allowed_hosts,
+            serve_ui=self.serve_ui,
         )
 
     @property
@@ -1204,6 +1221,14 @@ class Settings(BaseSettings):
             download_dir=self.browser_download_dir,
             persist_profile=self.browser_persist_profile,
             block_media=self.browser_block_media,
+        )
+
+    @property
+    def research(self) -> ResearchSettings:
+        return ResearchSettings(
+            artifact_dir=self.research_artifact_dir,
+            max_sources=self.research_max_sources,
+            max_chars_per_source=self.research_max_chars_per_source,
         )
 
     @property

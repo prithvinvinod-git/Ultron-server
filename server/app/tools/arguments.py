@@ -14,7 +14,7 @@ from typing import Any
 
 from app.core.errors import InvalidInputError
 
-__all__ = ["as_bool", "as_int", "as_str"]
+__all__ = ["as_bool", "as_int", "as_optional_int", "as_str"]
 
 
 def as_int(
@@ -34,6 +34,18 @@ def as_int(
     if minimum is not None and value < minimum:
         raise InvalidInputError(f"{name} must be at least {minimum}", details={name: value})
     return value
+
+
+def as_optional_int(value: Any, name: str, *, minimum: int | None = None) -> int | None:
+    """Return ``value`` as an int, or ``None`` when it is absent.
+
+    The distinction from :func:`as_int` is the absent case: there a missing
+    value either raises or takes a non-``None`` default, here it is a valid
+    ``None`` (an option that simply was not supplied, e.g. a per-call timeout).
+    """
+    if value is None:
+        return None
+    return as_int(value, name, minimum=minimum)
 
 
 def as_bool(value: Any, name: str, *, default: bool = False) -> bool:

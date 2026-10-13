@@ -296,7 +296,7 @@ class TestValidationErrorsDoNotEchoInput:
             username: str = Field(min_length=3)
             password: str = Field(min_length=8)
 
-        app = _build(monkeypatch)
+        app = _build(monkeypatch, SERVE_UI="false")
 
         @app.post("/probe")
         async def probe(payload: Payload) -> dict[str, str]:  # pragma: no cover - never runs
