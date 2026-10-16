@@ -1,5 +1,5 @@
 import logo from '@/assets/ultron-logo.png';
-import { Activity, Cpu, ShieldCheck, Zap } from 'lucide-react';
+import { Activity, Cpu, Mic, ShieldCheck, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const polar = (radius: number, angle: number) => ({ x: 300 + radius * Math.cos(angle * Math.PI / 180), y: 300 + radius * Math.sin(angle * Math.PI / 180) });
@@ -8,8 +8,8 @@ const arc = (radius: number, start: number, end: number) => {
   return `M${a.x},${a.y} A${radius},${radius} 0 ${end - start > 180 ? 1 : 0} 1 ${b.x},${b.y}`;
 };
 
-export function CoreDisplay({ online, paused, mode, onToggle }: { online: boolean; paused: boolean; mode: string; onToggle: () => void }) {
-  return <div className={`core-display ${online ? '' : 'core-offline'} ${paused ? 'motion-paused' : ''}`}>
+export function CoreDisplay({ online, paused, voice, mode, onToggleVoice }: { online: boolean; paused: boolean; voice: boolean; mode: string; onToggleVoice: () => void }) {
+  return <div className={`core-display ${online ? '' : 'core-offline'} ${paused ? 'motion-paused' : ''} ${voice ? 'voice-on' : ''}`}>
     <div className="core-coordinate coordinate-top">SYS.01 <span>NEURAL ORCHESTRATOR</span> 006.24</div>
     <svg className="core-art" viewBox="0 0 600 600" aria-hidden="true">
       <defs>
@@ -54,13 +54,25 @@ export function CoreDisplay({ online, paused, mode, onToggle }: { online: boolea
       <span className="core-eyebrow">ULTRON CORE</span>
       <div className="core-state">{online ? 'ONLINE' : 'STANDBY'}</div>
       <div className="core-status"><span className={`status-dot ${online ? '' : 'inactive'}`} />{online ? 'All systems operational' : 'Core is suspended'}</div>
-      <Button variant="ghost" className="core-action" onClick={onToggle} aria-label={online ? 'Suspend core' : 'Activate core'}><Zap />{online ? 'A.C.T. ACTIVE' : 'ACTIVATE CORE'}</Button>
+      <Button variant="ghost" className={`core-action core-voice${voice ? ' is-listening' : ''}`} onClick={onToggleVoice} aria-pressed={voice} aria-label={voice ? 'Stop voice mode' : 'Start voice mode'}><Mic />{voice ? 'VOICE ACTIVE' : 'VOICE MODE'}</Button>
       <div className="core-mode">{mode.toUpperCase()} PROTOCOL</div>
     </div>
     <div className="core-coordinate coordinate-bottom"><span>ENCRYPTED CONNECTION</span><ShieldCheck size={12} /> AES-256</div>
   </div>;
 }
 
-export function CoreMetrics() {
-  return <div className="core-metrics">{[{ icon: Cpu, value: '12', unit: '%', label: 'CPU LOAD' }, { icon: Activity, value: '32', unit: 'GB', label: 'MEMORY' }, { icon: Zap, value: '1.2', unit: 'ms', label: 'LATENCY' }].map(item => <div key={item.label}><item.icon /><span className="metric-value">{item.value}<small>{item.unit}</small></span><span className="metric-label">{item.label}</span></div>)}</div>;
+export interface CoreMetricsProps {
+  agentActive: number;
+  agentTotal: number;
+  taskOpen: number;
+  latencyMs: number;
+}
+
+export function CoreMetrics({ agentActive, agentTotal, taskOpen, latencyMs }: CoreMetricsProps) {
+  const metrics = [
+    { icon: Cpu, value: `${agentActive}`, unit: `/${agentTotal}`, label: 'AGENTS ACTIVE' },
+    { icon: Activity, value: `${taskOpen}`, unit: '', label: 'OPEN TASKS' },
+    { icon: Zap, value: `${Math.round(latencyMs)}`, unit: 'ms', label: 'HEALTH LATENCY' },
+  ];
+  return <div className="core-metrics">{metrics.map(item => <div key={item.label}><item.icon /><span className="metric-value">{item.value}<small>{item.unit}</small></span><span className="metric-label">{item.label}</span></div>)}</div>;
 }

@@ -9,9 +9,12 @@ import {
   type ErrorComponentProps,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
+import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { AuthProvider, useAuth } from "../lib/auth";
+import { LoginScreen } from "../components/ultron/login";
 
 function NotFoundComponent() {
   return (
@@ -118,13 +121,32 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+function AuthGate() {
+  const { status } = useAuth();
+
+  if (status === "loading") {
+    return (
+      <div className="ultron-shell boot-shell">
+        <span className="boot-pulse" />
+        <p>INITIALIZING CORE…</p>
+      </div>
+    );
+  }
+  if (status === "anonymous") return <LoginScreen />;
+
+  // Required: nested routes render here. Removing <Outlet /> breaks all child routes.
+  return <Outlet />;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      <AuthProvider>
+        <AuthGate />
+        <Toaster theme="dark" position="bottom-right" />
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
