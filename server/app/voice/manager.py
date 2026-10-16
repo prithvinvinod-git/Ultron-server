@@ -1,0 +1,401 @@
+"""Voice sessions and the STT -> Core -> Agent -> TTS pipeline (T153/T154, §25/§59.19).
+
+Voice is **another interface onto the same agents and tools**, not a parallel
+stack (§59.21). This manager owns that interface: it takes a session, runs the
+pipeline, and keeps the conversation history. The model/agent step is a
+collaborator (a :data:`Responder`) injected by whoever wires the container, so
+this module depends on neither the container nor a model provider and is fully
+testable with a fake.
+
+**Barge-in is a first-class behaviour (§59.19).** When the user starts speaking
+again while ULTRON is thinking or talking, the in-flight response is cancelled,
+the queued synthesis is discarded, and the session returns to listening. The
+interrupted turn is *marked*, not dropped, so the next turn still has the right
+context -- §59.19's rule that "an interrupted partial turn is marked, not
+silently dropped". Cancellation actually cancels: the audio loop checks the
+interrupt flag before delivering each chunk and stops immediately, so no stale
+audio plays over the user.
+
+State is tracked per session as a small machine
+(:class:`VoiceState`), and every transition publishes the matching
+``VOICE_*`` event so clients (the desktop orb, the web page, a phone client) can
+follow along. ``STT_PARTIAL``/``STT_FINAL`` and ``TTS_STARTED``/``TTS_COMPLETED``
+bracket each stage (§25's event list).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
+from enum import StrEnum
+from time import monotonic
+from typing import Any, cast
+
+from app.config import VoiceSettings
+from app.core.errors import NotFoundError
+from app.events.bus import EventBus
+from app.events.types import EventType
+from app.observability import get_logger
+from app.voice.stt.base import AudioChunk, STTEngine
+from app.voice.tts.base import TTSEngine
+
+__all__ = [
+    "AudioSink",
+    "Responder",
+    "VoiceManager",
+    "VoiceReply",
+    "VoiceSession",
+    "VoiceState",
+    "VoiceTurn",
+    "build_voice_manager",
+]
+
+_LOGGER = get_logger(__name__)
+
+#: Runs the model/agent step for a final transcript. Injected by the container,
+#: faked in tests, so the manager never imports a provider.
+Responder = Callable[..., Any]  # (text, *, principal, session_id, history) -> str
+
+#: Receives each synthesized audio chunk as it is produced (streaming playback).
+AudioSink = Callable[[bytes], Any]
+
+
+class VoiceState(StrEnum):
+    """Where a session is in the listen -> think -> speak loop (§59.19)."""
+
+    LISTENING = "listening"
+    THINKING = "thinking"
+    SPEAKING = "speaking"
+    ENDED = "ended"
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceTurn:
+    """One spoken turn: what was said, by which side, and whether it was cut off."""
+
+    role: str  # "user" or "assistant"
+    text: str
+    #: ``True`` for an assistant turn interrupted mid-synthesis (barge-in).
+    interrupted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceReply:
+    """The outcome of one pipeline run."""
+
+    #: The agent's full textual answer.
+    text: str
+
+    #: The audio that was synthesized. Truncated if the turn was interrupted.
+    audio: bytes
+
+    #: Individual audio chunks, in order (for streaming playback).
+    chunks: tuple[bytes, ...] = ()
+
+    #: Whether the turn was cut short by a barge-in (§59.19).
+    interrupted: bool = False
+
+
+@dataclass(slots=True)
+class VoiceSession:
+    """A live voice conversation. Mutable: its task and interrupt flags change."""
+
+    session_id: str
+    principal: str
+    state: VoiceState = VoiceState.LISTENING
+    device_id: str | None = None
+    created_at: float = field(default_factory=monotonic)
+    last_active: float = field(default_factory=monotonic)
+    transcript: str = ""
+    history: list[VoiceTurn] = field(default_factory=list)
+
+    #: The in-flight pipeline task, so a barge-in can cancel it (§59.19).
+    task: asyncio.Task[Any] | None = None
+
+    #: Set by a barge-in; the audio loop stops delivering as soon as it is set.
+    interrupt: asyncio.Event = field(default_factory=asyncio.Event)
+
+    @property
+    def is_expired(self) -> bool:
+        return self.state is VoiceState.ENDED
+
+
+class VoiceManager:
+    """Owns voice sessions and the §25 pipeline. Transport-agnostic."""
+
+    def __init__(
+        self,
+        stt: STTEngine,
+        tts: TTSEngine,
+        *,
+        responder: Responder | None = None,
+        bus: EventBus | None = None,
+        settings: VoiceSettings | None = None,
+    ) -> None:
+        self.stt = stt
+        self.tts = tts
+        self._responder = responder
+        self._bus = bus
+        self.settings = settings or VoiceSettings()
+        self._sessions: dict[str, VoiceSession] = {}
+        self._pending: set[asyncio.Task[Any]] = set()
+
+    # -- session lifecycle ------------------------------------------------ #
+    def create_session(
+        self, *, principal: str = "anonymous", device_id: str | None = None
+    ) -> VoiceSession:
+        session_id = uuid.uuid4().hex
+        session = VoiceSession(
+            session_id=session_id, principal=principal, device_id=device_id
+        )
+        self._sessions[session_id] = session
+        self._set_state(session, VoiceState.LISTENING, extra={"event": "voice.session_started"})
+        _LOGGER.info(
+            "voice session started",
+            extra={"event": "voice.session_started", "session_id": session_id},
+        )
+        return session
+
+    def get(self, session_id: str) -> VoiceSession | None:
+        return self._sessions.get(session_id)
+
+    def list_sessions(self) -> list[VoiceSession]:
+        return list(self._sessions.values())
+
+    def end_session(self, session_id: str, *, reason: str = "ended") -> bool:
+        session = self._sessions.get(session_id)
+        if session is None:
+            return False
+        session.task = None
+        self._set_state(session, VoiceState.ENDED, extra={"reason": reason})
+        _LOGGER.info(
+            "voice session ended",
+            extra={"event": "voice.session_ended", "session_id": session_id, "reason": reason},
+        )
+        self._sessions.pop(session_id, None)
+        return True
+
+    def sweep(self) -> list[str]:
+        """Close sessions idle longer than the TTL. Returns the closed ids."""
+        ttl = self.settings.session_ttl
+        now = monotonic()
+        expired = [
+            sid
+            for sid, session in self._sessions.items()
+            if now - session.last_active > ttl
+        ]
+        for sid in expired:
+            self.end_session(sid, reason="idle timeout")
+        return expired
+
+    # -- pipeline --------------------------------------------------------- #
+    async def handle_audio(
+        self,
+        session_id: str,
+        chunks: AsyncIterator[AudioChunk],
+        *,
+        language: str | None = None,
+    ) -> list[VoiceReply]:
+        """Transcribe a stream of audio and run a turn for each final utterance.
+
+        Publishes ``STT_PARTIAL`` as text is recognised and ``STT_FINAL`` when an
+        utterance completes, then hands the final transcript to the pipeline.
+        Barge-in: a partial that arrives while the session is still speaking
+        interrupts the in-flight turn (§59.19).
+        """
+        session = self._require(session_id)
+        replies: list[VoiceReply] = []
+        session.transcript = ""
+        self._set_state(session, VoiceState.LISTENING)
+
+        async for chunk in self.stt.transcribe_stream(chunks, language=language):
+            if not chunk.is_final:
+                session.transcript += chunk.text
+                # A new utterance while we are still talking is a barge-in.
+                if session.state is VoiceState.SPEAKING and self.settings.interruption_enabled:
+                    await self.interrupt(session_id, reason="barge-in")
+                self._publish(
+                    EventType.STT_PARTIAL,
+                    {"text": session.transcript, "session_id": session_id},
+                    device_id=session.device_id,
+                )
+                continue
+
+            text = chunk.text or session.transcript
+            session.transcript = ""
+            self._publish(
+                EventType.STT_FINAL,
+                {"text": text, "session_id": session_id},
+                device_id=session.device_id,
+            )
+            if not text.strip():
+                continue
+            replies.append(await self.run_turn(session_id, text))
+        return replies
+
+    async def run_turn(
+        self, session_id: str, text: str, *, on_audio: AudioSink | None = None
+    ) -> VoiceReply:
+        """Run one full turn: think, then speak, honouring barge-in (§59.19).
+
+        Returns the agent's answer and the audio produced so far. If a barge-in
+        interrupts the turn, ``interrupted`` is ``True``, the audio is truncated
+        at the point of interruption, and the assistant turn is *marked*
+        interrupted rather than dropped, so history stays coherent.
+        """
+        session = self._require(session_id)
+        session.interrupt.clear()
+        session.history.append(VoiceTurn("user", text))
+        self._set_state(session, VoiceState.THINKING)
+        session.task = asyncio.current_task()
+
+        try:
+            answer = await self._respond(session, text)
+        except asyncio.CancelledError:
+            # The task itself was cancelled; mark the turn and re-raise.
+            session.history.append(VoiceTurn("assistant", "", interrupted=True))
+            self._set_state(session, VoiceState.LISTENING)
+            raise
+        finally:
+            session.task = None
+
+        session.history.append(VoiceTurn("assistant", answer))
+        self._set_state(session, VoiceState.SPEAKING)
+        self._publish(
+            EventType.TTS_STARTED, {"text": answer, "session_id": session_id},
+            device_id=session.device_id,
+        )
+
+        produced: list[bytes] = []
+        interrupted = False
+        async for audio in self.tts.synthesize_stream(answer):
+            if session.interrupt.is_set():
+                interrupted = True
+                break
+            produced.append(audio)
+            if on_audio is not None:
+                await _maybe_await(on_audio(audio))
+
+        if interrupted:
+            # §59.19: mark the cut-off turn so the next turn has the right context.
+            session.history[-1] = VoiceTurn("assistant", answer, interrupted=True)
+        self._publish(
+            EventType.TTS_COMPLETED,
+            {"interrupted": interrupted, "session_id": session_id},
+            device_id=session.device_id,
+        )
+        self._set_state(session, VoiceState.LISTENING)
+        return VoiceReply(
+            text=answer,
+            audio=b"".join(produced),
+            chunks=tuple(produced),
+            interrupted=interrupted,
+        )
+
+    async def interrupt(self, session_id: str, *, reason: str = "barge-in") -> bool:
+        """Cancel the in-flight turn and return to listening (§59.19).
+
+        Sets the interrupt flag (so the audio loop stops delivering at once) and
+        cancels the pipeline task (so a model or synthesis call that is still
+        running is actually cancelled, not merely ignored).
+        """
+        session = self._require(session_id)
+        session.interrupt.set()
+        task = session.task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+        _LOGGER.info(
+            "voice interrupted",
+            extra={"event": "voice.interrupted", "session_id": session_id, "reason": reason},
+        )
+        return True
+
+    # -- internals -------------------------------------------------------- #
+    def _require(self, session_id: str) -> VoiceSession:
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise NotFoundError("voice session", session_id)
+        session.last_active = monotonic()
+        return session
+
+    async def _respond(self, session: VoiceSession, text: str) -> str:
+        if self._responder is None:
+            return ""
+        result = await _maybe_await(
+            self._responder(
+                text,
+                principal=session.principal,
+                session_id=session.session_id,
+                history=tuple(session.history),
+            )
+        )
+        return cast(str, result)
+
+    def _set_state(
+        self, session: VoiceSession, state: VoiceState, *, extra: dict[str, Any] | None = None
+    ) -> None:
+        session.state = state
+        event = {
+            VoiceState.LISTENING: EventType.VOICE_LISTENING,
+            VoiceState.THINKING: EventType.VOICE_THINKING,
+            VoiceState.SPEAKING: EventType.VOICE_SPEAKING,
+            VoiceState.ENDED: EventType.VOICE_ENDED,
+        }[state]
+        payload: dict[str, Any] = {"state": state.value, "session_id": session.session_id}
+        if extra:
+            payload.update(extra)
+        self._publish(event, payload, device_id=session.device_id)
+
+    def _publish(
+        self, event_type: EventType, payload: dict[str, Any], *, device_id: str | None = None
+    ) -> None:
+        if self._bus is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop (e.g. a synchronous call outside async context):
+            # there is nowhere to deliver the event, so drop it rather than fail.
+            return
+        task = loop.create_task(
+            _guarded_publish(self._bus, event_type, payload, device_id),
+            name=f"voice-publish-{event_type.value.lower()}",
+        )
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    async def flush(self) -> None:
+        """Await every in-flight event publish (tests use this for ordering)."""
+        while self._pending:
+            await asyncio.gather(*tuple(self._pending), return_exceptions=True)
+
+
+async def _guarded_publish(
+    bus: EventBus, event_type: EventType, payload: dict[str, Any], device_id: str | None
+) -> None:
+    try:
+        await bus.publish(event_type, payload, device_id=device_id)
+    except Exception:
+        _LOGGER.exception(
+            "voice event publish failed", extra={"event": "voice.publish_failed"}
+        )
+
+
+async def _maybe_await(value: Any) -> Any:
+    if asyncio.iscoroutine(value):
+        return await value
+    return value
+
+
+def build_voice_manager(
+    settings: VoiceSettings,
+    bus: EventBus,
+    *,
+    stt: STTEngine,
+    tts: TTSEngine,
+    responder: Responder | None = None,
+) -> VoiceManager:
+    """Wire a manager from settings, the event bus and the chosen engines."""
+    return VoiceManager(stt, tts, responder=responder, bus=bus, settings=settings)

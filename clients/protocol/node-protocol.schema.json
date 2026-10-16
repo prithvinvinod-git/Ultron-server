@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ultron.local/protocol/node-protocol.schema.json",
+  "title": "ULTRON Computer-Node Protocol",
+  "description": "The wire contract between the ULTRON server gateway (app/agents/computer/gateway.py) and a computer node (clients/desktop-node/). One JSON object per WebSocket text frame; every object carries a `type` discriminator. This document is normative: the server's Pydantic models are a typed view of it, and tests/unit/test_node_protocol.py asserts the two agree field-for-field.",
+  "oneOf": [
+    { "$ref": "#/$defs/NodeRegistration" },
+    { "$ref": "#/$defs/ServerHello" },
+    { "$ref": "#/$defs/NodeHeartbeat" },
+    { "$ref": "#/$defs/NodeHeartbeatAck" },
+    { "$ref": "#/$defs/NodeCommand" },
+    { "$ref": "#/$defs/NodeResult" },
+    { "$ref": "#/$defs/NodeCapabilities" },
+    { "$ref": "#/$defs/Goodbye" }
+  ],
+  "$defs": {
+    "NodeType": {
+      "title": "NodeType",
+      "description": "The node inventory (spec 64.5). The set is closed; `future` is the escape hatch so a new kind can register without a schema change.",
+      "type": "string",
+      "enum": ["windows", "server", "esp32", "future"]
+    },
+    "NodeStatus": {
+      "title": "NodeStatus",
+      "description": "Node availability (spec 64.10).",
+      "type": "string",
+      "enum": ["online", "offline", "degraded"]
+    },
+    "ResultStatus": {
+      "title": "ResultStatus",
+      "description": "The outcome of one command, from the node.",
+      "type": "string",
+      "enum": ["ok", "error"]
+    },
+    "MessageType": {
+      "title": "MessageType",
+      "description": "The `type` discriminator on every wire message.",
+      "type": "string",
+      "enum": [
+        "register",
+        "registered",
+        "heartbeat",
+        "heartbeat_ack",
+        "command",
+        "result",
+        "goodbye"
+      ]
+    },
+    "Capability": {
+      "title": "Capability",
+      "description": "The capability families a node may advertise (spec 64.6.2 Windows, 64.7 server, 64.9 ESP32). Advisory: a node may advertise a string not in this list and the registry stores it.",
+      "type": "string",
+      "enum": [
+        "filesystem",
+        "powershell",
+        "windows_apps",
+        "windows_ui",
+        "browser",
+        "git",
+        "processes",
+        "screenshots",
+        "notifications",
+        "clipboard",
+        "linux_apps",
+        "linux_shell",
+        "server_management",
+        "background_agents",
+        "scheduler",
+        "services",
+        "display",
+        "microphone",
+        "speaker",
+        "buttons",
+        "sensors",
+        "physical_controls"
+      ]
+    },
+    "NodeRegistration": {
+      "title": "NodeRegistration",
+      "description": "The first message a node sends: who it is, what it can do, and the node credential that authenticates it (spec 64.13: a node credential authenticates a node, never a user).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "node_type"],
+      "properties": {
+        "type": { "const": "register" },
+        "node_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "node_type": { "$ref": "#/$defs/NodeType" },
+        "name": { "type": "string", "maxLength": 128 },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "client_of": { "type": ["string", "null"], "maxLength": 64 },
+        "version": { "type": "string", "maxLength": 64 },
+        "firmware_version": { "type": ["string", "null"], "maxLength": 64 },
+        "credential": {
+          "type": ["string", "null"],
+          "maxLength": 512,
+          "description": "The opaque node credential; hashed at rest and never echoed back."
+        }
+      }
+    },
+    "ServerHello": {
+      "title": "ServerHello",
+      "description": "The server's answer to a registration: accepted or not, and the rules that follow. A refusal is a normal handshake outcome (accepted=false), not a server fault.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted", "node_id", "heartbeat_interval", "offline_after"],
+      "properties": {
+        "type": { "const": "registered" },
+        "accepted": { "type": "boolean" },
+        "node_id": { "type": "string" },
+        "reason": { "type": ["string", "null"] },
+        "heartbeat_interval": { "type": "integer", "minimum": 1 },
+        "offline_after": { "type": "integer", "minimum": 1 },
+        "server_time": { "type": "string", "format": "date-time" }
+      }
+    },
+    "NodeHeartbeat": {
+      "title": "NodeHeartbeat",
+      "description": "A periodic liveness message; may refresh the advertised capabilities or status.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id"],
+      "properties": {
+        "type": { "const": "heartbeat" },
+        "node_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "status": { "anyOf": [{ "$ref": "#/$defs/NodeStatus" }, { "type": "null" }] },
+        "capabilities": {
+          "anyOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "null" }]
+        }
+      }
+    },
+    "NodeHeartbeatAck": {
+      "title": "NodeHeartbeatAck",
+      "description": "The server's answer to a heartbeat: liveness acknowledged, with the server clock so the node can detect drift.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id"],
+      "properties": {
+        "type": { "const": "heartbeat_ack" },
+        "node_id": { "type": "string" },
+        "server_time": { "type": "string", "format": "date-time" }
+      }
+    },
+    "NodeCommand": {
+      "title": "NodeCommand",
+      "description": "One structured command. There is no arbitrary shell string (spec 13): the node dispatches on `tool` and passes `arguments` to that tool's implementing handler.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id", "tool"],
+      "properties": {
+        "type": { "const": "command" },
+        "command_id": { "type": "string", "format": "uuid" },
+        "tool": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "arguments": { "type": "object", "additionalProperties": true },
+        "principal": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "description": "Who asked, for the node-side permission re-check (spec 64.6.3 Path B)."
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "deadline": {
+          "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }],
+          "description": "Absolute deadline; the node should abandon the work once past it."
+        },
+        "correlation_id": { "type": ["string", "null"], "maxLength": 128 },
+        "task_id": { "type": ["string", "null"], "maxLength": 64 }
+      }
+    },
+    "NodeResult": {
+      "title": "NodeResult",
+      "description": "The node's answer to one command, correlated by `command_id`. `ok` carries `result`; `error` carries `error` and optionally `error_code`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id", "node_id", "status"],
+      "properties": {
+        "type": { "const": "result" },
+        "command_id": { "type": "string", "format": "uuid" },
+        "node_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "status": { "$ref": "#/$defs/ResultStatus" },
+        "result": { "description": "Tool-specific payload; absent on error." },
+        "error_code": { "type": ["string", "null"], "maxLength": 64 },
+        "error": { "type": ["string", "null"], "maxLength": 2048 },
+        "duration_ms": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "NodeCapabilities": {
+      "title": "NodeCapabilities",
+      "description": "The capability/state view of one node. The shape `GET /nodes` and `GET /nodes/{id}` return.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "node_type", "name", "capabilities", "status"],
+      "properties": {
+        "node_id": { "type": "string" },
+        "node_type": { "$ref": "#/$defs/NodeType" },
+        "name": { "type": "string" },
+        "capabilities": { "type": "array", "items": { "type": "string" } },
+        "status": { "$ref": "#/$defs/NodeStatus" },
+        "last_seen": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] },
+        "connected_at": {
+          "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+        },
+        "version": { "type": "string" },
+        "client_of": { "type": ["string", "null"] }
+      }
+    },
+    "Goodbye": {
+      "title": "Goodbye",
+      "description": "Either side closes politely. The server still treats a dropped socket as a disconnect (spec 64.14), so this is a courtesy, not the mechanism.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "type": { "const": "goodbye" },
+        "node_id": { "type": "string" },
+        "reason": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

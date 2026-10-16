@@ -41,7 +41,7 @@ pytestmark = pytest.mark.unit
 
 _EXPLICIT_GIT_TOOLS = {"git.push", "git.reset", "git.clean", "git.delete_branch", "git.rebase"}
 
-_EXPECTED_TOOLS = frozenset(
+_CORE_TOOLS = frozenset(
     {
         "filesystem.read",
         "filesystem.write",
@@ -83,6 +83,24 @@ _EXPECTED_TOOLS = frozenset(
     }
 )
 
+#: The ``computer.*`` tools the container adds when the node subsystem is enabled
+#: (T143). They are absent from a bare ``build_tool_registry`` call, which is
+#: given no gateway, so the core-inventory test and the container-inventory test
+#: assert different sets.
+_COMPUTER_TOOLS = frozenset(
+    {
+        "computer.list_windows",
+        "computer.screenshot",
+        "computer.click",
+        "computer.type",
+        "computer.keys",
+        "computer.open_application",
+        "computer.close_application",
+    }
+)
+
+_EXPECTED_TOOLS = _CORE_TOOLS | _COMPUTER_TOOLS
+
 
 @pytest.fixture()
 def workspace_root(tmp_path: Path) -> Path:
@@ -118,7 +136,7 @@ def make_executor(
 # --------------------------------------------------------------------------- #
 def test_default_registry_registers_every_family(registry: ToolRegistry) -> None:
     names = {tool.name for tool in registry.list()}
-    assert names == _EXPECTED_TOOLS
+    assert names == _CORE_TOOLS
 
 
 def test_default_registry_names_are_unique_and_sorted(registry: ToolRegistry) -> None:

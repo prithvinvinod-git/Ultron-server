@@ -27,6 +27,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from app.agents.computer.gateway import NodeGateway
 from app.agents.manager import AgentManager
 from app.agents.registry import AgentRegistry
 from app.config import Settings, get_settings
@@ -68,6 +69,17 @@ from app.database.session import (
 )
 from app.events.bus import EventBus
 from app.events.handlers import PersistEvents
+from app.memory import (
+    EmbeddingProvider,
+    EpisodicMemory,
+    LongTermMemory,
+    MemoryManager,
+    MemoryRecorder,
+    ProjectMemory,
+    SemanticMemory,
+    ShortTermMemory,
+    create_embedding_provider,
+)
 from app.models.base import ModelProvider
 from app.models.router import ModelRouter
 from app.notifications import NotificationService, build_notification_service
@@ -126,7 +138,10 @@ class Container:
         self._git_runner = git_runner
         self._notifications = notifications
         self._browser_sessions: BrowserSessionManager | None = None
+        self._node_gateway: NodeGateway | None = None
         self._model_router: ModelRouter | None = None
+        self._embedding_provider: EmbeddingProvider | None = None
+        self._memory_recorder: MemoryRecorder | None = None
         self._register_default_checks()
 
     # --------------------------------------------------------------------- #
@@ -211,6 +226,22 @@ class Container:
         return self._browser_sessions
 
     @property
+    def node_gateway(self) -> NodeGateway:
+        """Return the computer-node gateway (T141, spec §13/§64).
+
+        Built from ``ComputerNodeSettings``; it holds no I/O of its own until a
+        node registers, so this is cheap and safe when the computer-node
+        subsystem is disabled (``COMPUTER_NODES_ENABLED=false``). The gateway is
+        what the ``computer.*`` tools (T143) dispatch through.
+        """
+        if self._node_gateway is None:
+            self._node_gateway = NodeGateway(
+                settings=self.settings.computer_nodes,
+                bus=self.events,
+            )
+        return self._node_gateway
+
+    @property
     def tools(self) -> ToolRegistry:
         """Return the registered tools (T035/T097).
 
@@ -226,6 +257,7 @@ class Container:
                 sandbox=self.sandbox,
                 git_runner=self.git_runner,
                 browser=self.browser_sessions,
+                computer=self.node_gateway,
             )
         return self._tools
 
@@ -297,6 +329,30 @@ class Container:
 
         return self._model_router
 
+    @property
+    def embedding_provider(self) -> EmbeddingProvider:
+        """Return the embedding provider for semantic memory (T127).
+
+        Built lazily so a deployment with no provider (``EMBEDDING_PROVIDER=none``)
+        still constructs the container, and so the provider is shared by every
+        session's memory rather than rebuilt per request. It never connects at
+        construction -- the first :meth:`embed` is what talks to the service.
+        """
+        if self._embedding_provider is None:
+            ollama = self.settings.ollama
+            providers = self.settings.providers
+            auth = (
+                f"Bearer {ollama.api_key.get_secret_value()}" if ollama.api_key_configured else None
+            )
+            self._embedding_provider = create_embedding_provider(
+                self.settings.embeddings,
+                ollama_base_url=ollama.url,
+                ollama_auth_header=auth,
+                openai_base_url=providers.openai_base_url,
+                openai_api_key=providers.openai_api_key.get_secret_value(),
+            )
+        return self._embedding_provider
+
     # --------------------------------------------------------------------- #
     # Lifespan
     # --------------------------------------------------------------------- #
@@ -324,6 +380,37 @@ class Container:
         await self.ping_database()
         await self.ping_redis()
         await self._start_persist_handler()
+        await self._start_memory_recorder()
+        await self._start_node_gateway()
+
+    async def _start_node_gateway(self) -> None:
+        """Start the computer-node heartbeat monitor when the subsystem is on (T141).
+
+        No-op when ``COMPUTER_NODES_ENABLED`` is off, so a deployment that hosts
+        no nodes never starts the monitor. Only started if the gateway was built
+        (it is lazy), so this never forces the object graph into existence.
+        """
+        if not self.settings.computer_nodes.enabled:
+            return
+        await self.node_gateway.start()
+
+    async def _start_memory_recorder(self) -> None:
+        """Attach the episodic-memory subscriber when memory is enabled (T128).
+
+        No-op when ``MEMORY_ENABLED`` is off, so a deployment that wants no
+        memory pays nothing for the worker. The recorder writes through the same
+        ``session_scope`` the persistence subscriber uses, so an episode is
+        committed like any other unit of work.
+        """
+        if not self.settings.memory.enabled:
+            return
+        self._memory_recorder = MemoryRecorder(
+            self.events,
+            session_scope=lambda: session_scope(self.session_factory),
+            default_namespace=self.settings.memory.default_namespace,
+            retention_days=self.settings.memory.episodic_retention_days,
+        )
+        await self._memory_recorder.start()
 
     async def _start_persist_handler(self) -> None:
         """Attach the durable event subscriber when persistence is enabled.
@@ -346,9 +433,15 @@ class Container:
         is closed first so that any open ``/events`` stream wakes up and ends
         instead of hanging until its client gives up.
         """
+        if self._memory_recorder is not None:
+            await self._memory_recorder.stop()
+            self._memory_recorder = None
         if self._persist is not None:
             await self._persist.stop()
             self._persist = None
+        if self._node_gateway is not None:
+            await self._node_gateway.stop()
+            self._node_gateway = None
         if self._events is not None:
             self._events.close()
         if self._browser_sessions is not None:
@@ -526,6 +619,45 @@ class Container:
         the repositories it never commits — the caller owns the unit of work.
         """
         return AgentManager(session, agents=self.agents, events=self.events)
+
+    def get_memory_manager(self, session: AsyncSession) -> MemoryManager:
+        """Return the memory facade (T126) bound to the session's unit of work.
+
+        Built from the session's memory repository so every layer shares one
+        transaction, and from the container's shared Redis client and embedding
+        provider so short-term caching and semantic embedding are instance-wide
+        rather than per-request. Like the repositories it never commits — the
+        caller owns the unit of work. ``MEMORY_ENABLED=false`` does not change
+        construction; it decides whether a caller consults memory at all.
+        """
+        memory = self.settings.memory
+        repository = self.get_memory_repository(session)
+        return MemoryManager(
+            short_term=ShortTermMemory(
+                repository,
+                self.redis,
+                max_messages=memory.short_term_max_messages,
+                ttl=memory.short_term_ttl,
+                default_namespace=memory.default_namespace,
+            ),
+            long_term=LongTermMemory(repository, default_namespace=memory.default_namespace),
+            episodic=EpisodicMemory(
+                repository,
+                retention_days=memory.episodic_retention_days,
+                default_namespace=memory.default_namespace,
+            ),
+            semantic=SemanticMemory(
+                repository,
+                self.embedding_provider,
+                min_similarity=memory.min_similarity,
+                enabled=memory.semantic_enabled,
+                default_namespace=memory.default_namespace,
+            ),
+            project=ProjectMemory(repository),
+            default_namespace=memory.default_namespace,
+            retrieval_top_k=memory.retrieval_top_k,
+            min_similarity=memory.min_similarity,
+        )
 
     def get_task_executor(
         self,

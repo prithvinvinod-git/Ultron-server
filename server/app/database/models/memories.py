@@ -54,6 +54,12 @@ if TYPE_CHECKING:
 
 _NAMESPACE_SEPARATORS = (":", "/")
 
+#: The one namespace kind that carries no slug (spec §22: ``user``). It is
+#: defined here, next to :func:`namespace_scope`, so the storage layer can
+#: recognise "this kind needs no slug" without importing the application-layer
+#: namespace rules -- which would invert the dependency between the two.
+PERSONAL_NAMESPACE_KIND = "user"
+
 
 def _resolve_settings() -> Settings | None:
     """Load settings, or None if the environment cannot satisfy them.

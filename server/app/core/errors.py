@@ -98,6 +98,8 @@ class ErrorCode(enum.StrEnum):
     VOICE_ERROR = "VOICE_ERROR"
     DEVICE_ERROR = "DEVICE_ERROR"
     BROWSER_ERROR = "BROWSER_ERROR"
+    NODE_UNAVAILABLE = "NODE_UNAVAILABLE"
+    NODE_NOT_FOUND = "NODE_NOT_FOUND"
     SERIALIZATION_ERROR = "SERIALIZATION_ERROR"
 
 
@@ -117,6 +119,7 @@ RETRYABLE_CODES: Final[frozenset[ErrorCode]] = frozenset(
         ErrorCode.DATABASE_ERROR,
         ErrorCode.EVENT_BUS_ERROR,
         ErrorCode.HEALTH_CHECK_FAILED,
+        ErrorCode.NODE_UNAVAILABLE,
     }
 )
 
@@ -780,6 +783,39 @@ class DeviceError(UltronError):
 class BrowserError(UltronError):
     code = ErrorCode.BROWSER_ERROR
     http_status = 503
+
+
+class NodeError(RetryableError):
+    """The target computer node is unreachable or refused the command.
+
+    §64.11's typed ``NODE_UNAVAILABLE``: a node that is offline, has no pending
+    connection, or does not advertise the requested capability is reported with
+    the capability named — never a hang, never a silent re-route to a node the
+    user did not authorise. Retryable because a node coming back is the expected
+    resolution, exactly as a dependency becoming reachable is.
+    """
+
+    code = ErrorCode.NODE_UNAVAILABLE
+    http_status = 503
+
+    def __init__(
+        self, node: str, *, reason: str = "", capability: str | None = None
+    ) -> None:
+        message = f"node '{node}' is unavailable"
+        if reason:
+            message = f"{message}: {reason}"
+        details: dict[str, Any] = {"node": node}
+        if capability is not None:
+            details["capability"] = capability
+        super().__init__(message, details=details)
+        self.node = node
+
+
+class NodeNotFoundError(NotFoundError):
+    """No node is registered under this id (§64.10's ``GET /nodes/{id}``)."""
+
+    code = ErrorCode.NODE_NOT_FOUND
+    http_status = 404
 
 
 # ---------------------------------------------------------------------------

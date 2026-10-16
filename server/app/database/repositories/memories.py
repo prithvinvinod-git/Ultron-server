@@ -16,12 +16,14 @@ honest substrate the vector query will later build on.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import delete as sa_delete, or_, select, update
 
 from app.core.errors import InvalidInputError
 from app.database.models import Memory, MemoryLayer
+from app.database.models.memories import PERSONAL_NAMESPACE_KIND
 from app.database.repositories.base import UuidRepository, apply_limit, apply_offset, rowcount
 
 
@@ -45,6 +47,7 @@ class MemoryRepository(UuidRepository[Memory]):
         source_event_id: uuid.UUID | None = None,
         importance: float = 0.5,
         expires_at: datetime | None = None,
+        embedding: Sequence[float] | None = None,
     ) -> Memory:
         """Store one memory.
 
@@ -54,9 +57,14 @@ class MemoryRepository(UuidRepository[Memory]):
         ordering -- so a silent correction would quietly change which memories a
         future agent sees first.
 
-        No embedding is accepted here. Writing a vector without the T016 schema in
-        place would produce a row no similarity query can use, and the caller
-        would have no way to tell.
+        ``embedding`` is optional. When given it is stored with
+        ``vector_dimensions`` recording its width, so a row written with the
+        wrong width is detectable rather than silently unsearchable. Storage is
+        left to the column type: the pgvector ``Vector`` accepts the sequence
+        directly, and the JSONB fallback (``ENABLE_PGVECTOR=false``) serialises a
+        plain list. Passing no embedding writes a keyword-only memory that
+        semantic search simply will not rank -- which is correct, and different
+        from writing a zero vector that would rank against everything.
         """
         if not 0.0 <= importance <= 1.0:
             raise InvalidInputError(
@@ -65,9 +73,14 @@ class MemoryRepository(UuidRepository[Memory]):
             )
         if not namespace.strip():
             raise InvalidInputError("a memory needs a namespace")
-        if not namespace_kind.strip() or not namespace_slug.strip():
+        if not namespace_kind.strip():
             raise InvalidInputError(
-                "a memory needs both a namespace kind and a namespace slug",
+                "a memory needs a namespace kind",
+                details={"namespace": namespace},
+            )
+        if namespace_kind.strip().lower() != PERSONAL_NAMESPACE_KIND and not namespace_slug.strip():
+            raise InvalidInputError(
+                "a memory needs a namespace slug",
                 details={"namespace_kind": namespace_kind, "namespace_slug": namespace_slug},
             )
 
@@ -85,6 +98,9 @@ class MemoryRepository(UuidRepository[Memory]):
             source_event_id=source_event_id,
             expires_at=expires_at,
         )
+        if embedding is not None:
+            memory.embedding = list(embedding)
+            memory.vector_dimensions = len(embedding)
         return await self.add(memory)
 
     async def list_by_layer(
@@ -196,6 +212,19 @@ class MemoryRepository(UuidRepository[Memory]):
         one project's memory cannot reach another's.
         """
         result = await self._session.execute(sa_delete(Memory).where(Memory.namespace == namespace))
+        await self._session.flush()
+        return rowcount(result)
+
+    async def clear_layer(self, namespace: str, layer: MemoryLayer) -> int:
+        """Delete one namespace's memories in one layer, returning how many.
+
+        Narrower than :meth:`clear_namespace`: short-term memory (T121) is
+        cleared on its own without disturbing the long-term facts and episodes
+        that share the namespace.
+        """
+        result = await self._session.execute(
+            sa_delete(Memory).where(Memory.namespace == namespace, Memory.layer == layer)
+        )
         await self._session.flush()
         return rowcount(result)
 

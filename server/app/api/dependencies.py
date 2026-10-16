@@ -45,6 +45,7 @@ from app.security.audit import ACTOR_ANONYMOUS, AuditLogger
 from app.security.authentication import Authenticator, Principal
 
 if TYPE_CHECKING:
+    from app.agents.computer.gateway import NodeGateway
     from app.agents.manager import AgentManager
     from app.agents.registry import AgentRegistry
     from app.config import Settings
@@ -160,6 +161,16 @@ class ContainerProtocol(Protocol):
         Declared here for the same reason as ``events``: the route needs the
         shared router the container already built, without importing the
         composition root.
+        """
+        ...
+
+    @property
+    def node_gateway(self) -> NodeGateway:
+        """The computer-node gateway (T141), read by the ``/nodes`` routes.
+
+        Declared here for the same reason as ``events``: the routes need the
+        gateway without importing the composition root, so a test can supply a
+        gateway backed by a transport double.
         """
         ...
 

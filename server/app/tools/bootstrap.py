@@ -15,9 +15,11 @@ a tool cannot reach the inventory half-declared.
 
 from __future__ import annotations
 
+from app.agents.computer.gateway import NodeGateway
 from app.config import Settings
 from app.tools.base import Tool
 from app.tools.browser import BrowserSessionManager, build_browser_tools
+from app.tools.computer import build_computer_tools
 from app.tools.filesystem import FilesystemSandbox, build_filesystem_tools
 from app.tools.git import build_git_tools
 from app.tools.python import build_python_tools
@@ -36,13 +38,16 @@ def iter_default_tools(
     sandbox: FilesystemSandbox,
     git_runner: GitRunner,
     browser: BrowserSessionManager | None = None,
+    computer: NodeGateway | None = None,
 ) -> tuple[Tool, ...]:
     """Every tool the runtime exposes, constructed but not yet registered.
 
     The ``browser.*`` family is included only when the browser subsystem is
-    enabled (``BROWSER_ENABLED``): a disabled deployment exposes no browser tools
-    at all, rather than tools that always fail. ``browser`` is optional so tests
-    and minimal deployments can build the inventory without a session manager.
+    enabled (``BROWSER_ENABLED``) and the ``computer.*`` family only when the
+    computer-node subsystem is enabled and a gateway is supplied
+    (``COMPUTER_NODES_ENABLED``, T143): a disabled deployment exposes no such
+    tools at all, rather than tools that always fail. Both are optional so tests
+    and minimal deployments can build the inventory without the managers.
     """
     search_provider = DuckDuckGoProvider()
     tools: list[Tool] = [
@@ -60,6 +65,8 @@ def iter_default_tools(
                 allow_private_networks=settings.web.allow_private_networks,
             )
         )
+    if computer is not None and settings.computer_nodes.enabled:
+        tools.extend(build_computer_tools(computer))
     return tuple(tools)
 
 
@@ -69,11 +76,17 @@ def build_tool_registry(
     sandbox: FilesystemSandbox,
     git_runner: GitRunner,
     browser: BrowserSessionManager | None = None,
+    computer: NodeGateway | None = None,
 ) -> ToolRegistry:
     """Build a registry populated with every default tool."""
     registry = ToolRegistry()
     for tool in iter_default_tools(
-        settings, sandbox=sandbox, git_runner=git_runner, browser=browser
+        settings,
+        sandbox=sandbox,
+        git_runner=git_runner,
+        browser=browser,
+        computer=computer,
     ):
         registry.register(tool)
     return registry
+
