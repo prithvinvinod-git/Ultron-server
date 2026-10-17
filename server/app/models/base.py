@@ -163,11 +163,19 @@ class ToolCall:
     so the pipeline (§16 stage 1) validates a mapping rather than re-parsing a
     string on every hop. ``arguments`` is empty (not missing) when the model
     asked for a no-argument call, which keeps the calling loop uniform.
+
+    ``signature`` carries opaque provider metadata that must be echoed back
+    verbatim when the call is replayed in a later turn. Gemini's thinking models
+    attach a ``thoughtSignature`` to each ``functionCall`` and reject the
+    follow-up request with HTTP 400 unless it is returned with the call; the
+    adapter tucks it here so the provider-agnostic loop can round-trip it without
+    knowing what it is. Providers that need no such token leave it ``None``.
     """
 
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    signature: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

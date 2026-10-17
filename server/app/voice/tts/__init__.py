@@ -1,27 +1,42 @@
 """Text-to-speech adapters (T151, spec §25 / §59.18).
 
-Provider-independent: :class:`~app.voice.tts.base.TTSEngine` is the seam and
-:class:`~app.voice.tts.piper.PiperTTS` is the first local adapter.
-:func:`create_tts_engine` turns :class:`~app.config.VoiceSettings` into an
-engine, returning the honest :class:`~app.voice.tts.base.NullTTSEngine` when TTS
-is disabled or unconfigured -- never a fake engine that emits silence and calls
-it speech (§59.18, §64.11).
+Provider-independent: :class:`~app.voice.tts.base.TTSEngine` is the seam, and the
+adapters are two cloud engines
+(:class:`~app.voice.tts.elevenlabs.ElevenLabsTTS`) and local ones
+(:class:`~app.voice.tts.piper.PiperTTS`,
+:class:`~app.voice.tts.edge_tts.EdgeTTSTTS`). :func:`create_tts_engine` turns
+:class:`~app.config.VoiceSettings` into an engine -- a primary, or a primary
+chained to a fallback (:class:`~app.voice.fallback.FallbackTTSEngine`) --
+returning the honest :class:`~app.voice.tts.base.NullTTSEngine` when TTS is
+disabled or unconfigured, never a fake engine that emits silence and calls it
+speech (§59.18, §64.11).
 """
 
 from __future__ import annotations
 
 from app.config import VoiceSettings
 from app.observability import get_logger
-from app.voice.tts.availability import piper_available, piper_unavailable_reason
+from app.voice.tts.availability import (
+    edge_tts_available,
+    edge_tts_unavailable_reason,
+    piper_available,
+    piper_unavailable_reason,
+)
 from app.voice.tts.base import NullTTSEngine, TTSEngine
+from app.voice.tts.edge_tts import EdgeTTSTTS
+from app.voice.tts.elevenlabs import ElevenLabsTTS
 from app.voice.tts.piper import PiperTTS
 from app.voice.tts.segments import split_sentences
 
 __all__ = [
+    "EdgeTTSTTS",
+    "ElevenLabsTTS",
     "NullTTSEngine",
     "PiperTTS",
     "TTSEngine",
     "create_tts_engine",
+    "edge_tts_available",
+    "edge_tts_unavailable_reason",
     "piper_available",
     "piper_unavailable_reason",
     "split_sentences",
@@ -30,32 +45,62 @@ __all__ = [
 _LOGGER = get_logger(__name__)
 
 
+def _build_tts_engine(settings: VoiceSettings, name: str) -> TTSEngine:
+    """Build one concrete TTS engine by name (``none``/unknown -> null)."""
+    if name == "piper":
+        return PiperTTS(settings)
+    if name == "elevenlabs":
+        return ElevenLabsTTS(settings)
+    if name == "edge-tts":
+        return EdgeTTSTTS(settings)
+    if name == "none":
+        return NullTTSEngine(reason="no TTS engine is configured")
+    return NullTTSEngine(reason=f"unknown TTS engine '{name}'")
+
+
 def create_tts_engine(settings: VoiceSettings) -> TTSEngine:
     """Build the configured TTS engine, or an honest null engine (§59.18).
 
-    A selected engine that cannot actually run (Piper missing, or no voice model
-    configured) still returns a real engine object whose
+    A selected engine that cannot actually run (Piper missing, no voice model,
+    a cloud key unset) still returns a real engine object whose
     :attr:`~TTSEngine.available` is ``False`` and which raises
     :class:`~app.core.errors.DependencyUnavailableError` on use -- so the caller
     learns *why* at the seam instead of the server refusing to boot over an
-    optional feature.
+    optional feature. When ``TTS_FALLBACK_ENGINE`` names a second engine, the two
+    are chained so a cloud primary degrades to a local one.
     """
-    if not settings.enabled or settings.tts_engine == "none":
-        reason = "voice is disabled" if not settings.enabled else "no TTS engine is configured"
-        _LOGGER.info("tts disabled", extra={"event": "tts.disabled", "reason": reason})
-        return NullTTSEngine(reason=reason)
+    if not settings.enabled:
+        _LOGGER.info(
+            "tts disabled",
+            extra={"event": "tts.disabled", "reason": "voice is disabled"},
+        )
+        return NullTTSEngine(reason="voice is disabled")
 
-    if settings.tts_engine == "piper":
-        engine = PiperTTS(settings)
-        if not engine.available:
-            _LOGGER.warning(
-                "tts engine unavailable",
-                extra={
-                    "event": "tts.engine_unavailable",
-                    "engine": settings.tts_engine,
-                    "reason": engine.unavailable_reason,
-                },
-            )
-        return engine
+    if settings.tts_engine == "none" and settings.tts_fallback_engine == "none":
+        _LOGGER.info(
+            "tts disabled",
+            extra={"event": "tts.disabled", "reason": "no TTS engine is configured"},
+        )
+        return NullTTSEngine(reason="no TTS engine is configured")
 
-    return NullTTSEngine(reason=f"unknown TTS engine '{settings.tts_engine}'")
+    primary = _build_tts_engine(settings, settings.tts_engine)
+    fallback_name = settings.tts_fallback_engine
+    if fallback_name in ("none", settings.tts_engine):
+        engine = primary
+    else:
+        # Imported here: ``app.voice.fallback`` imports both engine bases, and a
+        # module-level import would cycle through the sibling ``stt`` package.
+        from app.voice.fallback import FallbackTTSEngine
+
+        engine = FallbackTTSEngine(primary, _build_tts_engine(settings, fallback_name))
+
+    if not engine.available:
+        _LOGGER.warning(
+            "tts engine unavailable",
+            extra={
+                "event": "tts.engine_unavailable",
+                "engine": settings.tts_engine,
+                "reason": engine.unavailable_reason,
+            },
+        )
+    return engine

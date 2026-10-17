@@ -87,10 +87,11 @@ class FasterWhisperSTT(STTEngine):
         """Transcribe one complete utterance to its final text."""
         self._require_available()
         model = await self._get_model()
+        payload = self._decode_audio(audio)
 
         def _run() -> str:
             segments, _info = model.transcribe(
-                audio,
+                payload,
                 language=language or self.settings.stt_language,
                 beam_size=1,
             )
@@ -119,6 +120,19 @@ class FasterWhisperSTT(STTEngine):
         accumulated = ""
 
         async for chunk in chunks:
+            if chunk.end_of_utterance:
+                # The transport saw the end of a turn (client VAD / push-to-talk):
+                # close it now instead of waiting for a run of silent chunks.
+                if boundary.open or accumulated:
+                    yield TranscriptChunk(
+                        text=accumulated, is_final=True, utterance_id=utterance_id, language=lang
+                    )
+                    utterance_id += 1
+                    accumulated = ""
+                    deduper.reset()
+                boundary.reset()
+                continue
+
             if not chunk.is_speech or not chunk.data:
                 if boundary.feed(is_speech=False):
                     yield TranscriptChunk(
@@ -148,9 +162,11 @@ class FasterWhisperSTT(STTEngine):
     async def _transcribe_bytes(
         self, model: Any, audio: bytes, *, language: str | None
     ) -> str:
+        payload = self._decode_audio(audio)
+
         def _run() -> str:
             segments, _info = model.transcribe(
-                audio, language=language, beam_size=1
+                payload, language=language, beam_size=1
             )
             return "".join(segment.text for segment in segments).strip()
 
@@ -164,6 +180,26 @@ class FasterWhisperSTT(STTEngine):
                 extra={"event": "stt.chunk_timeout", "timeout": self.settings.stt_timeout},
             )
             return ""
+
+    def _decode_audio(self, audio: bytes) -> Any:
+        """Turn headerless 16-bit PCM into what faster-whisper expects.
+
+        The engine contract (:class:`~app.voice.stt.base.AudioChunk`) is raw
+        little-endian PCM, but ``WhisperModel.transcribe`` wants a float32 array
+        in ``[-1, 1]``. An injected ``model_factory`` (the test seam) receives the
+        bytes untouched, so the streaming policy is testable with no numpy.
+        """
+        if self._model_factory is not None:
+            return audio
+        try:
+            import numpy as np
+        except ImportError as exc:  # pragma: no cover - numpy ships with faster-whisper
+            raise DependencyUnavailableError(
+                "stt",
+                reason="numpy is required to decode audio for faster-whisper",
+                cause=exc,
+            ) from exc
+        return np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
 
     async def _get_model(self) -> Any:
         """Build the model once, off the event loop, and cache it."""

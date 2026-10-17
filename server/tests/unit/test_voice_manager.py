@@ -229,3 +229,71 @@ async def test_interrupt_does_nothing_without_a_turn() -> None:
     # No in-flight turn: interrupt just sets the flag and returns True.
     assert await manager.interrupt(session.session_id) is True
     assert session.interrupt.is_set() is True
+
+
+async def test_handle_audio_forwards_audio_to_sink() -> None:
+    """``on_audio`` reaches ``run_turn``, so a transport can stream playback."""
+    manager = _manager(FakeSTT([("hi", True)]), FakeTTS((b"x", b"y")))
+    session = manager.create_session()
+    received: list[bytes] = []
+
+    async def _chunks() -> AsyncIterator[Any]:
+        yield b"audio"
+
+    async def sink(chunk: bytes) -> None:
+        received.append(chunk)
+
+    replies = await manager.handle_audio(session.session_id, _chunks(), on_audio=sink)
+    assert [r.text for r in replies] == ["echo:hi"]
+    assert received == [b"x", b"y"]
+
+
+def test_barge_in_sets_the_flag_without_cancelling() -> None:
+    """``barge_in`` stops the audio loop but leaves the consuming loop alive.
+
+    Where :meth:`interrupt` cancels the pipeline task (ending a finite upload),
+    ``barge_in`` only raises the flag so a long-lived socket keeps listening.
+    """
+    manager = _manager(FakeSTT([]), FakeTTS())
+    session = manager.create_session()
+    assert manager.barge_in(session.session_id) is True
+    assert session.interrupt.is_set() is True
+    assert manager.barge_in("missing") is False
+
+
+async def test_barge_in_ends_the_turn_but_handle_audio_continues() -> None:
+    """A barge-in during synthesis marks one turn; the next utterance still runs."""
+    bus = EventBus()
+    stt = FakeSTT([("first", True), ("second", True)])
+    tts = FakeTTS((b"1", b"2", b"3"))
+    manager = _manager(stt, tts, bus)
+    session = manager.create_session()
+
+    replies: list[VoiceReply] = []
+    barged = {"done": False}
+
+    async def _chunks() -> AsyncIterator[Any]:
+        yield b"audio"
+
+    async def sink(chunk: bytes) -> None:
+        # Talk over the first answer only.
+        if chunk == b"1" and not barged["done"]:
+            barged["done"] = True
+            manager.barge_in(session.session_id)
+
+    # Drain the two utterances the fake STT yields; capture replies as they land.
+    collected: list[VoiceReply] = []
+
+    async def run() -> None:
+        collected.extend(
+            await manager.handle_audio(session.session_id, _chunks(), on_audio=sink)
+        )
+
+    await run()
+    replies.extend(collected)
+    assert [r.text for r in replies] == ["echo:first", "echo:second"]
+    assert replies[0].interrupted is True
+    assert replies[1].interrupted is False
+    assert session.state is VoiceState.LISTENING
+    bus.close()
+

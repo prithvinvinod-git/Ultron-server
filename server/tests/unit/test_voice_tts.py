@@ -14,11 +14,15 @@ import pytest
 
 from app.config import VoiceSettings
 from app.core.errors import DependencyUnavailableError, UltronError
+from app.voice.fallback import FallbackTTSEngine
 from app.voice.tts import (
+    EdgeTTSTTS,
+    ElevenLabsTTS,
     NullTTSEngine,
     PiperTTS,
     TTSEngine,
     create_tts_engine,
+    edge_tts_available,
     split_sentences,
 )
 
@@ -166,3 +170,189 @@ def test_factory_returns_piper() -> None:
     engine = create_tts_engine(_settings())
     assert isinstance(engine, PiperTTS)
     assert isinstance(engine, TTSEngine)
+
+
+def test_factory_returns_elevenlabs() -> None:
+    engine = create_tts_engine(
+        _settings(tts_engine="elevenlabs", elevenlabs_api_key="sk_test")
+    )
+    assert isinstance(engine, ElevenLabsTTS)
+    assert engine.available is True
+
+
+def test_factory_returns_edge_tts() -> None:
+    engine = create_tts_engine(_settings(tts_engine="edge-tts"))
+    assert isinstance(engine, EdgeTTSTTS)
+
+
+def test_factory_chains_a_configured_fallback() -> None:
+    engine = create_tts_engine(
+        _settings(tts_engine="elevenlabs", tts_fallback_engine="edge-tts")
+    )
+    assert isinstance(engine, FallbackTTSEngine)
+    assert engine.name == "elevenlabs>edge-tts"
+
+
+# --------------------------------------------------------------------------- #
+# ElevenLabs cloud adapter (§59.18), against an injected synthesizer.
+# --------------------------------------------------------------------------- #
+class RecordingSynthesizer:
+    """Returns fixed audio and records the text/voice it was handed."""
+
+    def __init__(self, audio: bytes = b"mp3") -> None:
+        self.audio = audio
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def __call__(self, text: str, voice: str | None) -> bytes:
+        self.calls.append((text, voice))
+        return self.audio
+
+
+def test_elevenlabs_maps_pcm_output_format_to_raw_pcm() -> None:
+    engine = ElevenLabsTTS(
+        _settings(tts_engine="elevenlabs", elevenlabs_output_format="pcm_22050")
+    )
+    assert engine.content_type == "audio/L16"
+    assert engine.sample_rate == 22050
+
+
+def test_elevenlabs_maps_mp3_output_format_to_a_container() -> None:
+    engine = ElevenLabsTTS(
+        _settings(
+            tts_engine="elevenlabs",
+            elevenlabs_output_format="mp3_44100_128",
+            tts_sample_rate=16000,
+        )
+    )
+    assert engine.content_type == "audio/mpeg"
+    assert engine.sample_rate == 16000
+
+
+def test_elevenlabs_availability_is_the_key_presence() -> None:
+    missing = ElevenLabsTTS(_settings(tts_engine="elevenlabs", elevenlabs_api_key=""))
+    assert missing.available is False
+    assert "ELEVENLABS_API_KEY" in (missing.unavailable_reason or "")
+
+    configured = ElevenLabsTTS(
+        _settings(tts_engine="elevenlabs", elevenlabs_api_key="sk_secret")
+    )
+    assert configured.available is True
+
+
+async def test_elevenlabs_synthesize_uses_the_injected_synthesizer() -> None:
+    synth = RecordingSynthesizer(b"\x01\x02")
+    engine = ElevenLabsTTS(_settings(tts_engine="elevenlabs"), synthesizer=synth)
+    assert await engine.synthesize("hello", voice="custom-voice") == b"\x01\x02"
+    assert synth.calls == [("hello", "custom-voice")]
+
+
+async def test_elevenlabs_stream_is_sentence_level() -> None:
+    synth = RecordingSynthesizer()
+    engine = ElevenLabsTTS(_settings(tts_engine="elevenlabs"), synthesizer=synth)
+    chunks = await _collect(engine.synthesize_stream("One. Two three."))
+    assert len(chunks) == 2
+    assert [call[0] for call in synth.calls] == ["One.", "Two three."]
+
+
+async def test_elevenlabs_unavailable_synthesize_raises() -> None:
+    engine = ElevenLabsTTS(_settings(tts_engine="elevenlabs", elevenlabs_api_key=""))
+    with pytest.raises(DependencyUnavailableError):
+        await engine.synthesize("hello")
+
+
+# --------------------------------------------------------------------------- #
+# edge-tts local adapter (§59.18), against an injected synthesizer.
+# --------------------------------------------------------------------------- #
+def test_edge_tts_declares_mp3_and_24khz() -> None:
+    engine = EdgeTTSTTS(_settings(tts_engine="edge-tts"), synthesizer=RecordingSynthesizer())
+    assert engine.content_type == "audio/mpeg"
+    assert engine.sample_rate == 24000
+    assert engine.available is True
+
+
+def test_edge_tts_availability_follows_the_package_without_an_injected_synth() -> None:
+    engine = EdgeTTSTTS(_settings(tts_engine="edge-tts"))
+    assert engine.available is edge_tts_available()
+    if not engine.available:
+        assert engine.unavailable_reason is not None
+
+
+async def test_edge_tts_synthesize_returns_audio() -> None:
+    synth = RecordingSynthesizer(b"mp3bytes")
+    engine = EdgeTTSTTS(_settings(tts_engine="edge-tts"), synthesizer=synth)
+    assert await engine.synthesize("hello") == b"mp3bytes"
+
+
+async def test_edge_tts_unavailable_synthesize_raises() -> None:
+    if edge_tts_available():  # pragma: no cover - only when the package is installed
+        pytest.skip("edge-tts is installed; nothing to degrade")
+    engine = EdgeTTSTTS(_settings(tts_engine="edge-tts"))
+    with pytest.raises(DependencyUnavailableError):
+        await engine.synthesize("hello")
+
+
+# --------------------------------------------------------------------------- #
+# Fallback chaining (§59.18): cloud first, local behind it.
+# --------------------------------------------------------------------------- #
+class FakeTTS(TTSEngine):
+    def __init__(
+        self,
+        name: str,
+        *,
+        audio: bytes = b"",
+        available: bool = True,
+        reason: str | None = None,
+        fail: bool = False,
+    ) -> None:
+        self.name = name
+        self._audio = audio
+        self._available = available
+        self._reason = reason
+        self._fail = fail
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        return self._reason
+
+    async def synthesize(self, text: str, *, voice: str | None = None) -> bytes:
+        if self._fail:
+            raise DependencyUnavailableError("tts", reason="primary broke")
+        return self._audio
+
+
+async def test_tts_fallback_uses_primary_when_available() -> None:
+    engine = FallbackTTSEngine(
+        FakeTTS("cloud", audio=b"cloud"), FakeTTS("local", audio=b"local")
+    )
+    assert engine.name == "cloud>local"
+    assert await engine.synthesize("hi") == b"cloud"
+
+
+async def test_tts_fallback_uses_the_local_engine_when_the_cloud_is_unavailable() -> None:
+    engine = FallbackTTSEngine(
+        FakeTTS("cloud", available=False, reason="no key"),
+        FakeTTS("local", audio=b"local"),
+    )
+    assert engine.available is True
+    assert await engine.synthesize("hi") == b"local"
+
+
+async def test_tts_fallback_retries_the_secondary_when_the_primary_raises() -> None:
+    engine = FallbackTTSEngine(
+        FakeTTS("cloud", fail=True), FakeTTS("local", audio=b"local picked up")
+    )
+    assert await engine.synthesize("hi") == b"local picked up"
+
+
+def test_tts_fallback_reports_unavailable_only_when_both_are() -> None:
+    engine = FallbackTTSEngine(
+        FakeTTS("cloud", available=False, reason="no key"),
+        FakeTTS("local", available=False, reason="not installed"),
+    )
+    assert engine.available is False
+    assert "no key" in (engine.unavailable_reason or "")
+    assert "not installed" in (engine.unavailable_reason or "")

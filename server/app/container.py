@@ -34,6 +34,7 @@ from app.config import Settings, get_settings
 from app.core.orchestrator import Orchestrator
 from app.core.planner import Planner
 from app.core.router import IntentRouter
+from app.database.models.enums import PermissionLevel
 from app.database.redis_client import RedisClient, create_redis_client
 from app.database.repositories import (
     AgentLogRepository,
@@ -67,6 +68,7 @@ from app.database.session import (
     read_session_scope,
     session_scope,
 )
+from app.devices.manager import DeviceManager
 from app.events.bus import EventBus
 from app.events.handlers import PersistEvents
 from app.memory import (
@@ -96,6 +98,7 @@ from app.tools.bootstrap import build_tool_registry
 from app.tools.browser import BrowserSessionManager
 from app.tools.filesystem.sandbox import FilesystemSandbox
 from app.tools.registry import ToolRegistry
+from app.voice.manager import VoiceManager
 from app.workspaces.manager import SubprocessGitRunner
 
 
@@ -139,7 +142,9 @@ class Container:
         self._notifications = notifications
         self._browser_sessions: BrowserSessionManager | None = None
         self._node_gateway: NodeGateway | None = None
+        self._device_manager: DeviceManager | None = None
         self._model_router: ModelRouter | None = None
+        self._voice: VoiceManager | None = None
         self._embedding_provider: EmbeddingProvider | None = None
         self._memory_recorder: MemoryRecorder | None = None
         self._register_default_checks()
@@ -242,6 +247,24 @@ class Container:
         return self._node_gateway
 
     @property
+    def device_manager(self) -> DeviceManager:
+        """Return the device gateway (T161, spec §26).
+
+        Built from ``DeviceSettings``; it holds no I/O of its own until a device
+        registers, so this is cheap and safe when the device subsystem is
+        disabled (``DEVICES_ENABLED=false``). Devices publish to the same event
+        bus as the rest of Core, so ``WAKE_DETECTED`` from a board reaches the
+        voice path and ``DEVICE_CONNECTED``/``DEVICE_DISCONNECTED`` the
+        presence-driven UI (§19) without extra wiring.
+        """
+        if self._device_manager is None:
+            self._device_manager = DeviceManager(
+                settings=self.settings.devices,
+                bus=self.events,
+            )
+        return self._device_manager
+
+    @property
     def tools(self) -> ToolRegistry:
         """Return the registered tools (T035/T097).
 
@@ -330,6 +353,49 @@ class Container:
         return self._model_router
 
     @property
+    def voice(self) -> VoiceManager:
+        """Return the voice manager, building it on first access (T154, §25).
+
+        Voice is another front door onto the same agents and tools (§59.21), so
+        the manager is wired with the *shared* model router and tool registry
+        through :func:`~app.voice.responder.build_agent_responder`, not with a
+        provider of its own. The STT and TTS engines come from their factories,
+        which fall back honestly to a null engine (raising a typed 503) when a
+        selected engine is missing or unconfigured (§64.11).
+
+        Built lazily because engines are cheap until first use (§25): an
+        unconfigured voice stack is discovered at the first utterance, where it
+        can be reported, not at process start where it would take the server down.
+        """
+        if self._voice is None:
+            from app.voice.manager import build_voice_manager
+            from app.voice.responder import build_agent_responder
+            from app.voice.stt import create_stt_engine
+            from app.voice.tts import create_tts_engine
+
+            settings = self.settings.voice
+            stt = create_stt_engine(settings)
+            tts = create_tts_engine(settings)
+            responder = build_agent_responder(
+                model_router=self.model_router,
+                tools=self.tools,
+                events=self.events,
+                session_scope=self.session_scope,
+                get_audit_log_repository=self.get_audit_log_repository,
+                default_permission_level=PermissionLevel(
+                    str(self.settings.agent_default_permission_level)
+                ),
+            )
+            self._voice = build_voice_manager(
+                settings,
+                self.events,
+                stt=stt,
+                tts=tts,
+                responder=responder,
+            )
+        return self._voice
+
+    @property
     def embedding_provider(self) -> EmbeddingProvider:
         """Return the embedding provider for semantic memory (T127).
 
@@ -382,6 +448,7 @@ class Container:
         await self._start_persist_handler()
         await self._start_memory_recorder()
         await self._start_node_gateway()
+        await self._start_device_manager()
 
     async def _start_node_gateway(self) -> None:
         """Start the computer-node heartbeat monitor when the subsystem is on (T141).
@@ -393,6 +460,17 @@ class Container:
         if not self.settings.computer_nodes.enabled:
             return
         await self.node_gateway.start()
+
+    async def _start_device_manager(self) -> None:
+        """Start the device heartbeat monitor when the subsystem is on (T161).
+
+        No-op when ``DEVICES_ENABLED`` is off, so a deployment that hosts no
+        devices never starts the monitor. Only started if the manager was built
+        (it is lazy), so this never forces the object graph into existence.
+        """
+        if not self.settings.devices.enabled:
+            return
+        await self.device_manager.start()
 
     async def _start_memory_recorder(self) -> None:
         """Attach the episodic-memory subscriber when memory is enabled (T128).
@@ -442,6 +520,9 @@ class Container:
         if self._node_gateway is not None:
             await self._node_gateway.stop()
             self._node_gateway = None
+        if self._device_manager is not None:
+            await self._device_manager.stop()
+            self._device_manager = None
         if self._events is not None:
             self._events.close()
         if self._browser_sessions is not None:

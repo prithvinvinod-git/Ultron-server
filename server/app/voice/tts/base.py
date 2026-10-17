@@ -45,6 +45,12 @@ class TTSEngine(ABC):
     #: Sample rate of the audio this engine emits, in Hz.
     sample_rate: int = 22050
 
+    #: Media type of the audio this engine emits. The default is headerless
+    #: little-endian 16-bit PCM (what Piper and ElevenLabs ``pcm_*`` produce);
+    #: an adapter that emits a container (MP3) overrides it so a client can pick
+    #: a decoder instead of assuming raw samples.
+    content_type: str = "audio/L16"
+
     @property
     def available(self) -> bool:
         """Whether this engine can synthesise at all.

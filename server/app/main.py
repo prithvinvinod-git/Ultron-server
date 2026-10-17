@@ -184,7 +184,18 @@ def _include_routers(app: FastAPI) -> None:
     the complete list of routes the application exposes, and a missing entry is
     a visible omission instead of a silent one.
     """
-    from app.api.routes import agents, auth, chat, events, health, nodes, tasks, tools
+    from app.api.routes import (
+        agents,
+        auth,
+        chat,
+        devices,
+        events,
+        health,
+        nodes,
+        tasks,
+        tools,
+        voice,
+    )
 
     app.include_router(auth.router)
     app.include_router(health.router)
@@ -194,6 +205,8 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(tools.router)
     app.include_router(chat.router)
     app.include_router(nodes.router)
+    app.include_router(devices.router)
+    app.include_router(voice.router)
 
 
 def _error_body(exc: UltronError) -> dict[str, Any]:

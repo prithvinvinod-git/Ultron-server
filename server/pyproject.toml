@@ -54,9 +54,11 @@ providers = [
 browser = [
     "playwright>=1.49",
 ]
-# Local voice stack (spec section 25).
+# Local voice stack (spec section 25). The cloud engines (Groq STT,
+# ElevenLabs TTS) need no extra: they speak HTTP through httpx.
 voice = [
     "faster-whisper>=1.1",
+    "edge-tts>=6.1",
 ]
 # Optional MQTT device transport (spec section 26).
 iot = [
@@ -174,10 +176,13 @@ exclude = ["^migrations/versions/", "^\\.venv/", "^tests/fixtures/sample_repo/"]
 module = [
     "apscheduler.*",
     "asyncpg.*",
+    "edge_tts.*",
     "fakeredis.*",
     "faster_whisper.*",
     "faster_whisper.tokenizer.*",
     "google.*",
+    "numpy",
+    "numpy.*",
     "openai.*",
     "anthropic.*",
     "paho.*",

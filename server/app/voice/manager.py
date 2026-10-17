@@ -197,6 +197,7 @@ class VoiceManager:
         chunks: AsyncIterator[AudioChunk],
         *,
         language: str | None = None,
+        on_audio: AudioSink | None = None,
     ) -> list[VoiceReply]:
         """Transcribe a stream of audio and run a turn for each final utterance.
 
@@ -204,6 +205,10 @@ class VoiceManager:
         utterance completes, then hands the final transcript to the pipeline.
         Barge-in: a partial that arrives while the session is still speaking
         interrupts the in-flight turn (§59.19).
+
+        ``on_audio`` receives each synthesized chunk as it is produced, so a
+        transport (the WebSocket route) can stream playback while the turn is
+        still being spoken rather than buffering the whole reply first.
         """
         session = self._require(session_id)
         replies: list[VoiceReply] = []
@@ -232,7 +237,7 @@ class VoiceManager:
             )
             if not text.strip():
                 continue
-            replies.append(await self.run_turn(session_id, text))
+            replies.append(await self.run_turn(session_id, text, on_audio=on_audio))
         return replies
 
     async def run_turn(
@@ -309,6 +314,26 @@ class VoiceManager:
         _LOGGER.info(
             "voice interrupted",
             extra={"event": "voice.interrupted", "session_id": session_id, "reason": reason},
+        )
+        return True
+
+    def barge_in(self, session_id: str) -> bool:
+        """Signal a barge-in without tearing down the consuming loop.
+
+        :meth:`interrupt` cancels the pipeline task, which is right for a
+        single finite audio upload but fatal to a long-lived stream: the
+        WebSocket session must keep listening after the user talks over ULTRON.
+        This only sets the interrupt flag, so the audio loop stops delivering at
+        the next chunk and :meth:`run_turn` returns the turn as interrupted,
+        while :meth:`handle_audio` carries on with the next utterance.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return False
+        session.interrupt.set()
+        _LOGGER.info(
+            "voice barge-in",
+            extra={"event": "voice.barge_in", "session_id": session_id},
         )
         return True
 

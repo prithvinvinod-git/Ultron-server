@@ -329,6 +329,16 @@
 @keyframes voice-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in oklch,var(--primary) 40%,transparent);}50%{box-shadow:0 0 0 7px color-mix(in oklch,var(--primary) 0%,transparent);}}
 .core-display.voice-on .ring-light{stroke-width:3;}
 
+/* --- realtime voice transcript HUD --------------------------------------- */
+.voice-hud{margin-top:14px;width:min(520px,100%);border:1px solid color-mix(in oklch,var(--primary) 30%,var(--border));background:color-mix(in oklch,var(--accent) 60%,transparent);border-radius:4px;padding:11px 14px;display:flex;flex-direction:column;gap:6px;text-align:left;}
+.voice-hud-head{display:flex;align-items:center;gap:8px;font-size:8px;letter-spacing:1.5px;color:var(--primary);text-transform:uppercase;}
+.voice-hud-head .status-dot{background:var(--primary);box-shadow:0 0 8px var(--primary);}
+.voice-hud-line{font-size:10px;line-height:1.45;color:var(--foreground);}
+.voice-hud-line.user{color:var(--muted-foreground);}
+.voice-hud-line.core::before{content:"ULTRON · ";color:var(--primary);font-size:8px;letter-spacing:1px;}
+.voice-hud-hint{font-size:8px;color:var(--muted-foreground);}
+.voice-hud-error{color:var(--destructive,#ff5b5b);}
+
 /* --- single-viewport command center (desktop) ---------------------------- */
 @media (min-width:901px){
   .ultron-shell{height:100svh;display:flex;flex-direction:column;overflow:hidden;}

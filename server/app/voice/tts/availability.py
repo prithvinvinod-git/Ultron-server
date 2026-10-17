@@ -1,22 +1,30 @@
-"""Piper executable availability probe (T151, spec §59.18).
+"""Local text-to-speech availability probes (T151, spec §59.18).
 
-Piper is an external **binary** (a local neural TTS engine), not a Python
-package, so unlike the STT probe this one resolves an executable. ULTRON must
-never assume it is installed: the probe returns ``False`` with a reason so the
+The local adapters are not Python packages in the usual sense: Piper is an
+external **binary** resolved on the filesystem, and ``edge-tts`` is a Python
+package that shells out to Microsoft's Edge read-aloud service. ULTRON must never
+assume either is installed: each probe returns ``False`` with a reason so the
 voice subsystem can degrade honestly rather than crash (§59.18, §64.11).
 
-The probe only proves the binary is resolvable on this machine; the voice model
-(``*.onnx``) is a separate download and a missing model is reported when the
-engine is first used.
+The Piper probe only proves the binary is resolvable on this machine; the voice
+model (``*.onnx``) is a separate download and a missing model is reported when
+the engine is first used. The ``edge-tts`` probe only proves the package is
+importable.
 """
 
 from __future__ import annotations
 
 import functools
+import importlib.util
 import shutil
 from pathlib import Path
 
-__all__ = ["piper_available", "piper_unavailable_reason"]
+__all__ = [
+    "edge_tts_available",
+    "edge_tts_unavailable_reason",
+    "piper_available",
+    "piper_unavailable_reason",
+]
 
 
 def _resolve(binary_path: str) -> str | None:
@@ -47,4 +55,24 @@ def piper_unavailable_reason(binary_path: str) -> str | None:
         f"the Piper executable '{binary_path or '<unset>'}' was not found; "
         "install Piper and set TTS_BINARY_PATH to its location to enable "
         "local text-to-speech"
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def edge_tts_available() -> bool:
+    """Whether the ``edge_tts`` package can be imported.
+
+    Cached: the answer cannot change without a process restart.
+    """
+    return importlib.util.find_spec("edge_tts") is not None
+
+
+@functools.lru_cache(maxsize=1)
+def edge_tts_unavailable_reason() -> str | None:
+    """A human-readable reason edge-tts is unavailable, else ``None``."""
+    if edge_tts_available():
+        return None
+    return (
+        "the 'edge-tts' package is not installed; install it with "
+        "'pip install edge-tts' to enable local text-to-speech"
     )

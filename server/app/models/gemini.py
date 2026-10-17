@@ -15,7 +15,9 @@ difference so nothing above it can tell:
   list of ``parts`` (``text``, ``functionCall``, ``functionResponse``); a system
   prompt is the separate ``systemInstruction``. Tools are
   ``tools[].functionDeclarations[]``. The adapter maps the T060 vocabulary onto
-  these and back.
+  these and back. A thinking model attaches a ``thoughtSignature`` to each
+  ``functionCall`` and rejects the follow-up turn (HTTP 400) unless the call is
+  replayed with it, so it is round-tripped through ``ToolCall.signature``.
 * Token counts live in ``usageMetadata`` (``promptTokenCount`` /
   ``candidatesTokenCount``) and the stop reason in ``candidates[].finishReason``;
   :data:`_FINISH_REASONS` normalises both, and a returned ``functionCall`` forces
@@ -307,7 +309,14 @@ class GeminiProvider(ModelProvider):
             if message.content:
                 parts.append({"text": message.content})
             for call in message.tool_calls:
-                parts.append({"functionCall": {"name": call.name, "args": call.arguments}})
+                call_part: dict[str, Any] = {
+                    "functionCall": {"name": call.name, "args": call.arguments}
+                }
+                # Gemini 3 rejects a replayed functionCall that drops the
+                # thoughtSignature it issued; echo it back when we have it.
+                if call.signature:
+                    call_part["thoughtSignature"] = call.signature
+                parts.append(call_part)
             contents.append(
                 {"role": "model" if role is MessageRole.ASSISTANT else "user", "parts": parts}
             )
@@ -342,11 +351,13 @@ class GeminiProvider(ModelProvider):
             if not isinstance(name, str) or not name:
                 continue
             args = call.get("args")
+            signature = part.get("thoughtSignature")
             calls.append(
                 ToolCall(
                     id=f"{_PROVIDER}-call-{index}",
                     name=name,
                     arguments=dict(args) if isinstance(args, dict) else {},
+                    signature=signature if isinstance(signature, str) and signature else None,
                 )
             )
         return tuple(calls)

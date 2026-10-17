@@ -377,3 +377,24 @@ export const healthApi = {
     return body as HealthReport;
   },
 };
+
+// --- Voice (§25) -------------------------------------------------------------
+
+export interface VoiceEngineInfo {
+  engine: string;
+  available: boolean;
+  reason: string | null;
+  sample_rate: number;
+  content_type?: string | null;
+}
+
+export interface VoiceEngines {
+  enabled: boolean;
+  stt: VoiceEngineInfo;
+  tts: VoiceEngineInfo;
+}
+
+export const voiceApi = {
+  /** The honest STT/TTS availability report; read before offering the mic. */
+  engines: () => api.get<VoiceEngines>("/voice/engines"),
+};

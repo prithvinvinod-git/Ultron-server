@@ -56,10 +56,12 @@ if TYPE_CHECKING:
         SessionRepository,
         UserRepository,
     )
+    from app.devices.manager import DeviceManager
     from app.models.router import ModelRouter
     from app.observability.health import HealthService
     from app.tasks.manager import TaskManager
     from app.tools.registry import ToolRegistry
+    from app.voice.manager import VoiceManager
 
     def _accepts_protocol(container: ContainerProtocol) -> None:
         """Signature only. Never defined at runtime."""
@@ -171,6 +173,26 @@ class ContainerProtocol(Protocol):
         Declared here for the same reason as ``events``: the routes need the
         gateway without importing the composition root, so a test can supply a
         gateway backed by a transport double.
+        """
+        ...
+
+    @property
+    def device_manager(self) -> DeviceManager:
+        """The device gateway (T161), read by the ``/devices`` routes.
+
+        Declared here for the same reason as ``events``: the routes need the
+        manager without importing the composition root, so a test can supply one
+        backed by a transport double.
+        """
+        ...
+
+    @property
+    def voice(self) -> VoiceManager:
+        """The voice manager (T154), read by the ``/voice`` routes.
+
+        Declared here for the same reason as ``events``: the routes need the
+        manager without importing the composition root, so a test can supply one
+        wired with fake STT/TTS engines and its own event bus.
         """
         ...
 

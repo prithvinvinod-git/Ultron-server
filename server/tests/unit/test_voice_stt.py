@@ -16,11 +16,15 @@ import pytest
 
 from app.config import VoiceSettings
 from app.core.errors import DependencyUnavailableError
+from app.voice.fallback import FallbackSTTEngine
 from app.voice.stt import (
     AudioChunk,
     FasterWhisperSTT,
+    GroqWhisperSTT,
     NullSTTEngine,
     OverlapDeduper,
+    STTEngine,
+    TranscriptChunk,
     UtteranceBoundary,
     create_stt_engine,
     faster_whisper_available,
@@ -191,6 +195,21 @@ async def test_pause_does_not_retranscribe_the_utterance() -> None:
     assert finals[0].utterance_id == 0
 
 
+async def test_faster_whisper_end_of_utterance_closes_immediately() -> None:
+    model = FakeModel(["hello ", "world"])
+    engine = FasterWhisperSTT(_settings(), model_factory=lambda: model, silence_chunks=99)
+    chunks = [
+        _speech(b"pcm1"),
+        _speech(b"pcm2"),
+        AudioChunk(data=b"", is_speech=False, end_of_utterance=True),
+    ]
+    out = [c async for c in engine.transcribe_stream(_aiter(chunks))]
+    finals = [c for c in out if c.is_final]
+    # The adapter strips each chunk, so "hello " + "world" joins without a space.
+    assert [f.text for f in finals] == ["helloworld"]
+    assert finals[0].utterance_id == 0
+
+
 async def test_two_utterances_get_distinct_ids() -> None:
     model = FakeModel(["first phrase", " second phrase"])
     engine = FasterWhisperSTT(_settings(), model_factory=lambda: model, silence_chunks=3)
@@ -224,3 +243,215 @@ def test_factory_returns_null_for_none_engine() -> None:
 def test_factory_returns_faster_whisper() -> None:
     engine = create_stt_engine(_settings())
     assert isinstance(engine, FasterWhisperSTT)
+
+
+def test_factory_returns_groq() -> None:
+    engine = create_stt_engine(_settings(stt_engine="groq", groq_api_key="gsk_test"))
+    assert isinstance(engine, GroqWhisperSTT)
+    assert engine.available is True
+
+
+def test_factory_chains_a_configured_fallback() -> None:
+    engine = create_stt_engine(
+        _settings(stt_engine="groq", stt_fallback_engine="faster-whisper")
+    )
+    assert isinstance(engine, FallbackSTTEngine)
+    assert engine.name == "groq>faster-whisper"
+
+
+# --------------------------------------------------------------------------- #
+# Groq cloud adapter (§59.17), against an injected transcriber.
+# --------------------------------------------------------------------------- #
+class RecordingTranscriber:
+    """Pops one scripted text per call and records what it was handed."""
+
+    def __init__(self, texts: Iterable[str]) -> None:
+        self._texts = list(texts)
+        self.calls: list[tuple[bytes, str | None]] = []
+
+    async def __call__(self, audio: bytes, language: str | None) -> str:
+        self.calls.append((audio, language))
+        return self._texts.pop(0) if self._texts else ""
+
+
+def test_groq_availability_is_the_key_presence() -> None:
+    missing = GroqWhisperSTT(_settings(stt_engine="groq", groq_api_key=""))
+    assert missing.available is False
+    assert "GROQ_API_KEY" in (missing.unavailable_reason or "")
+
+    configured = GroqWhisperSTT(
+        _settings(stt_engine="groq", groq_api_key="gsk_secret")
+    )
+    assert configured.available is True
+    assert configured.unavailable_reason is None
+
+
+async def test_groq_one_shot_transcribe() -> None:
+    transcriber = RecordingTranscriber(["hello there"])
+    engine = GroqWhisperSTT(_settings(stt_engine="groq"), transcriber=transcriber)
+    assert await engine.transcribe(b"pcm") == "hello there"
+    assert transcriber.calls == [(b"pcm", "en")]
+
+
+async def test_groq_stream_emits_incremental_partials_then_full_final() -> None:
+    # The buffer grows; only the new suffix is streamed, the final is whole.
+    transcriber = RecordingTranscriber(["play some", "play some music"])
+    engine = GroqWhisperSTT(
+        _settings(stt_engine="groq"), transcriber=transcriber, silence_chunks=3
+    )
+    chunks = [_speech(b"pcm1"), _speech(b"pcm2"), _silence(), _silence(), _silence()]
+    out = [c async for c in engine.transcribe_stream(_aiter(chunks))]
+
+    partials = [c.text for c in out if not c.is_final]
+    finals = [c for c in out if c.is_final]
+    assert partials == ["play some", "music"]
+    assert len(finals) == 1
+    assert finals[0].text == "play some music"
+    assert finals[0].utterance_id == 0
+
+
+async def test_groq_stream_without_partials_only_recognises_at_the_boundary() -> None:
+    transcriber = RecordingTranscriber(["first and second"])
+    engine = GroqWhisperSTT(
+        _settings(stt_engine="groq", stt_partial_results=False),
+        transcriber=transcriber,
+        silence_chunks=2,
+    )
+    chunks = [_speech(b"pcm1"), _speech(b"pcm2"), _silence(), _silence()]
+    out = [c async for c in engine.transcribe_stream(_aiter(chunks))]
+
+    # One request, at the boundary, and it carried both speech chunks.
+    assert len(transcriber.calls) == 1
+    assert transcriber.calls[0][0] == b"pcm1pcm2"
+    assert [c.text for c in out if c.is_final] == ["first and second"]
+    assert all(c.is_final for c in out)
+
+
+async def test_groq_stream_flushes_an_open_utterance_at_end_of_stream() -> None:
+    transcriber = RecordingTranscriber(["unfinished thought"])
+    engine = GroqWhisperSTT(_settings(stt_engine="groq"), transcriber=transcriber)
+    out = [c async for c in engine.transcribe_stream(_aiter([_speech(b"pcm")]))]
+    assert [c.text for c in out if c.is_final] == ["unfinished thought"]
+
+
+async def test_groq_unavailable_transcribe_raises() -> None:
+    engine = GroqWhisperSTT(_settings(stt_engine="groq", groq_api_key=""))
+    with pytest.raises(DependencyUnavailableError):
+        await engine.transcribe(b"pcm")
+
+
+async def test_groq_end_of_utterance_closes_immediately() -> None:
+    # A transport-level end-of-turn (client VAD) closes the turn without silence.
+    transcriber = RecordingTranscriber(["hello world"])
+    engine = GroqWhisperSTT(
+        _settings(stt_engine="groq", stt_partial_results=False),
+        transcriber=transcriber,
+        silence_chunks=99,
+    )
+    chunks = [
+        _speech(b"pcm1"),
+        _speech(b"pcm2"),
+        AudioChunk(data=b"", is_speech=False, end_of_utterance=True),
+    ]
+    out = [c async for c in engine.transcribe_stream(_aiter(chunks))]
+    finals = [c for c in out if c.is_final]
+    assert [f.text for f in finals] == ["hello world"]
+    assert finals[0].utterance_id == 0
+
+
+def test_groq_wraps_pcm_in_a_wav_container() -> None:
+    from app.voice.stt.groq import _wrap_pcm
+
+    pcm = b"\x01\x00\x02\x00"
+    wav = _wrap_pcm(pcm, "wav", 16000)
+    assert wav[:4] == b"RIFF"
+    assert wav[8:12] == b"WAVE"
+    assert wav[12:16] == b"fmt "
+    assert wav[36:40] == b"data"
+    assert wav[40:44] == len(pcm).to_bytes(4, "little")
+    assert wav[44:] == pcm
+    # A non-wav target has no encoder here, so the bytes pass through unchanged.
+    assert _wrap_pcm(pcm, "mp3", 16000) == pcm
+
+
+# --------------------------------------------------------------------------- #
+# Fallback chaining (§59.17): cloud first, local behind it.
+# --------------------------------------------------------------------------- #
+class FakeSTT(STTEngine):
+    def __init__(
+        self,
+        name: str,
+        *,
+        text: str = "",
+        available: bool = True,
+        reason: str | None = None,
+        fail: bool = False,
+    ) -> None:
+        self.name = name
+        self._text = text
+        self._available = available
+        self._reason = reason
+        self._fail = fail
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        return self._reason
+
+    async def transcribe(self, audio: bytes, *, language: str | None = None) -> str:
+        if self._fail:
+            raise DependencyUnavailableError("stt", reason="primary broke")
+        return self._text
+
+    async def transcribe_stream(
+        self, chunks: AsyncIterator[AudioChunk], *, language: str | None = None
+    ) -> AsyncIterator[TranscriptChunk]:
+        if not self._available:
+            raise DependencyUnavailableError("stt", reason=self._reason or "unavailable")
+        yield TranscriptChunk(text=self._text, is_final=True)
+
+
+async def test_fallback_uses_primary_when_available() -> None:
+    engine = FallbackSTTEngine(
+        FakeSTT("cloud", text="from cloud"), FakeSTT("local", text="from local")
+    )
+    assert engine.name == "cloud>local"
+    assert await engine.transcribe(b"pcm") == "from cloud"
+
+
+async def test_fallback_uses_the_local_engine_when_the_cloud_is_unavailable() -> None:
+    engine = FallbackSTTEngine(
+        FakeSTT("cloud", available=False, reason="no key"),
+        FakeSTT("local", text="from local"),
+    )
+    assert engine.available is True
+    assert await engine.transcribe(b"pcm") == "from local"
+
+
+async def test_fallback_retries_the_secondary_when_the_primary_raises() -> None:
+    engine = FallbackSTTEngine(
+        FakeSTT("cloud", fail=True), FakeSTT("local", text="local picked up")
+    )
+    assert await engine.transcribe(b"pcm") == "local picked up"
+
+
+def test_fallback_reports_unavailable_only_when_both_are() -> None:
+    engine = FallbackSTTEngine(
+        FakeSTT("cloud", available=False, reason="no key"),
+        FakeSTT("local", available=False, reason="not installed"),
+    )
+    assert engine.available is False
+    assert "no key" in (engine.unavailable_reason or "")
+    assert "not installed" in (engine.unavailable_reason or "")
+
+
+async def test_fallback_stream_selects_the_available_engine() -> None:
+    engine = FallbackSTTEngine(
+        FakeSTT("cloud", available=False, reason="no key"),
+        FakeSTT("local", text="local text"),
+    )
+    out = [c async for c in engine.transcribe_stream(_aiter([]))]
+    assert [c.text for c in out] == ["local text"]

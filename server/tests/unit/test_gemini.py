@@ -261,6 +261,64 @@ async def test_chat_parses_a_function_call() -> None:
     assert response.finish_reason is FinishReason.TOOL_CALLS
 
 
+@respx.mock
+async def test_chat_parses_a_function_call_thought_signature() -> None:
+    respx.post(GENERATE).mock(
+        return_value=httpx.Response(
+            200,
+            json=_completion(
+                parts=[
+                    {
+                        "functionCall": {"name": "mock.echo", "args": {"text": "x"}},
+                        "thoughtSignature": "sig-abc",
+                    }
+                ]
+            ),
+        )
+    )
+    provider = GeminiProvider(_settings())
+
+    response = await provider.chat(_request())
+
+    assert response.tool_calls[0].signature == "sig-abc"
+
+
+@respx.mock
+async def test_chat_replays_a_function_call_with_its_thought_signature() -> None:
+    route = respx.post(GENERATE).mock(return_value=httpx.Response(200, json=_completion()))
+    provider = GeminiProvider(_settings())
+
+    await provider.chat(
+        _request(
+            messages=(
+                ModelMessage(
+                    role=MessageRole.ASSISTANT,
+                    content="",
+                    tool_calls=(
+                        ToolCall(
+                            id="c1",
+                            name="mock.echo",
+                            arguments={"text": "x"},
+                            signature="sig-abc",
+                        ),
+                    ),
+                ),
+                ModelMessage(
+                    role=MessageRole.TOOL, content="result", name="mock.echo", tool_call_id="c1"
+                ),
+            )
+        )
+    )
+
+    contents = _json_body(route)["contents"]
+    assert contents[0]["parts"] == [
+        {
+            "functionCall": {"name": "mock.echo", "args": {"text": "x"}},
+            "thoughtSignature": "sig-abc",
+        }
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # chat error mapping
 # --------------------------------------------------------------------------- #

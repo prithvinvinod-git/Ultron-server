@@ -58,6 +58,12 @@ class AudioChunk:
     #: Whether the VAD judged this chunk to contain speech.
     is_speech: bool = True
 
+    #: Set by a transport that detects the end of an utterance itself (client-side
+    #: VAD, push-to-talk release). An engine closes the current utterance on this
+    #: chunk instead of waiting for a run of silence, so a browser that streams
+    #: only speech can still turn the floor over without a pause (§59.17, §59.19).
+    end_of_utterance: bool = False
+
 
 @dataclass(frozen=True, slots=True)
 class TranscriptChunk:

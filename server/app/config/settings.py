@@ -476,21 +476,47 @@ class DeviceSettings(BaseModel):
 
 
 class VoiceSettings(BaseModel):
-    """Voice subsystem settings (spec section 25)."""
+    """Voice subsystem settings (spec section 25).
+
+    Speech-to-text and text-to-speech are both ``cloud + local`` (§59.17,
+    §59.18): each names a *primary* engine and an optional *fallback*, so a
+    deployment can prefer a cloud provider and still degrade to an installed
+    local engine (or the other way around) without a code change. A cloud engine
+    is available only when its key is set, so ``STT_ENGINE=groq`` with an empty
+    ``GROQ_API_KEY`` reports itself unavailable rather than failing at the seam.
+    """
 
     enabled: bool = False
-    stt_engine: Literal["none", "faster-whisper"] = "none"
+
+    stt_engine: Literal["none", "faster-whisper", "groq"] = "none"
+    stt_fallback_engine: Literal["none", "faster-whisper", "groq"] = "none"
     stt_model: str = "base"
     stt_device: str = "cpu"
     stt_compute_type: str = "int8"
     stt_language: str = "en"
     stt_timeout: int = Field(default=60, ge=1)
     stt_partial_results: bool = True
-    tts_engine: Literal["none", "piper"] = "none"
+    #: Container the cloud STT endpoint is told the uploaded audio is in.
+    stt_audio_format: Literal["wav", "mp3", "webm", "ogg", "flac", "m4a"] = "wav"
+    groq_api_key: SecretStr = SecretStr("")
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_stt_model: str = "whisper-large-v3-turbo"
+
+    tts_engine: Literal["none", "piper", "elevenlabs", "edge-tts"] = "none"
+    tts_fallback_engine: Literal["none", "piper", "elevenlabs", "edge-tts"] = "none"
     tts_model_path: str = ""
     tts_binary_path: str = "piper"
     tts_sample_rate: int = Field(default=22050, ge=8000)
     tts_timeout: int = Field(default=60, ge=1)
+    elevenlabs_api_key: SecretStr = SecretStr("")
+    elevenlabs_base_url: str = "https://api.elevenlabs.io/v1"
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    elevenlabs_model: str = "eleven_turbo_v2_5"
+    #: ElevenLabs output format. ``pcm_*`` yields raw PCM (matching Piper);
+    #: any other value (``mp3_*``) yields a compressed container.
+    elevenlabs_output_format: str = "pcm_22050"
+    edge_tts_voice: str = "en-US-AriaNeural"
+
     interruption_enabled: bool = True
     session_ttl: int = Field(default=300, ge=10)
     wake_words: list[str] = Field(default_factory=lambda: ["ultron"])
@@ -797,18 +823,48 @@ class Settings(BaseSettings):
     mqtt_topic_prefix: Annotated[str, Field(alias="MQTT_TOPIC_PREFIX")] = "ultron"
 
     voice_enabled: Annotated[bool, Field(alias="VOICE_ENABLED")] = False
-    stt_engine: Annotated[Literal["none", "faster-whisper"], Field(alias="STT_ENGINE")] = "none"
+    stt_engine: Annotated[
+        Literal["none", "faster-whisper", "groq"], Field(alias="STT_ENGINE")
+    ] = "none"
+    stt_fallback_engine: Annotated[
+        Literal["none", "faster-whisper", "groq"], Field(alias="STT_FALLBACK_ENGINE")
+    ] = "none"
     stt_model: Annotated[str, Field(alias="STT_MODEL")] = "base"
     stt_device: Annotated[str, Field(alias="STT_DEVICE")] = "cpu"
     stt_compute_type: Annotated[str, Field(alias="STT_COMPUTE_TYPE")] = "int8"
     stt_language: Annotated[str, Field(alias="STT_LANGUAGE")] = "en"
     stt_timeout: Annotated[int, Field(alias="STT_TIMEOUT")] = 60
     stt_partial_results: Annotated[bool, Field(alias="STT_PARTIAL_RESULTS")] = True
-    tts_engine: Annotated[Literal["none", "piper"], Field(alias="TTS_ENGINE")] = "none"
+    stt_audio_format: Annotated[
+        Literal["wav", "mp3", "webm", "ogg", "flac", "m4a"], Field(alias="STT_AUDIO_FORMAT")
+    ] = "wav"
+    groq_api_key: Annotated[SecretStr, Field(alias="GROQ_API_KEY")] = SecretStr("")
+    groq_base_url: Annotated[str, Field(alias="GROQ_BASE_URL")] = (
+        "https://api.groq.com/openai/v1"
+    )
+    groq_stt_model: Annotated[str, Field(alias="GROQ_STT_MODEL")] = "whisper-large-v3-turbo"
+    tts_engine: Annotated[
+        Literal["none", "piper", "elevenlabs", "edge-tts"], Field(alias="TTS_ENGINE")
+    ] = "none"
+    tts_fallback_engine: Annotated[
+        Literal["none", "piper", "elevenlabs", "edge-tts"], Field(alias="TTS_FALLBACK_ENGINE")
+    ] = "none"
     tts_model_path: Annotated[str, Field(alias="TTS_MODEL_PATH")] = ""
     tts_binary_path: Annotated[str, Field(alias="TTS_BINARY_PATH")] = "piper"
     tts_sample_rate: Annotated[int, Field(alias="TTS_SAMPLE_RATE")] = 22050
     tts_timeout: Annotated[int, Field(alias="TTS_TIMEOUT")] = 60
+    elevenlabs_api_key: Annotated[SecretStr, Field(alias="ELEVENLABS_API_KEY")] = SecretStr("")
+    elevenlabs_base_url: Annotated[str, Field(alias="ELEVENLABS_BASE_URL")] = (
+        "https://api.elevenlabs.io/v1"
+    )
+    elevenlabs_voice_id: Annotated[str, Field(alias="ELEVENLABS_VOICE_ID")] = (
+        "21m00Tcm4TlvDq8ikWAM"
+    )
+    elevenlabs_model: Annotated[str, Field(alias="ELEVENLABS_MODEL")] = "eleven_turbo_v2_5"
+    elevenlabs_output_format: Annotated[str, Field(alias="ELEVENLABS_OUTPUT_FORMAT")] = (
+        "pcm_22050"
+    )
+    edge_tts_voice: Annotated[str, Field(alias="EDGE_TTS_VOICE")] = "en-US-AriaNeural"
     voice_interruption_enabled: Annotated[bool, Field(alias="VOICE_INTERRUPTION_ENABLED")] = True
     voice_session_ttl: Annotated[int, Field(alias="VOICE_SESSION_TTL")] = 300
     wake_words: Annotated[str, Field(alias="WAKE_WORDS")] = "ultron,hey ultron"
@@ -1264,17 +1320,29 @@ class Settings(BaseSettings):
         return VoiceSettings(
             enabled=self.voice_enabled,
             stt_engine=self.stt_engine,
+            stt_fallback_engine=self.stt_fallback_engine,
             stt_model=self.stt_model,
             stt_device=self.stt_device,
             stt_compute_type=self.stt_compute_type,
             stt_language=self.stt_language,
             stt_timeout=self.stt_timeout,
             stt_partial_results=self.stt_partial_results,
+            stt_audio_format=self.stt_audio_format,
+            groq_api_key=self.groq_api_key,
+            groq_base_url=self.groq_base_url,
+            groq_stt_model=self.groq_stt_model,
             tts_engine=self.tts_engine,
+            tts_fallback_engine=self.tts_fallback_engine,
             tts_model_path=self.tts_model_path,
             tts_binary_path=self.tts_binary_path,
             tts_sample_rate=self.tts_sample_rate,
             tts_timeout=self.tts_timeout,
+            elevenlabs_api_key=self.elevenlabs_api_key,
+            elevenlabs_base_url=self.elevenlabs_base_url,
+            elevenlabs_voice_id=self.elevenlabs_voice_id,
+            elevenlabs_model=self.elevenlabs_model,
+            elevenlabs_output_format=self.elevenlabs_output_format,
+            edge_tts_voice=self.edge_tts_voice,
             interruption_enabled=self.voice_interruption_enabled,
             session_ttl=self.voice_session_ttl,
             wake_words=self.wake_words,

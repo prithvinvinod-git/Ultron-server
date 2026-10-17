@@ -8,7 +8,13 @@ const arc = (radius: number, start: number, end: number) => {
   return `M${a.x},${a.y} A${radius},${radius} 0 ${end - start > 180 ? 1 : 0} 1 ${b.x},${b.y}`;
 };
 
-export function CoreDisplay({ online, paused, voice, mode, onToggleVoice }: { online: boolean; paused: boolean; voice: boolean; mode: string; onToggleVoice: () => void }) {
+export function CoreDisplay({ online, paused, voice, voiceState, mode, onToggleVoice }: { online: boolean; paused: boolean; voice: boolean; voiceState?: string; mode: string; onToggleVoice: () => void }) {
+  const voiceLabel = !voice
+    ? 'VOICE MODE'
+    : voiceState === 'connecting' ? 'CONNECTING'
+    : voiceState === 'thinking' ? 'PROCESSING'
+    : voiceState === 'speaking' ? 'SPEAKING'
+    : 'LISTENING';
   return <div className={`core-display ${online ? '' : 'core-offline'} ${paused ? 'motion-paused' : ''} ${voice ? 'voice-on' : ''}`}>
     <div className="core-coordinate coordinate-top">SYS.01 <span>NEURAL ORCHESTRATOR</span> 006.24</div>
     <svg className="core-art" viewBox="0 0 600 600" aria-hidden="true">
@@ -54,7 +60,7 @@ export function CoreDisplay({ online, paused, voice, mode, onToggleVoice }: { on
       <span className="core-eyebrow">ULTRON CORE</span>
       <div className="core-state">{online ? 'ONLINE' : 'STANDBY'}</div>
       <div className="core-status"><span className={`status-dot ${online ? '' : 'inactive'}`} />{online ? 'All systems operational' : 'Core is suspended'}</div>
-      <Button variant="ghost" className={`core-action core-voice${voice ? ' is-listening' : ''}`} onClick={onToggleVoice} aria-pressed={voice} aria-label={voice ? 'Stop voice mode' : 'Start voice mode'}><Mic />{voice ? 'VOICE ACTIVE' : 'VOICE MODE'}</Button>
+      <Button variant="ghost" className={`core-action core-voice${voice ? ' is-listening' : ''}`} onClick={onToggleVoice} aria-pressed={voice} aria-label={voice ? 'Stop voice mode' : 'Start voice mode'}><Mic />{voiceLabel}</Button>
       <div className="core-mode">{mode.toUpperCase()} PROTOCOL</div>
     </div>
     <div className="core-coordinate coordinate-bottom"><span>ENCRYPTED CONNECTION</span><ShieldCheck size={12} /> AES-256</div>
