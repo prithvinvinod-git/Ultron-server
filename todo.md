@@ -89,6 +89,8 @@ only the server can close:
 | `/events` SSE stream (T023) end to end — code exists (`277aac0`), never served live | needs a bound port |
 | T027 "server starts", event stream works | same |
 | Agent runtime, scheduler, browser tool, device bridge | each starts real workers or drivers |
+| Phase 10 live device path — a real ESP32 (or any board) dialling `WS /devices/ws` (T162): register, heartbeat, a `wake_word`/`button_press`, a `command`/`result`, `goodbye`, reconnect, and heartbeat-expiry offline (T167) | no board is attached here and spec §61 forbids running ULTRON; the session is proven only against `FakeDeviceSocket` |
+| Phase 10 live MQTT path — the real `PahoMqttClient` against a broker (T163) | the `iot` extra (`paho-mqtt`) is not installed here and there is no broker; the bridge is proven only against `FakeMqttClient` behind the `MqttClient` seam |
 | Rate limiting under real concurrency | needs a socket and real timing |
 
 ### B2. Server-side `.env` differs from this machine's
