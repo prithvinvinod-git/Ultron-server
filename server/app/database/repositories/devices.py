@@ -47,6 +47,21 @@ class DeviceRepository(UuidRepository[Device]):
 
     model = Device
 
+    async def find_by_external_id(self, device_id: str) -> Device | None:
+        """Return the device whose protocol ``device_id`` is ``device_id``.
+
+        The ``devices`` table's primary key is a UUID (T014), but §26 gives a
+        device a free-string identifier chosen by the firmware. The two are
+        bridged by storing the protocol id under ``metadata["device_id"]``
+        (T165), so this is the join between the wire identity and the row. The
+        JSON scalar access is portable — ``json_extract`` on SQLite, ``->>`` on
+        PostgreSQL — because both go through SQLAlchemy's JSON index type. When
+        T332 gives the node registry a first-class ``node_id`` column, this
+        lookup moves to it and the metadata key becomes a fallback.
+        """
+        statement = select(Device).where(Device.metadata_["device_id"].as_string() == device_id)
+        return await self._fetch_one(statement)
+
     async def authenticate(self, token_hash: str) -> Device | None:
         """Return the reachable device whose token hashes to ``token_hash``.
 

@@ -35,8 +35,11 @@ What it owns, and what it deliberately does not:
 
 It does **not** perform permission checks: §15's permission decision is the
 pipeline's, and a dispatch carries the principal only so the audit row can name
-it. It also does not persist: T165 writes the device row and ``device_events``
-through the repository; this manager is the live, in-process view.
+it. Persistence is a **seam** (T165): the manager calls an optional
+:class:`DeviceStore` on registration, heartbeat, the transition offline and a
+reported event, so the live view is made durable without the manager importing
+SQLAlchemy. A store write that fails is logged and swallowed (§64.11) — a device
+is never dropped because the database was momentarily unreachable.
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
@@ -69,7 +72,7 @@ from app.events.bus import EventBus
 from app.events.types import EventType
 from app.observability.logging import get_logger
 
-__all__ = ["DeviceConnection", "DeviceManager", "DeviceTransport"]
+__all__ = ["DeviceConnection", "DeviceManager", "DeviceStore", "DeviceTransport", "NullDeviceStore"]
 
 _LOGGER = get_logger(__name__)
 
@@ -87,6 +90,41 @@ class DeviceTransport(Protocol):
 
     async def close(self) -> None:
         """Close the connection. Idempotent."""
+
+
+@runtime_checkable
+class DeviceStore(Protocol):
+    """Durable view of the device layer (T165, §26).
+
+    The manager calls this on registration, heartbeat, offline transition and a
+    reported event. :class:`~app.devices.store.SqlDeviceStore` writes it through
+    the repositories; :class:`NullDeviceStore` is the default so the manager is
+    usable with no database at all. The protocol lives here, beside
+    :class:`DeviceTransport`, so both seams the manager codes to are in one place
+    and ``store.py`` depends on the manager, never the reverse.
+    """
+
+    async def save_device(self, device: DeviceConnection) -> None:
+        """Insert or update the row for a registered or refreshed device."""
+
+    async def mark_offline(self, device_id: str, *, reason: str) -> None:
+        """Mark the device's row offline, leaving a disabled row disabled."""
+
+    async def record_event(self, event: DeviceEventMessage) -> None:
+        """Append one reported event to ``device_events``."""
+
+
+class NullDeviceStore:
+    """A store that does nothing, the manager's honest default (§64.11)."""
+
+    async def save_device(self, device: DeviceConnection) -> None:
+        return None
+
+    async def mark_offline(self, device_id: str, *, reason: str) -> None:
+        return None
+
+    async def record_event(self, event: DeviceEventMessage) -> None:
+        return None
 
 
 @dataclass(slots=True)
@@ -141,12 +179,14 @@ class DeviceManager:
         settings: DeviceSettings | None = None,
         authenticator: NodeAuthenticator | None = None,
         bus: EventBus | None = None,
+        store: DeviceStore | None = None,
         command_timeout: float = 30.0,
         require_auth: bool | None = None,
     ) -> None:
         self._settings = settings or DeviceSettings()
         self._auth = authenticator or NodeAuthenticator()
         self._bus = bus
+        self._store: DeviceStore = store or NullDeviceStore()
         self._command_timeout = command_timeout
         self._require_auth = self._settings.require_auth if require_auth is None else require_auth
         self._devices: dict[str, DeviceConnection] = {}
@@ -218,6 +258,7 @@ class DeviceManager:
             self._devices[registration.device_id] = device
             await self._publish_connected(device)
 
+        await self._persist("save_device", self._store.save_device(device))
         _LOGGER.info(
             "device registered",
             extra={
@@ -256,6 +297,7 @@ class DeviceManager:
             device.capabilities = frozenset(heartbeat.capabilities)
         if was_offline:
             await self._publish_connected(device)
+        await self._persist("save_device", self._store.save_device(device))
         return DeviceHeartbeatAck(device_id=device.device_id)
 
     # ------------------------------------------------------------------ #
@@ -276,6 +318,7 @@ class DeviceManager:
             raise NotFoundError("device", event.device_id)
         device.last_seen = datetime.now(UTC)
         device.events_received += 1
+        await self._persist("record_event", self._store.record_event(event))
 
         core_event = core_event_for(event.event_type)
         if core_event is EventType.DEVICE_CONNECTED:
@@ -509,9 +552,27 @@ class DeviceManager:
                 )
                 self._pending.pop(command_id, None)
         await self._close_transport(device.transport, device.device_id)
+        await self._persist(
+            "mark_offline", self._store.mark_offline(device.device_id, reason=reason)
+        )
         await self._publish_event(
             EventType.DEVICE_DISCONNECTED, device, None, extra={"reason": reason}
         )
+
+    async def _persist(self, action: str, operation: Coroutine[Any, Any, None]) -> None:
+        """Run one store call, logging rather than raising on failure (§64.11).
+
+        The live registry is authoritative; a store that is briefly unreachable
+        must not drop a device or fail a heartbeat. The failure is logged with
+        the action so persistence gaps are visible, not silent.
+        """
+        try:
+            await operation
+        except Exception:
+            _LOGGER.warning(
+                "device persistence failed",
+                extra={"event": "device.store_failed", "action": action},
+            )
 
     async def _close_transport(self, transport: DeviceTransport, device_id: str) -> None:
         try:

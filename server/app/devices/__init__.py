@@ -10,7 +10,13 @@ and capability data.
 
 from __future__ import annotations
 
-from app.devices.manager import DeviceConnection, DeviceManager, DeviceTransport
+from app.devices.manager import (
+    DeviceConnection,
+    DeviceManager,
+    DeviceStore,
+    DeviceTransport,
+    NullDeviceStore,
+)
 from app.devices.protocol import (
     DEVICE_CAPABILITY_STRINGS,
     DEVICE_EVENT_TYPES,
@@ -27,8 +33,6 @@ from app.devices.protocol import (
     DeviceResult,
     DeviceResultStatus,
     DeviceStatus,
-    core_event_for,
-    parse_message,
 )
 
 __all__ = [
@@ -49,7 +53,9 @@ __all__ = [
     "DeviceResult",
     "DeviceResultStatus",
     "DeviceStatus",
+    "DeviceStore",
     "DeviceTransport",
+    "NullDeviceStore",
     "core_event_for",
     "parse_message",
 ]

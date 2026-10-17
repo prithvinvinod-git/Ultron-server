@@ -70,9 +70,10 @@ from app.database.session import (
     read_session_scope,
     session_scope,
 )
-from app.devices.manager import DeviceManager
+from app.devices.manager import DeviceManager, DeviceStore, NullDeviceStore
 from app.devices.mqtt.client import PahoMqttClient, build_mqtt_client
 from app.devices.mqtt.transport import MqttDeviceBridge
+from app.devices.store import SqlDeviceStore
 from app.events.bus import EventBus
 from app.events.handlers import PersistEvents
 from app.memory import (
@@ -150,6 +151,7 @@ class Container:
         self._browser_sessions: BrowserSessionManager | None = None
         self._node_gateway: NodeGateway | None = None
         self._device_manager: DeviceManager | None = None
+        self._device_store: DeviceStore | None = None
         self._mqtt_client: PahoMqttClient | None = None
         self._mqtt_task: asyncio.Task[None] | None = None
         self._model_router: ModelRouter | None = None
@@ -256,6 +258,21 @@ class Container:
         return self._node_gateway
 
     @property
+    def device_store(self) -> DeviceStore:
+        """Return the durable view of the device layer (T165, spec §26).
+
+        Built on first access around the shared ``session_scope``, so device
+        writes join the same unit of work as every other table. The store is
+        stateless, so building it early costs nothing; a device only touches the
+        database when it registers, heartbeats, goes offline or reports an event.
+        """
+        if self._device_store is None:
+            self._device_store = SqlDeviceStore(
+                session_scope=lambda: session_scope(self.session_factory)
+            )
+        return self._device_store
+
+    @property
     def device_manager(self) -> DeviceManager:
         """Return the device gateway (T161, spec §26).
 
@@ -264,12 +281,15 @@ class Container:
         disabled (``DEVICES_ENABLED=false``). Devices publish to the same event
         bus as the rest of Core, so ``WAKE_DETECTED`` from a board reaches the
         voice path and ``DEVICE_CONNECTED``/``DEVICE_DISCONNECTED`` the
-        presence-driven UI (§19) without extra wiring.
+        presence-driven UI (§19) without extra wiring. When the subsystem is on,
+        the manager persists through :attr:`device_store` (T165); when it is off
+        it keeps the no-op store, so a disabled subsystem never opens a session.
         """
         if self._device_manager is None:
             self._device_manager = DeviceManager(
                 settings=self.settings.devices,
                 bus=self.events,
+                store=self.device_store if self.settings.devices.enabled else NullDeviceStore(),
             )
         return self._device_manager
 
