@@ -24,6 +24,8 @@ by the application lifespan (see :mod:`app.main`).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -69,6 +71,8 @@ from app.database.session import (
     session_scope,
 )
 from app.devices.manager import DeviceManager
+from app.devices.mqtt.client import PahoMqttClient, build_mqtt_client
+from app.devices.mqtt.transport import MqttDeviceBridge
 from app.events.bus import EventBus
 from app.events.handlers import PersistEvents
 from app.memory import (
@@ -92,6 +96,7 @@ from app.observability.health import (
     check_postgresql,
     check_redis,
 )
+from app.observability.logging import get_logger
 from app.tasks.executor import StepRunner, TaskExecutor
 from app.tasks.manager import TaskManager
 from app.tools.bootstrap import build_tool_registry
@@ -100,6 +105,8 @@ from app.tools.filesystem.sandbox import FilesystemSandbox
 from app.tools.registry import ToolRegistry
 from app.voice.manager import VoiceManager
 from app.workspaces.manager import SubprocessGitRunner
+
+_LOGGER = get_logger(__name__)
 
 
 class Container:
@@ -143,6 +150,8 @@ class Container:
         self._browser_sessions: BrowserSessionManager | None = None
         self._node_gateway: NodeGateway | None = None
         self._device_manager: DeviceManager | None = None
+        self._mqtt_client: PahoMqttClient | None = None
+        self._mqtt_task: asyncio.Task[None] | None = None
         self._model_router: ModelRouter | None = None
         self._voice: VoiceManager | None = None
         self._embedding_provider: EmbeddingProvider | None = None
@@ -471,6 +480,33 @@ class Container:
         if not self.settings.devices.enabled:
             return
         await self.device_manager.start()
+        if self.settings.devices.mqtt_enabled:
+            await self._start_mqtt_bridge()
+
+    async def _start_mqtt_bridge(self) -> None:
+        """Start the optional MQTT device bridge when enabled (T163, spec §26).
+
+        The MQTT transport is the second way a device reaches the manager, behind
+        the ``iot`` extra. When ``MQTT_ENABLED`` is on but ``paho-mqtt`` is not
+        installed, the bridge is skipped with a reason rather than failing
+        startup — the WebSocket transport still serves devices (§64.11).
+        """
+        client = build_mqtt_client(self.settings.devices)
+        if client is None:
+            _LOGGER.warning(
+                "MQTT is enabled but the paho-mqtt client is unavailable; "
+                "the device WebSocket transport remains active",
+                extra={"event": "device.mqtt.unavailable"},
+            )
+            return
+        await client.start()
+        self._mqtt_client = client
+        bridge = MqttDeviceBridge(self.device_manager, client)
+        self._mqtt_task = asyncio.create_task(bridge.run(), name="device-mqtt-bridge")
+        _LOGGER.info(
+            "device MQTT bridge started",
+            extra={"event": "device.mqtt.started", "topic": bridge.subscription_topic},
+        )
 
     async def _start_memory_recorder(self) -> None:
         """Attach the episodic-memory subscriber when memory is enabled (T128).
@@ -520,6 +556,14 @@ class Container:
         if self._node_gateway is not None:
             await self._node_gateway.stop()
             self._node_gateway = None
+        if self._mqtt_task is not None:
+            self._mqtt_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._mqtt_task
+            self._mqtt_task = None
+        if self._mqtt_client is not None:
+            await self._mqtt_client.close()
+            self._mqtt_client = None
         if self._device_manager is not None:
             await self._device_manager.stop()
             self._device_manager = None
