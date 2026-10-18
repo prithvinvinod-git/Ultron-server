@@ -996,3 +996,5 @@ Facts that carried the Core/REST work (now delivered):
 - The doc addendum added 97 roadmap tasks (T395-T491) + decisions; none are
   implemented — §67/§68 are documentation-only, and no camera/vision/gesture/
   spatial code exists until those tasks go `[x]`.
+
+- Phase 11 unit tests pass (353 related passed across triggers+phase11+repos+errors); full suite interrupted due to timeout (long-running).
