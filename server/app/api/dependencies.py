@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from app.devices.manager import DeviceManager
     from app.models.router import ModelRouter
     from app.observability.health import HealthService
+    from app.scheduler.manager import ScheduleManager
     from app.tasks.manager import TaskManager
     from app.tools.registry import ToolRegistry
     from app.voice.manager import VoiceManager
@@ -193,6 +194,16 @@ class ContainerProtocol(Protocol):
         Declared here for the same reason as ``events``: the routes need the
         manager without importing the composition root, so a test can supply one
         wired with fake STT/TTS engines and its own event bus.
+        """
+        ...
+
+    @property
+    def schedule_manager(self) -> ScheduleManager:
+        """The §44 scheduler (T170), read by the ``/schedules`` routes (T509).
+
+        Declared here for the same reason as ``events``: the routes need the
+        scheduler without importing the composition root, so a test can supply a
+        stub with an in-memory schedule store instead of a live database.
         """
         ...
 

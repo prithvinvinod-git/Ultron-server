@@ -202,7 +202,13 @@ class ScheduleManager:
                 else next_run_time(schedule, timezone=self._tz, now=self._now())
             )
             schedule.next_run_at = _aware(first) if first is not None else None
-            return await repo.add(schedule)
+            schedule = await repo.add(schedule)
+            # ``updated_at`` is set by ``onupdate`` and is expired by the flush;
+            # reload it while the row is still attached, so the caller gets a
+            # fully-populated instance even though this method closes the session
+            # before returning (the routes serialise it afterwards).
+            await session.refresh(schedule)
+            return schedule
 
     async def get(self, schedule_id: str | uuid.UUID) -> Schedule:
         """Return one schedule, or ``NotFoundError``."""
@@ -225,7 +231,9 @@ class ScheduleManager:
     async def pause(self, schedule_id: str | uuid.UUID) -> Schedule:
         """Pause a schedule; it stops being due but keeps its definition."""
         async with self._session_scope() as session:
-            return await ScheduleRepository(session).pause(schedule_id)
+            schedule = await ScheduleRepository(session).pause(schedule_id)
+            await session.refresh(schedule)
+            return schedule
 
     async def resume(self, schedule_id: str | uuid.UUID) -> Schedule:
         """Resume a paused schedule and recompute its next fire.
@@ -240,12 +248,65 @@ class ScheduleManager:
             if ScheduleStatus(schedule.status) is ScheduleStatus.ACTIVE:
                 schedule.next_run_at = next_run_time(schedule, timezone=self._tz, now=self._now())
                 await session.flush()
+            await session.refresh(schedule)
             return schedule
 
     async def delete(self, schedule_id: str | uuid.UUID) -> bool:
         """Delete a schedule, returning whether a row was removed."""
         async with self._session_scope() as session:
             return await ScheduleRepository(session).delete(schedule_id)
+
+    async def update(
+        self,
+        schedule_id: str | uuid.UUID,
+        *,
+        name: str | None = None,
+        payload: Mapping[str, Any] | None = None,
+        cron_expression: str | None = None,
+        interval_seconds: int | None = None,
+        run_at: datetime | None = None,
+    ) -> Schedule:
+        """Edit a schedule's definition, re-arming it if it is active.
+
+        Only the fields the caller passes are changed — ``None`` means "leave
+        it", because a partial edit is the normal case and an omitted field is
+        not a request to clear one. The kind's timing fields are re-validated
+        and, for an active schedule, ``next_run_at`` is recomputed from the
+        trigger so an edited schedule is never left armed against a stale
+        expression. A kind is deliberately not editable: changing ``INTERVAL``
+        to ``CRON`` is a different job, and replacing the row is clearer than
+        mutating one through kinds.
+        """
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise InvalidInputError(
+                "a schedule needs a non-empty name",
+                details={"name": str(name)[:100]},
+            )
+        async with self._session_scope() as session:
+            repo = ScheduleRepository(session)
+            schedule = await repo.get_required(schedule_id)
+            if name is not None:
+                schedule.name = name
+            if payload is not None:
+                schedule.payload = dict(payload)
+            if cron_expression is not None:
+                schedule.cron_expression = cron_expression
+            if interval_seconds is not None:
+                schedule.interval_seconds = interval_seconds
+            if run_at is not None:
+                schedule.run_at = _aware(run_at)
+            await repo.validate_timing(
+                ScheduleKind(schedule.kind),
+                cron_expression=schedule.cron_expression,
+                interval_seconds=schedule.interval_seconds,
+                run_at=schedule.run_at,
+            )
+            validate_schedule(schedule, timezone=self._tz)
+            if ScheduleStatus(schedule.status) is ScheduleStatus.ACTIVE:
+                schedule.next_run_at = next_run_time(schedule, timezone=self._tz, now=self._now())
+            await session.flush()
+            await session.refresh(schedule)
+            return schedule
 
     # ------------------------------------------------------------------ #
     # Firing

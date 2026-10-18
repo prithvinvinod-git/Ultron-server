@@ -192,6 +192,7 @@ def _include_routers(app: FastAPI) -> None:
         events,
         health,
         nodes,
+        schedules,
         tasks,
         tools,
         voice,
@@ -207,6 +208,7 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(nodes.router)
     app.include_router(devices.router)
     app.include_router(voice.router)
+    app.include_router(schedules.router)
 
 
 def _error_body(exc: UltronError) -> dict[str, Any]:
