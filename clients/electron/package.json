@@ -8,11 +8,15 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "npm run build && electron .",
-    "smoke": "npm run build && electron . --smoke"
+    "start:dev": "ULTRON_DEV_SERVER_URL=http://localhost:8080 npm run build && electron .",
+    "smoke": "npm run build && electron . --smoke",
+    "package": "npm run build && npx electron-builder",
+    "package:dir": "npm run build && npx electron-builder --dir"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^7.0.2"
   }
 }
