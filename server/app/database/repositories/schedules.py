@@ -61,6 +61,19 @@ class ScheduleRepository(UuidRepository[Schedule]):
         )
         return await self._fetch_all(apply_limit(statement, limit))
 
+    async def list_all(self, *, limit: int | None = None) -> list[Schedule]:
+        """Return every schedule, newest first.
+
+        The administration view (``GET /schedules``) needs the paused and
+        completed rows too, so this is deliberately *not* ``list_active``;
+        ``nulls_last`` mirrors it so a schedule with no next run does not sort
+        above one that is genuinely about to fire.
+        """
+        statement = select(Schedule).order_by(
+            Schedule.next_run_at.asc().nulls_last(), Schedule.created_at.desc()
+        )
+        return await self._fetch_all(apply_limit(statement, limit))
+
     async def get_for_update(self, identifier: uuid.UUID | str) -> Schedule:
         """Return one schedule with ``SELECT ... FOR UPDATE``.
 
@@ -107,6 +120,30 @@ class ScheduleRepository(UuidRepository[Schedule]):
         await self._session.flush()
         return schedule
 
+    async def record_run(
+        self,
+        identifier: uuid.UUID | str,
+        *,
+        last_task_id: uuid.UUID | None = None,
+        now: datetime | None = None,
+    ) -> Schedule:
+        """Record a successful run without touching ``next_run_at``.
+
+        The counterpart to :meth:`set_next_run` for a schedule whose next fire is
+        *not* a point in time — an ``EVENT`` schedule is matched on the bus, so
+        advancing ``next_run_at`` would arm a timer the scheduler must never fire.
+        Like ``set_next_run``, this clears any stale error and resets the failure
+        count: a schedule that produced a task has recovered.
+        """
+        schedule = await self.get_required(identifier)
+        schedule.last_run_at = now or datetime.now(UTC)
+        schedule.last_task_id = last_task_id
+        schedule.run_count = schedule.run_count + 1
+        schedule.failure_count = 0
+        schedule.last_error = None
+        await self._session.flush()
+        return schedule
+
     async def record_failure(
         self,
         identifier: uuid.UUID | str,
@@ -135,7 +172,7 @@ class ScheduleRepository(UuidRepository[Schedule]):
         caller confusing the two -- so it is rejected rather than honoured.
         """
         schedule = await self.get_required(identifier)
-        if schedule.kind is not ScheduleKind.ONCE:
+        if ScheduleKind(schedule.kind) is not ScheduleKind.ONCE:
             raise InvalidInputError(
                 "only a one-shot schedule can complete",
                 details={"kind": str(schedule.kind)},

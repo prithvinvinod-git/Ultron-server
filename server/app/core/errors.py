@@ -97,6 +97,7 @@ class ErrorCode(enum.StrEnum):
     HEALTH_CHECK_FAILED = "HEALTH_CHECK_FAILED"
     VOICE_ERROR = "VOICE_ERROR"
     DEVICE_ERROR = "DEVICE_ERROR"
+    SCHEDULE_ERROR = "SCHEDULE_ERROR"
     BROWSER_ERROR = "BROWSER_ERROR"
     NODE_UNAVAILABLE = "NODE_UNAVAILABLE"
     NODE_NOT_FOUND = "NODE_NOT_FOUND"
@@ -777,6 +778,22 @@ class VoiceError(UltronError):
 
 class DeviceError(UltronError):
     code = ErrorCode.DEVICE_ERROR
+    http_status = 503
+
+
+class ScheduleError(UltronError):
+    """The scheduler could not arm, fire, or persist a job (§44).
+
+    Distinct from ``InvalidInputError`` (a caller's malformed schedule) and
+    from `TaskNotFoundError`: this is the scheduler subsystem itself failing —
+    an unparseable cron expression the repository only checked for presence, an
+    APScheduler refusal, or a job that could not be registered. `http_status`
+    503 mirrors the other subsystem errors, because the honest answer to "the
+    scheduler is not working" is that the dependency is unavailable, not that
+    the request was malformed.
+    """
+
+    code = ErrorCode.SCHEDULE_ERROR
     http_status = 503
 
 

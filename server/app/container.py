@@ -90,6 +90,7 @@ from app.memory import (
 from app.models.base import ModelProvider
 from app.models.router import ModelRouter
 from app.notifications import NotificationService, build_notification_service
+from app.notifications.dispatch import NotificationDispatch, build_schedule_notifier
 from app.observability.health import (
     HealthService,
     check_filesystem,
@@ -98,6 +99,9 @@ from app.observability.health import (
     check_redis,
 )
 from app.observability.logging import get_logger
+from app.scheduler.automation import EventAutomation
+from app.scheduler.manager import ScheduleManager
+from app.scheduler.planning import build_task_factory
 from app.tasks.executor import StepRunner, TaskExecutor
 from app.tasks.manager import TaskManager
 from app.tools.bootstrap import build_tool_registry
@@ -158,6 +162,9 @@ class Container:
         self._voice: VoiceManager | None = None
         self._embedding_provider: EmbeddingProvider | None = None
         self._memory_recorder: MemoryRecorder | None = None
+        self._schedule_manager: ScheduleManager | None = None
+        self._event_automation: EventAutomation | None = None
+        self._notification_dispatch: NotificationDispatch | None = None
         self._register_default_checks()
 
     # --------------------------------------------------------------------- #
@@ -228,6 +235,48 @@ class Container:
         if self._notifications is None:
             self._notifications = build_notification_service(self.settings.notifications)
         return self._notifications
+
+    @property
+    def schedule_manager(self) -> ScheduleManager:
+        """Return the §44 scheduler, building it on first access (T170).
+
+        The durable job store is the ``schedules`` table, reached through the
+        shared ``session_scope``; the task a firing produces is built by
+        :func:`~app.scheduler.planning.build_task_factory` so ``TASK_CREATED``
+        travels the executor's normal path; a failed firing is reported through
+        §45 via :func:`~app.notifications.dispatch.build_schedule_notifier`. This
+        is cheap to build and holds no I/O until a job is due, so it is safe when
+        ``SCHEDULER_ENABLED`` is off — the monitor simply never starts.
+        """
+        if self._schedule_manager is None:
+            self._schedule_manager = ScheduleManager(
+                settings=self.settings.scheduler,
+                session_scope=lambda: session_scope(self.session_factory),
+                create_task=build_task_factory(self.events),
+                bus=self.events,
+                notify=build_schedule_notifier(self.notifications),
+            )
+        return self._schedule_manager
+
+    @property
+    def event_automation(self) -> EventAutomation:
+        """Return the event-triggered automation (T171, spec §44)."""
+        if self._event_automation is None:
+            self._event_automation = EventAutomation(
+                scheduler=self.schedule_manager,
+                bus=self.events,
+            )
+        return self._event_automation
+
+    @property
+    def notification_dispatch(self) -> NotificationDispatch:
+        """Return the Core→provider notification subscriber (T173, spec §45)."""
+        if self._notification_dispatch is None:
+            self._notification_dispatch = NotificationDispatch(
+                service=self.notifications,
+                bus=self.events,
+            )
+        return self._notification_dispatch
 
     @property
     def browser_sessions(self) -> BrowserSessionManager:
@@ -478,6 +527,21 @@ class Container:
         await self._start_memory_recorder()
         await self._start_node_gateway()
         await self._start_device_manager()
+        await self._start_scheduler()
+
+    async def _start_scheduler(self) -> None:
+        """Start the §44 scheduler, event automation and §45 dispatch (T170-T173).
+
+        No-op when ``SCHEDULER_ENABLED`` is off, so a deployment that schedules
+        nothing starts no poll loop and no bus subscriber. The event automation is
+        started before the poll loop so an event that arrives during startup is not
+        missed; the notification dispatch is independent of both.
+        """
+        if not self.settings.scheduler.enabled:
+            return
+        await self.event_automation.start()
+        await self.notification_dispatch.start()
+        self.schedule_manager.start()
 
     async def _start_node_gateway(self) -> None:
         """Start the computer-node heartbeat monitor when the subsystem is on (T141).
@@ -567,6 +631,15 @@ class Container:
         is closed first so that any open ``/events`` stream wakes up and ends
         instead of hanging until its client gives up.
         """
+        if self._schedule_manager is not None:
+            await self._schedule_manager.stop()
+            self._schedule_manager = None
+        if self._event_automation is not None:
+            await self._event_automation.stop()
+            self._event_automation = None
+        if self._notification_dispatch is not None:
+            await self._notification_dispatch.stop()
+            self._notification_dispatch = None
         if self._memory_recorder is not None:
             await self._memory_recorder.stop()
             self._memory_recorder = None

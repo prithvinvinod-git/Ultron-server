@@ -95,7 +95,7 @@ class Schedule(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         schedule is malformed or it is a one-shot that has already fired. Either
         way it is not due, and guessing a time here would double-fire it.
         """
-        if self.status is not ScheduleStatus.ACTIVE or self.next_run_at is None:
+        if ScheduleStatus(self.status) is not ScheduleStatus.ACTIVE or self.next_run_at is None:
             return False
         due = self.next_run_at
         if due.tzinfo is None:
