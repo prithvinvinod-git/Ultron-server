@@ -426,3 +426,10 @@
 .inspector-row{display:flex;gap:6px;align-items:center;}
 .inspector-row input,.inspector-group>input{flex:1 1 auto;min-width:0;background:var(--background);border:1px solid var(--border);color:var(--foreground);font:inherit;font-size:9px;padding:0 6px;border-radius:3px;height:28px;}
 
+/* --- task steps (T505) ---------------------------------------------------- */
+.step-list{display:flex;flex-direction:column;gap:6px;}
+.step-row{display:flex;align-items:center;gap:8px;}
+.step-row>div{min-width:0;}
+.step-row strong{display:block;font-size:10px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.step-row small{display:block;font-size:8px;letter-spacing:.4px;color:var(--muted-foreground);overflow-wrap:anywhere;}
+

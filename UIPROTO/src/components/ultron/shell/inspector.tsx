@@ -1,10 +1,10 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { Check, Play, Pause, Square, X } from "lucide-react";
+import { Check, Play, Pause, RotateCw, Square, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { Agent } from "@/lib/api";
-import { useAgentActions, useAgent, useAgents, useTasks, useTools } from "@/lib/queries";
+import type { Agent, Task, TaskPriority } from "@/lib/api";
+import { useAgent, useAgentActions, useAgents, useTask, useTaskActions, useTasks, useTaskSteps, useTools } from "@/lib/queries";
 import type { Selection } from "@/lib/workspace";
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
@@ -180,9 +180,130 @@ function AgentInspector({ id }: { id: string }) {
   );
 }
 
+function TaskSteps({ taskId }: { taskId: string }) {
+  const { data } = useTaskSteps(taskId);
+  const steps = data ?? [];
+  if (!steps.length) return <div className="panel-empty">no steps</div>;
+  return (
+    <div className="step-list">
+      {steps.map((step) => (
+        <div key={step.id} className="step-row">
+          <span
+            className={`status-dot${step.status === "failed" ? " failed" : step.status === "completed" ? "" : " inactive"}`}
+          />
+          <div>
+            <strong>
+              {step.position + 1}. {step.name}
+            </strong>
+            <small>
+              {step.status}
+              {step.attempt > 1 ? ` · attempt ${step.attempt}` : ""}
+              {step.error ? ` · ${step.error}` : ""}
+            </small>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const OPEN_TASK_STATUSES = new Set(["pending", "queued", "running", "blocked", "paused"]);
+const PRIORITIES: TaskPriority[] = ["low", "normal", "high", "urgent"];
+
+/** Task lifecycle + step authoring for one task (T505). */
+function TaskControls({ task }: { task: Task }) {
+  const actions = useTaskActions(task.id);
+  const [stepName, setStepName] = useState("");
+  const [stepDescription, setStepDescription] = useState("");
+  const busy = Object.values(actions).some((mutation) => mutation.isPending);
+  const isOpen = OPEN_TASK_STATUSES.has(task.status);
+
+  return (
+    <div className="inspector-controls">
+      <div className="inspector-group">
+        <span className="inspector-group-title">PRIORITY</span>
+        <select
+          aria-label="Priority"
+          className="agent-select"
+          value={task.priority}
+          disabled={busy}
+          onChange={(event) => actions.priority.mutate(event.target.value as TaskPriority)}
+        >
+          {PRIORITIES.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="inspector-group">
+        <span className="inspector-group-title">ACTIONS</span>
+        <div className="inspector-buttons">
+          {isOpen ? (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => actions.cancel.mutate()}>
+              <Square />
+              Cancel
+            </Button>
+          ) : null}
+          {task.status === "failed" ? (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => actions.retry.mutate()}>
+              <RotateCw />
+              Retry
+            </Button>
+          ) : null}
+          {!isOpen ? (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => actions.remove.mutate()}>
+              <Trash2 />
+              Delete
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="inspector-group">
+        <span className="inspector-group-title">ADD STEP</span>
+        <input
+          aria-label="Step name"
+          placeholder="step name…"
+          value={stepName}
+          onChange={(event) => setStepName(event.target.value)}
+        />
+        <div className="inspector-row">
+          <input
+            aria-label="Step description"
+            placeholder="description (optional)…"
+            value={stepDescription}
+            onChange={(event) => setStepDescription(event.target.value)}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy || !stepName.trim()}
+            onClick={() =>
+              actions.addStep.mutate(
+                { name: stepName.trim(), description: stepDescription.trim() || null },
+                {
+                  onSuccess: () => {
+                    setStepName("");
+                    setStepDescription("");
+                  },
+                },
+              )
+            }
+          >
+            Add
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskInspector({ id }: { id: string }) {
+  const { data: detail } = useTask(id);
   const { data } = useTasks();
-  const task = (data ?? []).find((item) => item.id === id);
+  const task = detail ?? (data ?? []).find((item) => item.id === id);
   if (!task) return <div className="panel-empty">task not found</div>;
   return (
     <>
@@ -190,8 +311,15 @@ function TaskInspector({ id }: { id: string }) {
       <Field label="STATUS" value={task.status} />
       <Field label="PRIORITY" value={task.priority} />
       <Field label="RETRIES" value={`${task.retry_count}/${task.max_retries}`} />
+      <Field label="VERIFICATION" value={task.verification ?? "—"} />
+      <Field label="ERROR" value={task.error ?? "—"} />
+      <Field label="SCHEDULED" value={task.scheduled_for ? timestamp(task.scheduled_for) : "—"} />
       <Field label="CREATED" value={timestamp(task.created_at)} />
+      <Field label="UPDATED" value={timestamp(task.updated_at)} />
       <Field label="ID" value={task.id} />
+      <span className="inspector-group-title">STEPS</span>
+      <TaskSteps taskId={task.id} />
+      <TaskControls key={`${task.id}:${task.updated_at}`} task={task} />
     </>
   );
 }

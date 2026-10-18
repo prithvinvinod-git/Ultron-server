@@ -12,6 +12,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 
 import { agentsApi, devicesApi, healthApi, metricsApi, nodesApi, notificationsApi, schedulesApi, tasksApi, toolsApi, ApiError } from "./api";
+import type { StepCreate, TaskPriority } from "./api";
 import { broadcastUnauthorized } from "./auth";
 import { onEnvelope } from "./events";
 
@@ -19,6 +20,7 @@ export const queryKeys = {
   agents: ["agents"] as const,
   agent: (id: string) => ["agents", id] as const,
   tasks: ["tasks"] as const,
+  task: (id: string) => ["tasks", id] as const,
   tools: ["tools"] as const,
   health: ["health"] as const,
   nodes: ["nodes"] as const,
@@ -50,6 +52,15 @@ export function useTasks() {
   return useQuery({
     queryKey: queryKeys.tasks,
     queryFn: tasksApi.list,
+    refetchInterval: 15000,
+  });
+}
+
+export function useTask(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.task(id ?? ""),
+    queryFn: () => tasksApi.get(id as string),
+    enabled: Boolean(id),
     refetchInterval: 15000,
   });
 }
@@ -125,6 +136,38 @@ export function useTaskSteps(taskId: string | null) {
     queryFn: () => tasksApi.steps(taskId as string),
     enabled: Boolean(taskId),
   });
+}
+
+/**
+ * Every mutation the task inspector offers (T505). Each one refreshes both the
+ * queue and the open task's step list.
+ */
+export function useTaskActions(taskId: string) {
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.tasks });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.steps(taskId) });
+  };
+  const ok = (message: string) => () => {
+    toast.success(message);
+    refresh();
+  };
+  const options = { onError: reportMutationError };
+  return {
+    cancel: useMutation({ ...options, mutationFn: () => tasksApi.cancel(taskId), onSuccess: ok("Task cancelled") }),
+    retry: useMutation({ ...options, mutationFn: () => tasksApi.retry(taskId), onSuccess: ok("Task retried") }),
+    priority: useMutation({
+      ...options,
+      mutationFn: (priority: TaskPriority) => tasksApi.priority(taskId, priority),
+      onSuccess: ok("Priority updated"),
+    }),
+    addStep: useMutation({
+      ...options,
+      mutationFn: (step: StepCreate) => tasksApi.addStep(taskId, step),
+      onSuccess: ok("Step added"),
+    }),
+    remove: useMutation({ ...options, mutationFn: () => tasksApi.remove(taskId), onSuccess: ok("Task removed") }),
+  };
 }
 
 /** Surface a failed mutation: bounce to the gate on 401, else toast the message. */
