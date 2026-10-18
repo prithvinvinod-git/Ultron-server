@@ -19,10 +19,11 @@
  *   electron . --smoke         load, wait for render, print result, exit
  *                              (headless-friendly gate for CI/this machine)
  */
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { IPC_CHANNELS } from "./ipc-channels";
 import { startStaticServer } from "./static-server";
 import type { StaticServerHandle } from "./static-server";
 
@@ -77,8 +78,9 @@ function createWindow(startURL: string): BrowserWindow {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
       webSecurity: true,
+      preload: resolve(__dirname, "preload.js"),
     },
   });
 
@@ -90,9 +92,17 @@ function createWindow(startURL: string): BrowserWindow {
   return win;
 }
 
+function registerIpcHandlers(win: BrowserWindow): void {
+  ipcMain.handle(IPC_CHANNELS.APP_VERSION, () => app.getVersion());
+  ipcMain.handle(IPC_CHANNELS.WINDOW_MINIMIZE, () => win.minimize());
+  ipcMain.handle(IPC_CHANNELS.WINDOW_MAXIMIZE, () => win.maximize());
+  ipcMain.handle(IPC_CHANNELS.WINDOW_CLOSE, () => win.close());
+}
+
 async function main(): Promise<void> {
   const startURL = await resolveStartURL();
   const win = createWindow(startURL);
+  registerIpcHandlers(win);
 
   if (SMOKE) {
     // Automated gate: wait for the renderer to report a mounted shell, then
@@ -107,16 +117,33 @@ async function main(): Promise<void> {
       setTimeout(() => {
         win.webContents
           .executeJavaScript(
-            `(() => ({
-              url: location.href,
-              title: document.title,
-              hasShell: !!document.querySelector('.ultron-shell'),
-              text: (document.body.innerText || '').slice(0, 120),
-            }))()`,
+            `(async () => {
+              const hasNode = typeof process !== 'undefined' || typeof require !== 'undefined';
+              const hasUltron = typeof window.ultron !== 'undefined';
+              let appVersion = null;
+              if (hasUltron) {
+                try { appVersion = await window.ultron.getAppVersion(); } catch {}
+              }
+              return {
+                url: location.href,
+                title: document.title,
+                hasShell: !!document.querySelector('.ultron-shell'),
+                text: (document.body.innerText || '').slice(0, 120),
+                hasNode,
+                hasUltron,
+                appVersion,
+              };
+            })()`,
           )
           .then((result) => {
             clearTimeout(timeout);
-            const ok = (result as { hasShell?: boolean }).hasShell === true;
+            const r = result as {
+              hasShell?: boolean;
+              hasNode?: boolean;
+              hasUltron?: boolean;
+              appVersion?: string | null;
+            };
+            const ok = r.hasShell === true && r.hasNode === false && r.hasUltron === true && !!r.appVersion;
             log(ok ? "info" : "error", "smoke render result", { ...result });
             app.exit(ok ? 0 : 1);
           })
