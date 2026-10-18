@@ -439,3 +439,9 @@
 .inspector-verdict{margin:0;font-size:9px;letter-spacing:.4px;color:var(--warm);}
 .inspector-verdict.ok{color:var(--primary);}
 
+/* --- metrics diagnostics (T508) ------------------------------------------- */
+.metric-list{display:flex;flex-direction:column;gap:10px;}
+.metric-group{display:flex;flex-direction:column;gap:3px;}
+.metric-name{font-size:9px;letter-spacing:.4px;color:var(--primary);overflow-wrap:anywhere;}
+.metric-more{font-size:8px;color:var(--muted-foreground);}
+

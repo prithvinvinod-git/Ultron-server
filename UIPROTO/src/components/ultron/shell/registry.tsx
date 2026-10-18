@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Activity, Bot, Cpu, Radio, ShieldCheck, Terminal, Wrench } from "lucide-react";
+import { Activity, Bot, Cpu, Gauge, Radio, ShieldCheck, Terminal, Wrench } from "lucide-react";
 
 import { AgentsPanel } from "@/components/ultron/agents";
 import { DevicesPanel, FleetPanel } from "@/components/ultron/fleet";
+import { MetricsPanel } from "@/components/ultron/metrics";
 import {
   EventsPanel,
   HealthPanel,
@@ -41,6 +42,7 @@ export const PANELS: PanelDef[] = [
   { id: "session", title: "Session", icon: Terminal, tab: "system", order: 30, render: () => <SessionPanel /> },
   { id: "tools-system", title: "Capabilities", icon: Wrench, tab: "system", order: 40, render: () => <ToolsPanel /> },
   { id: "events", title: "Event stream", icon: Activity, tab: "system", order: 50, render: () => <EventsPanel /> },
+  { id: "metrics", title: "Metrics", icon: Gauge, tab: "system", order: 60, render: () => <MetricsPanel /> },
 ];
 
 export function panelsForTab(tab: TabId): PanelDef[] {
