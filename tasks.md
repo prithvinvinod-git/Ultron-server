@@ -1762,3 +1762,110 @@ V2-V4.
 | D037 | **Perception has no tool access**: observation → context → agent → tool request → §15 is the only path (enforced by T484's negative test) | §68.12 is the load-bearing security wall - a camera-driven shell path would bypass every permission the system has |
 | D038 | Every perception test runs on simulated frames/landmarks (T456 harness); camera hardware never appears in automated tests or CI | §65.23's "no real calls, ever" discipline applied to vision - CI has no camera just as it has no telephony credentials |
 | D039 | Vision libraries are imported only behind feature flags, default off (T454/T462), and the technology choice is a gated inspection task rather than a pre-commitment | §59.25's 8 GB laptop constraint; a heavy default import would tax every developer machine for a feature most sessions never enable |
+
+---
+
+## Command-center wiring (spec §29 API, §43 desktop client; added after the perception block)
+
+The existing `UIPROTO` prototype is wired to a subset of the §29 surface. This
+block completes the wiring - **every server function reachable from the command
+center** - and adds the missing §44/§45 endpoints, without redesigning the
+prototype (§69.3). The shell keeps a fixed, non-scrolling single viewport:
+overflow lives in per-panel scroll areas, tabs, the side rail, and slide-over
+drawers, never in the page. Each task is one commit; the build must stay green.
+
+### Phase W1 - shell and contracts
+
+- [ ] **T500** Fixed-viewport shell + nav rail + tabs - **objective:** one page that never scrolls vertically, with tabbed workspace and a collapsible side rail (§69.3); **deps:** none; **impl:** `html/body/#root` fixed to 100% with `overflow:hidden`, top bar + icon rail + tabbed workspace + inspector sidebar in `src/components/ultron/shell/`, existing panels hosted in the default tab; reuse the already-installed shadcn `tabs`/`sidebar`/`sheet`/`scroll-area` primitives, no page-level scrollbar at any width; **test:** `tsc --noEmit` clean, production build into `server/app/static`, manual no-scroll check at 1440/1150/900 widths; **accept:** no vertical page scroll; existing command-center content unchanged visually
+- [ ] **T501** Panel registry + selection/inspector context - **objective:** make new endpoints drop-in without touching the shell (adaptability seam); **deps:** T500; **impl:** `PanelDef` registry (`id/title/icon/tab/order/span/render/inspector`) + `WorkspaceProvider` carrying `{selection}`, existing `TaskPanel`/`AgentsPanel`/`SystemPanel`/`NetworkPanel` become registry entries with no rewrite; **test:** `tsc` clean, panels render from the registry, selecting a row opens the matching inspector; **accept:** adding a capability = one registry entry, zero shell edits
+- [ ] **T502** Typed API client + query hooks + dev proxy prefixes - **objective:** one typed seam for every endpoint (§69.7); **deps:** T500; **impl:** extend `src/lib/api.ts` (`authApi`, `agentsApi`, `tasksApi`, `toolsApi`, `nodesApi`, `devicesApi`, `metricsApi`, `schedulesApi`, `notificationsApi`) mirroring server pydantic models, hooks in `src/lib/queries.ts`, add `/voice`,`/devices`,`/schedules`,`/notifications` to `vite.config.ts` `API_PREFIXES`; **test:** `tsc` clean, dev proxy reaches each prefix; **accept:** no panel constructs a raw `fetch` outside `api.ts`
+
+### Phase W2 - existing endpoint wiring
+
+- [ ] **T503** Auth: silent refresh + change password - **objective:** wire `POST /auth/refresh` and `POST /auth/password`; **deps:** T502; **impl:** refresh-token rotation in `src/lib/auth.tsx` (silent refresh before 401 → gate), change-password dialog in the top bar; **test:** `tsc` clean, expired-token path refreshes then retries once, wrong old password surfaces the server error; **accept:** an expired access token no longer forces a re-login
+- [ ] **T504** Agents inspector - **objective:** wire `GET /agents/{id}`, `POST /agents/{id}/task|model|tools|permissions`; **deps:** T501/T502; **impl:** agent inspector with assign-task, model, tools and permissions editors; **test:** `tsc` clean, each action invalidates the agents query; **accept:** every agent route is reachable from the console
+- [ ] **T505** Tasks inspector + steps - **objective:** wire `GET /tasks/{id}`, `GET/POST /tasks/{id}/steps`; **deps:** T501/T502; **impl:** task inspector showing steps with an add-step form; **test:** `tsc` clean, step add invalidates the task detail; **accept:** task detail and step list are live
+- [ ] **T506** Tools inspector + validation - **objective:** wire `GET /tools/{name}`, `POST /tools/{name}/validate`; **deps:** T501/T502; **impl:** tool inspector rendering `input_schema` and validating arguments server-side; **test:** `tsc` clean, invalid args surface the validation error; **accept:** a tool's schema and validation are visible without shell access
+- [ ] **T507** Nodes + devices panels - **objective:** wire `GET /nodes`, `GET /nodes/{id}`, `GET /devices`, `GET /devices/{id}`; **deps:** T501/T502; **impl:** node-fleet and device panels with detail inspectors (REST only - the machine-facing WS endpoints are not used by the UI); **test:** `tsc` clean, disabled subsystems degrade to an honest empty state; **accept:** fleet and devices are visible when their flags are on
+- [ ] **T508** Metrics diagnostics panel - **objective:** wire `GET /metrics`; **deps:** T501/T502; **impl:** diagnostics panel parsing the Prometheus text exposition into readable counters/gauges; **test:** `tsc` clean, parser handles comments/labels/empty input; **accept:** metrics are visible without an external scraper
+
+### Phase W3 - missing server endpoints and their UI
+
+- [ ] **T509** Scheduler routes + tests - **objective:** expose §44 schedules the server already stores (T170-T175); **deps:** T170; **impl:** `app/api/routes/schedules.py` with `GET/POST /schedules`, `GET/PATCH/DELETE /schedules/{id}`, `POST /schedules/{id}/pause|resume|fire`, inline pydantic models, `Auth, Container, DbSession` deps, delegating to `ScheduleRepository` + `ScheduleManager`, mounted in `main.py`; **test:** `tests/unit/test_schedules_routes.py` (list/create/get/update/delete/pause/resume/fire, not-found, validation); **accept:** the scheduler is reachable over HTTP with `ruff`/`mypy`/pytest green
+- [ ] **T510** Notification routes + tests - **objective:** expose §45 notification state; **deps:** T173; **impl:** `app/api/routes/notifications.py` with `GET /notifications/providers`, `GET /notifications` (recent from the event store), `POST /notifications/test`, delegating to `NotificationService`/`NotificationDispatch`; **test:** `tests/unit/test_notifications_routes.py` (providers, recent, test-send, disabled subsystem); **accept:** provider status and a test send are reachable over HTTP
+- [ ] **T511** Schedules panel + inspector - **objective:** manage schedules from the console; **deps:** T501/T502/T509; **impl:** schedules panel (list, create, pause/resume, fire, delete) + inspector; **test:** `tsc` clean, each action invalidates the schedules query; **accept:** schedules are fully manageable from the UI
+- [ ] **T512** Notifications panel - **objective:** surface notification status; **deps:** T501/T502/T510; **impl:** notifications panel showing provider status, recent notifications, and a test-send action; **test:** `tsc` clean, disabled providers show an honest state; **accept:** notification health is visible from the console
+
+### Phase W4 - verification
+
+- [ ] **T513** Command-center wiring verification - **objective:** every §29 route reachable, no page scroll, build green; **deps:** T500-T512; **impl:** build `UIPROTO` into `server/app/static`, run `tsc`, and run the server gates; **test:** `tsc --noEmit` clean, `npm run build` succeeds, `ruff`/`mypy`/pytest green, manual no-scroll + tab/sidebar audit; **accept:** coverage table in the delivery notes lists every route wired or explicitly deferred
+
+### Command-center wiring decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| D046 | The command center is a **fixed, non-scrolling viewport**; overflow is per-panel/tab/drawer only (T500) | The directive's explicit requirement; a scrolling dashboard would defeat the HUD metaphor and the single-glance status model |
+| D047 | New capabilities are registered as `PanelDef` entries and never by editing the shell (T501) | Makes the UI extensible as the endpoint surface grows and keeps the existing components untouched (§69.3) |
+| D048 | `GET /metrics` is parsed client-side rather than adding a JSON summary endpoint (T508) | §32 already exposes the Prometheus text; a panel that parses it adds no second metric source |
+| D049 | Notification history is read from the existing event store; no new notifications table (T510) | §45 dispatches notifications as events; a second store would duplicate the bus's record |
+
+---
+
+## Unified client UI & Electron integration (spec §69, added after the command-center wiring block)
+
+One UI architecture across Windows Electron, mobile PWA and ESP32 touchscreen
+(§69). `UIPROTO` is the visual source of truth and is wrapped, not redesigned
+(§69.3). The first working Electron milestone is finished before major PWA or
+firmware work (§69.12). No client task is `[x]` without a real, executed gate
+(§69.11); hardware paths that cannot be exercised in this environment are
+recorded as **unverified**.
+
+### Phase E0 - audit and preservation baseline
+
+- [ ] **T514** Client architecture audit + implementation report - **objective:** record the real repository structure and the smallest viable integration path (§69.2/§69.12); **deps:** none; **impl:** inspect `UIPROTO` (framework, package manager, entry points, routing, components, tokens, fonts, assets, state, env, build/dev commands), the backend API/WS/auth/permissions, and any existing Electron code; run the prototype, record pre-existing errors; document direct-integration vs controlled-migration verdict; **test:** report committed with commands run and their actual output; **accept:** the report states the actual framework (discovered, not assumed) and no code was changed
+- [ ] **T515** Prototype preservation baseline - **objective:** a recovery point before any integration change (§69.3); **deps:** T514; **impl:** dedicated integration branch (or equivalent non-destructive point), inventory of layouts/components/assets to preserve, note the existing `Lovable`-connected branch constraints (`UIPROTO/AGENTS.md`: no history rewrite); **test:** branch exists and prototypes build unchanged on it; **accept:** `UIPROTO` is byte-for-byte unchanged at the baseline
+
+### Phase E1 - Electron desktop application
+
+- [ ] **T516** Electron main process + window loading existing UI - **objective:** load the existing renderer in a native window (§69.4); **deps:** T515; **impl:** Electron main process, window configured to load the built `UIPROTO` bundle (and the dev server in development), preserving routing and assets; **test:** dev launch renders the console, production build loads from disk; **accept:** no UI file is forked or duplicated
+- [ ] **T517** Preload bridge + contextIsolation + narrow IPC - **objective:** a minimal, explicit renderer↔main surface (§69.4/§69.5); **deps:** T516; **impl:** `contextIsolation` on, `nodeIntegration` off, `contextBridge` exposing only declared IPC methods, typed channel allow-list; **test:** renderer cannot reach Node globals, unknown channels rejected; **accept:** the renderer has no direct OS access
+- [ ] **T518** Navigation and security hardening - **objective:** restrict navigation and untrusted content (§69.4); **deps:** T516; **impl:** deny new windows, block remote/unknown navigation, `will-navigate`/`setWindowOpenHandler` guards, CSP compatible with the existing app; **test:** external navigation blocked, window-open denied; **accept:** no path from the renderer to arbitrary content
+- [ ] **T519** Backend connection config + REST/WS reuse + reconnection - **objective:** the transport desktop uses (§69.4/§69.7); **deps:** T516; **impl:** configurable backend endpoint, reuse the existing REST/SSE/WS contracts and the `UIPROTO` clients, connection-state handling, reconnection with backoff, structured logging; **test:** reconnect after backend restart, auth-failure path; **accept:** no new protocol and no duplicated client
+- [ ] **T520** Window lifecycle states - **objective:** expose the §69.6 states consistently; **deps:** T519; **impl:** map backend/agent/task state to `starting/disconnected/connected/idle/agent-active/task-executing/error/shutting-down`, adapting the prototype's existing state rather than adding a parallel system; **test:** state transitions driven by simulated events; **accept:** every §69.6 state is reachable and observable
+- [ ] **T521** Windows Node Bridge interfaces (scoped) - **objective:** the OS-action surface desktop needs, and only that (§69.5); **deps:** T517; **impl:** implement the interfaces the current phase requires (window management first), leave the rest prepared-not-faked, authorize each node-side/server-side, keep OS actions in main/isolated service; **test:** each implemented method's positive and denied paths; **accept:** no placeholder reports success it did not perform
+- [ ] **T522** Electron dev + production build verification - **objective:** the first working Electron milestone (§69.12); **deps:** T520/T521; **impl:** scripted dev launch and production packaging; verify renderer routing and asset loading; **test:** dev launch runs, production build opens the console, tests from T516-T521 re-run; **accept:** Electron milestone green with results recorded verbatim
+
+### Phase C - shared client contracts
+
+- [ ] **T523** Contract inventory and reuse map - **objective:** one documented contract set for all three clients (§69.7); **deps:** T514; **impl:** inventory of the existing endpoints/events/status covering connection, auth, agent status, task status/submission, command results, notifications, device registration/presence, error reporting, each mapped to existing §29/§19 items; **test:** map cross-checked against the running server's routes; **accept:** zero new endpoints introduced where one already exists
+- [ ] **T524** Versioned shared TypeScript client - **objective:** desktop and mobile share compatible types (§69.7); **deps:** T523; **impl:** a shared types/client module generated from or mirroring the server models with an explicit version, imported by the console/Electron and the PWA; **test:** `tsc` clean in both consumers, version mismatch surfaced; **accept:** one source of client types, no hand-duplicated copies
+- [ ] **T525** ESP32 protocol subset + server-side validation - **objective:** the minimal contract the device speaks, and server authority over it (§69.7/§31); **deps:** T523; **impl:** document the ESP32 subset (connection, auth, agent/task status, command results, device registration/presence, errors) over §64.9/§26, and confirm the server validates every command independently of the sending interface; **test:** server rejects an unauthorized command from the device path; **accept:** the device contract is a strict subset and gains no privileged operation
+
+### Phase M - mobile PWA plan
+
+- [ ] **T526** Share-vs-separate trade-off decision - **objective:** decide reuse vs a separate mobile app before restructuring (§69.8); **deps:** T523/T524; **impl:** document how much of the console is shippable as a responsive PWA versus what warrants a separate build, with the explicit constraint that mobile never reaches the Windows Node Bridge; **test:** decision recorded with the trade-offs and a recommendation; **accept:** no substantial restructuring happens before this decision
+- [ ] **T527** PWA installable config + offline behavior - **objective:** installability and graceful offline (§69.8); **deps:** T526; **impl:** manifest, service worker, app-shell caching, offline fallback states, cache-invalidation rules; **test:** install prompt available, app loads offline to a stated state; **accept:** offline shows an honest state, never stale-as-live data
+- [ ] **T528** PWA auth + core screens - **objective:** the mobile surface (§69.8); **deps:** T527; **impl:** responsive auth, AI conversation, agent/task status and remote-operation screens reusing the design tokens, all routed through Core + §15; **test:** responsive layout regression, auth-failure handling, operations route through Core; **accept:** no client-side call bypasses Core authorization
+
+### Phase F - ESP32 touchscreen UI plan
+
+- [ ] **T529** Hardware spec discovery + missing-spec doc - **objective:** establish the real hardware before firmware (§69.9); **deps:** none; **impl:** inventory the ESP32-WROOM-32 and 2.4-inch touchscreen details available in the repo (display controller, touch controller, pin mapping), document every missing specification as a blocker; **test:** the document lists known + unknown; **accept:** no pin mapping or controller is assumed
+- [ ] **T530** Library evaluation (TFT_eSPI / XPT2046_Touchscreen / LVGL) - **objective:** pick libraries that fit the actual hardware and the WROOM-32 budget (§69.9); **deps:** T529; **impl:** evaluate compatibility, footprint, partial-redraw support and memory use against the discovered hardware; record the choice and rejected options; **test:** decision recorded with footprint figures; **accept:** no library is adopted before this evaluation
+- [ ] **T531** `firmware/esp32-ui/` layout and modules - **objective:** the firmware skeleton (§69.9); **deps:** T530; **impl:** main `.ino` plus hardware config, display manager, touch manager, screen manager, screen components, network manager and ULTRON protocol client, or map onto an existing suitable firmware structure; **test:** compiles for the target board; **accept:** no desktop rendering code and no model code in the firmware
+- [ ] **T532** Screen components - **objective:** the seven screens (§69.9); **deps:** T531; **impl:** Home, AI status, Agent status, Tasks, compact Chat, Settings, Connection/error; **test:** each screen renders from fixture state; **accept:** screens match the compact subset only
+- [ ] **T533** Touch navigation + non-blocking updates + reconnection - **objective:** usable interaction and resilience (§69.9); **deps:** T532; **impl:** touch navigation between screens, partial redraws with no full-frame allocation, non-blocking network updates, reconnection after interruption; **test:** reconnection fixture, redraw bounds; **accept:** the UI never blocks on the network and never allocates a full framebuffer unnecessarily
+- [ ] **T534** ESP32 compile verification (toolchain-gated) - **objective:** prove the firmware builds (§69.11); **deps:** T533; **impl:** compile with the platform toolchain when available; if the toolchain is absent, record the task as **unverified**, not passed; **test:** compile output recorded verbatim; **accept:** status is honest about whether compilation actually ran
+
+### Phase D - documentation and final verification
+
+- [ ] **T535** `server_arc.md` §69 maintenance - **objective:** keep the spec in step with implementation (§69.10); **deps:** T516-T534; **impl:** update §69 with any decisions or deviations discovered during E/C/M/F; do not recreate the section; **test:** section reads consistently with the shipped code; **accept:** §69 reflects reality, with unimplemented items still marked as roadmap
+- [ ] **T536** `tasks.md` status maintenance - **objective:** the ledger stays truthful (§69.10); **deps:** T535; **impl:** mark each client task `[x]` only with evidence; record partially-implemented/deferred/blocked explicitly; capture desktop→mobile→ESP32 dependencies; **test:** every `[x]` has a gate line; **accept:** no task is marked complete on intent
+- [ ] **T537** Unified-client final verification - **objective:** one honest closing gate (§69.11/§69.12); **deps:** T522/T528/T534/T536; **impl:** re-run the console build, Electron dev + production, and the ESP32 compile (or record unverified); assemble the final report of what is implemented, partial, planned and unverified; **test:** the report's commands and results are recorded verbatim; **accept:** "ULTRON has a unified client" is only claimed for the parts actually built and tested
+
+### Unified-client decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| D050 | Electron is the first milestone; PWA and firmware follow it (T516-T522 before T526-T534) | §69.12 - a working desktop milestone de-risks the shared contracts all three clients depend on |
+| D051 | `UIPROTO` is preserved on a baseline branch and never history-rewritten (T515) | `UIPROTO/AGENTS.md` warns that the branch syncs to Lovable; rewriting history would lose project history |
+| D052 | The ESP32 firmware ships only a compact protocol subset and is compile-verified or marked unverified (T531/T534) | §69.9/§69.11 - the WROOM-32 cannot host the desktop UI, and an unbuilt firmware must not be claimed working |

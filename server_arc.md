@@ -7679,3 +7679,224 @@ records the merge so nothing is built twice.
 being written here. No camera service, vision module, gesture, or perception
 event exists until its tasks.md entry is `[x]` with a passing gate (§54):
 "ULTRON can SEE" is a roadmap line, not a status line.
+
+---
+
+# 69. UNIFIED CLIENT UI ARCHITECTURE & ELECTRON INTEGRATION (ADDENDUM)
+
+ULTRON's user interface becomes **one architecture serving three surfaces**: a
+Windows **Electron desktop application**, a **mobile PWA**, and a standalone
+**ESP32 touchscreen UI** implemented in Arduino C++. The existing `UIPROTO`
+prototype is the **visual source of truth**: the immediate priority is to convert
+it into a working Electron desktop application while preserving its current
+appearance and implementation wherever practical. Nothing here starts by
+generating a new interface (§69.3).
+
+> Filename note: the originating directive refers to this spec as
+> `ultron_arc.md`. In this repository the build specification is `server_arc.md`
+> and the ledger is `tasks.md`; both are updated **in place** (§69.10), never
+> recreated.
+
+## 69.0 STATUS AND NON-DESTRUCTIVE RULE
+
+Additive only, attaching to what exists:
+
+| Client piece | Attaches to |
+|---|---|
+| Web console / command center | the existing `UIPROTO` prototype and its `server/app/static` mount |
+| Electron shell | the built `UIPROTO` bundle - loaded, never re-implemented |
+| Shared client contracts | existing §29 REST + §19 SSE/WS; no new protocol |
+| Windows Node Bridge | §27/§28/§43 and the §64.6 Windows node - narrow IPC only |
+| Mobile PWA | the same UI assets and design tokens as the console |
+| ESP32 touchscreen UI | §64.9 device protocol (T160-T167) as a compact subset |
+| Client status surfaces | §32 observability + existing status endpoints |
+
+**No second UI framework, no second design system, no second application, no
+duplicate modules.** `UIPROTO` is not deleted until its replacement is validated
+and the repository workflow supports removal (§69.3).
+
+**This section is documentation.** Nothing in §69 is implemented by virtue of
+being written here (§54).
+
+## 69.1 CLIENT SURFACES AND RESPONSIBILITIES
+
+```text
+                       ULTRON CORE (§5, §29, §19)
+                                │  REST + SSE/WS
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+   DESKTOP (Electron)      MOBILE (PWA)           ESP32 (touchscreen)
+   full console, OS bridge  status + chat + ops    compact status + chat
+        │                       │                       │
+   Windows node (§64.6)    routes through Core      device WS (§64.9)
+```
+
+- **Desktop** carries the full command center plus OS-level capabilities behind a
+  narrow, explicit IPC bridge (§69.5).
+- **Mobile** is a companion; it never reaches the Windows Node Bridge (§69.8).
+- **ESP32** renders a compact subset for a 2.4-inch touchscreen; it never runs
+  models and never renders the desktop interface (§69.9).
+
+## 69.2 NON-NEGOTIABLE RULES
+
+1. Inspect the repository before modifying anything.
+2. Locate and inspect `UIPROTO`.
+3. Read `server_arc.md` and `tasks.md`.
+4. Inspect the backend API, WebSocket protocol, authentication, permissions and
+   client integration (§29-§31, §64).
+5. Preserve existing architecture, task IDs, task statuses and completed work.
+6. Do not replace existing implementations without demonstrating why.
+7. Do not redesign `UIPROTO`.
+8. Do not replace existing pages or components with generic templates.
+9. Do not introduce a new frontend framework unless the existing implementation
+   makes it necessary.
+10. Do not create duplicate applications or redundant modules.
+11. Do not modify unrelated backend or agent functionality.
+12. Do not commit secrets, API keys or credentials.
+13. Do not execute destructive commands or remove existing project data.
+14. Keep changes incremental, testable and compatible with the repository.
+
+A significant architectural conflict is documented *before* the conflicting
+change is implemented.
+
+## 69.3 PROTOTYPE PRESERVATION
+
+`UIPROTO` is the visual source of truth and is preserved: page layouts, component
+hierarchy, colors, gradients, typography, fonts, spacing, sizing, icons,
+animations, navigation, interactions, responsive behavior and assets. No visual
+redesign; a working component is not replaced because an alternative is
+preferred. Where a technical integration forces a visual adjustment, the reason
+is documented and the adjustment kept minimal. The prototype is preserved through
+a safe branch / recovery point and is not deleted until its replacement is
+validated (§54, and §69.2 rule 13). The command center additionally keeps a
+**fixed, non-scrolling single viewport**: overflow lives in per-panel scroll
+areas, tabs, the side rail, and slide-over drawers - never in the page.
+
+## 69.4 ELECTRON ARCHITECTURE
+
+Electron wraps the existing UI. The main process creates the window and loads the
+existing renderer (the built `UIPROTO` bundle, or the dev server during
+development), preserving routing and assets.
+
+- **Security baseline**: `contextIsolation` on, renderer Node integration off,
+  navigation restricted, untrusted content blocked (§69.5).
+- **Preload bridge**: a `contextBridge` surface exposing only explicit,
+  narrowly-scoped IPC methods.
+- **Backend connectivity**: REST + WebSocket clients reuse the existing server
+  contracts (§29/§19); connection configuration, state handling and reconnection
+  live in the desktop layer.
+- **Logging/errors**: structured logging and explicit error handling.
+
+Tray, floating orb, show/hide, multiple agent windows, Windows automation,
+filesystem access, app launching and approved PowerShell/system commands are
+**prepared** architecturally and implemented only as the current phase needs them
+(§69.5, §69.6).
+
+## 69.5 WINDOWS NODE BRIDGE (SCOPED, NO FAKE SUCCESS)
+
+Operating-system actions live in the Electron main process or an appropriately
+isolated Windows Node service (§64.6). The renderer receives **no arbitrary shell
+execution and no unrestricted filesystem access**. IPC methods are explicit and
+narrow, and each is authorized node-side or server-side. **No placeholder
+implementation may report a successful operation it did not perform** (§54).
+
+## 69.6 WINDOW LIFECYCLE STATES
+
+```text
+starting → backend disconnected → connected → idle → agent active →
+task executing → (error) → shutting down
+```
+
+The existing prototype's state management is adapted; no unnecessary parallel
+state system is introduced.
+
+## 69.7 SHARED CLIENT CONTRACTS
+
+The existing API and event protocol are inspected first and reused. Common
+operations documented across desktop, mobile and ESP32: connection status,
+authentication, agent status, task status, task submission, command results,
+notifications, device registration, device presence, error reporting. Contracts
+are versioned and validated; TypeScript clients share compatible types; ESP32
+implements only the necessary subset. **The server independently validates every
+command regardless of which interface sends it** (§69.2, §31).
+
+## 69.8 MOBILE PWA PLAN
+
+Built on the existing ULTRON visual identity and design tokens - no second design
+system. Supports responsive layouts, authentication, AI conversations, agent and
+task status, remote server operations, REST integration, WebSocket events,
+connection status, installable PWA configuration, appropriate offline caching and
+graceful offline behavior. **It must not gain direct access to the Windows Node
+Bridge**; mobile operations route through ULTRON Core and its §15 authorization
+layer. Whether the existing frontend is shared or a separate mobile application
+is more appropriate is investigated and the trade-offs documented *before*
+substantial restructuring.
+
+## 69.9 ESP32 TOUCHSCREEN UI PLAN
+
+A standalone embedded UI for the existing **ESP32-WROOM-32 + 2.4-inch
+touchscreen**. The display controller and pin mapping are **not assumed**;
+available hardware information is inspected and missing specifications
+documented. Screens: Home, AI status, Agent status, Tasks, compact Chat,
+Settings, Connection/error. Behavior: touch navigation, connection status, agent
+status display, task result display, predefined authorized commands, reconnection
+after interruption, and non-blocking screen updates. `TFT_eSPI`,
+`XPT2046_Touchscreen` and `LVGL` are evaluated for actual hardware compatibility
+before choosing libraries; memory is kept appropriate for the WROOM-32; partial
+redraws are used with no unnecessary framebuffer allocation. **The device never
+runs AI models and never renders the desktop interface.** A proposed layout is
+`firmware/esp32-ui/` (main `.ino`, hardware configuration, display manager, touch
+manager, screen manager, screen components, network manager, ULTRON protocol
+client) - not mandatory if the repository already has a suitable firmware
+structure.
+
+## 69.10 DOCUMENTATION
+
+`server_arc.md` and `tasks.md` are updated **in place**, never recreated.
+Preserve existing architecture, task IDs, task statuses, completed milestones,
+decisions, dependencies and implementation notes. New tasks use the existing
+format and ID conventions and clearly distinguish implemented / partially
+implemented / planned / deferred / blocked. Dependency relationships between
+desktop, mobile and ESP32 tasks are documented.
+
+## 69.11 TESTING
+
+Each changed area is tested where the environment supports it: existing prototype
+build, Electron development launch, Electron production build, renderer routing,
+asset loading, IPC restrictions, backend connectivity, WebSocket reconnection,
+authentication failure handling, command authorization, responsive layout
+regression, and ESP32 compilation when the required toolchain is present. **No
+test is claimed to pass unless it was executed; no hardware functionality is
+reported as verified without testing on the actual hardware** (§54, §38).
+
+## 69.12 EXECUTION ORDER AND ROADMAP
+
+```text
+E0 audit + preservation baseline → E1 Electron desktop (first milestone)
+→ C shared client contracts → M mobile PWA plan → F ESP32 UI plan → D docs + verify
+```
+
+The first working Electron milestone is finished **before** major PWA or firmware
+implementation begins. Specified in `tasks.md` as **T514-T537**, immediately after
+the command-center wiring block (T500-T513): **E0** audit + baseline (T514-T515)
+→ **E1** Electron (T516-T522) → **C** shared contracts (T523-T525) → **M** PWA
+(T526-T528) → **F** ESP32 UI (T529-T534) → **D** documentation + final (T535-T537).
+
+## 69.13 DECISIONS
+
+| # | Decision | Rationale |
+|---|---|---|
+| D040 | `UIPROTO` is the visual source of truth; Electron **wraps** it and never re-implements it (T516) | §69.3; a parallel UI would double maintenance and drift from the prototype the project already validated |
+| D041 | Renderer runs with `contextIsolation` on and Node integration off; every OS action lives in the main process / isolated Windows node behind narrow IPC (T517/T521) | §69.5; the renderer must not be able to reach the OS directly, so a compromised page cannot execute commands |
+| D042 | Shared client contracts reuse existing §29/§19 endpoints and events; no new protocol, and the server validates every command regardless of client (T523/T525) | §69.7; one contract keeps three clients honest and keeps authorization server-side (§31) |
+| D043 | The mobile PWA never reaches the Windows Node Bridge; all privileged operations route through Core + §15 (T526) | §69.8; mobile is the least trusted surface and must not carry desktop OS authority |
+| D044 | The ESP32 UI renders a compact protocol subset and never runs models or the desktop UI (T529/T532) | §69.9; the WROOM-32 cannot host the desktop interface and must stay a thin client over §64.9 |
+| D045 | No client milestone is marked done until built and verified; hardware paths that cannot be exercised here are recorded as **unverified**, never "passing" (T513/T522/T534/T537) | §69.11 and §54; the project's honesty rule applies to clients exactly as it applies to the server |
+
+## 69.14 DOCUMENTATION-ONLY DISCLAIMER
+
+**This section is documentation.** Nothing in §69 is implemented by virtue of
+being written here. No Electron shell, preload bridge, shared client package, PWA
+manifest, or ESP32 firmware exists until its `tasks.md` entry is `[x]` with a
+passing gate (§54): "ULTRON has a unified client" is a roadmap line, not a status
+line.
