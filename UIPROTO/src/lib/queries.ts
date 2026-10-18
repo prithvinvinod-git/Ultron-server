@@ -22,6 +22,7 @@ export const queryKeys = {
   tasks: ["tasks"] as const,
   task: (id: string) => ["tasks", id] as const,
   tools: ["tools"] as const,
+  tool: (name: string) => ["tools", name] as const,
   health: ["health"] as const,
   nodes: ["nodes"] as const,
   devices: ["devices"] as const,
@@ -70,6 +71,14 @@ export function useTools() {
     queryKey: queryKeys.tools,
     queryFn: toolsApi.list,
     staleTime: 60000,
+  });
+}
+
+export function useTool(name: string | null) {
+  return useQuery({
+    queryKey: queryKeys.tool(name ?? ""),
+    queryFn: () => toolsApi.get(name as string),
+    enabled: Boolean(name),
   });
 }
 

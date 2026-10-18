@@ -433,3 +433,9 @@
 .step-row strong{display:block;font-size:10px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .step-row small{display:block;font-size:8px;letter-spacing:.4px;color:var(--muted-foreground);overflow-wrap:anywhere;}
 
+/* --- tool schema + validation (T506) -------------------------------------- */
+.inspector-code{margin:0;padding:8px;background:var(--background);border:1px solid var(--border);border-radius:3px;font-size:9px;line-height:1.5;color:var(--muted-foreground);max-height:160px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;}
+.inspector-args{width:100%;min-height:64px;background:var(--background);border:1px solid var(--border);color:var(--foreground);font:inherit;font-size:9px;line-height:1.5;padding:6px;border-radius:3px;resize:vertical;}
+.inspector-verdict{margin:0;font-size:9px;letter-spacing:.4px;color:var(--warm);}
+.inspector-verdict.ok{color:var(--primary);}
+

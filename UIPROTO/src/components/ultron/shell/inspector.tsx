@@ -1,10 +1,13 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Check, Play, Pause, RotateCw, Square, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ApiError, toolsApi } from "@/lib/api";
 import type { Agent, Task, TaskPriority } from "@/lib/api";
-import { useAgent, useAgentActions, useAgents, useTask, useTaskActions, useTasks, useTaskSteps, useTools } from "@/lib/queries";
+import { broadcastUnauthorized } from "@/lib/auth";
+import { useAgent, useAgentActions, useAgents, useTask, useTaskActions, useTasks, useTaskSteps, useTool, useTools } from "@/lib/queries";
 import type { Selection } from "@/lib/workspace";
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
@@ -325,15 +328,69 @@ function TaskInspector({ id }: { id: string }) {
 }
 
 function ToolInspector({ name }: { name: string }) {
+  const { data: detail } = useTool(name);
   const { data } = useTools();
-  const tool = (data ?? []).find((item) => item.name === name);
+  const tool = detail ?? (data ?? []).find((item) => item.name === name);
+  const [args, setArgs] = useState("{}");
+  const [verdict, setVerdict] = useState<string | null>(null);
+
+  const validate = useMutation({
+    mutationFn: (parsed: Record<string, unknown>) => toolsApi.validate(name, parsed),
+    onSuccess: (result) =>
+      setVerdict(result.valid ? "VALID — arguments accepted" : "REJECTED by the tool schema"),
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 401) {
+        broadcastUnauthorized();
+        return;
+      }
+      setVerdict(error instanceof Error ? error.message : "validation failed");
+    },
+  });
+
   if (!tool) return <div className="panel-empty">tool not found</div>;
+
+  function onValidate() {
+    setVerdict(null);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(args) as Record<string, unknown>;
+    } catch {
+      setVerdict("arguments must be valid JSON");
+      return;
+    }
+    validate.mutate(parsed);
+  }
+
   return (
     <>
       <div className="inspector-title">{tool.name}</div>
       <Field label="CATEGORY" value={tool.category} />
       <Field label="PERMISSION" value={`L${tool.permission_level}`} />
+      <Field label="REVERSIBILITY" value={tool.reversibility} />
+      <Field label="TIMEOUT" value={`${tool.timeout}s`} />
+      <Field label="NODE SCOPE" value={tool.node_scope} />
       <Field label="AUDIT" value={tool.audit ? "enabled" : "disabled"} />
+      {tool.description ? <Field label="DESCRIPTION" value={tool.description} /> : null}
+
+      <span className="inspector-group-title">INPUT SCHEMA</span>
+      <pre className="inspector-code">{JSON.stringify(tool.input_schema, null, 2)}</pre>
+
+      <div className="inspector-controls">
+        <div className="inspector-group">
+          <span className="inspector-group-title">VALIDATE ARGUMENTS</span>
+          <textarea
+            aria-label="Tool arguments"
+            className="inspector-args"
+            spellCheck={false}
+            value={args}
+            onChange={(event) => setArgs(event.target.value)}
+          />
+          <Button variant="ghost" size="sm" disabled={validate.isPending} onClick={onValidate}>
+            {validate.isPending ? "Validating…" : "Validate"}
+          </Button>
+          {verdict ? <p className={`inspector-verdict${validate.isSuccess ? " ok" : ""}`}>{verdict}</p> : null}
+        </div>
+      </div>
     </>
   );
 }
