@@ -109,6 +109,28 @@ function registerIpcHandlers(win: BrowserWindow, tracker: LifecycleTracker): voi
   ipcMain.handle(IPC_CHANNELS.WINDOW_MINIMIZE, () => win.minimize());
   ipcMain.handle(IPC_CHANNELS.WINDOW_MAXIMIZE, () => win.maximize());
   ipcMain.handle(IPC_CHANNELS.WINDOW_CLOSE, () => win.close());
+  ipcMain.handle(IPC_CHANNELS.WINDOW_GET_STATE, () => ({
+    isMaximized: win.isMaximized(),
+    isMinimized: win.isMinimized(),
+    isFullScreen: win.isFullScreen(),
+    bounds: win.getBounds(),
+    isAlwaysOnTop: win.isAlwaysOnTop(),
+  }));
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOW_SET_BOUNDS,
+    (_event, bounds: { x?: number; y?: number; width?: number; height?: number }) => {
+      win.setBounds(bounds);
+    },
+  );
+  ipcMain.handle(IPC_CHANNELS.WINDOW_TOGGLE_FULLSCREEN, () => {
+    win.setFullScreen(!win.isFullScreen());
+  });
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOW_SET_ALWAYS_ON_TOP,
+    (_event, flag: boolean) => {
+      win.setAlwaysOnTop(flag);
+    },
+  );
 }
 
 function registerNavigationGuards(win: BrowserWindow, allowedOrigin: string): void {

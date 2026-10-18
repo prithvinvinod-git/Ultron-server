@@ -14,6 +14,10 @@ export const IPC_CHANNELS = {
   WINDOW_MINIMIZE: "window:minimize",
   WINDOW_MAXIMIZE: "window:maximize",
   WINDOW_CLOSE: "window:close",
+  WINDOW_GET_STATE: "window:get-state",
+  WINDOW_SET_BOUNDS: "window:set-bounds",
+  WINDOW_TOGGLE_FULLSCREEN: "window:toggle-fullscreen",
+  WINDOW_SET_ALWAYS_ON_TOP: "window:set-always-on-top",
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

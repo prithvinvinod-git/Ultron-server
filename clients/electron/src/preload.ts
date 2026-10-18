@@ -38,6 +38,24 @@ const api = {
   reportActivity: (agentCount: number, taskCount: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.LIFECYCLE_REPORT, { agentCount, taskCount }) as Promise<void>,
 
+  getWindowState: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_GET_STATE) as Promise<{
+      isMaximized: boolean;
+      isMinimized: boolean;
+      isFullScreen: boolean;
+      bounds: { x: number; y: number; width: number; height: number };
+      isAlwaysOnTop: boolean;
+    }>,
+
+  setWindowBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_SET_BOUNDS, bounds) as Promise<void>,
+
+  toggleFullscreen: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_TOGGLE_FULLSCREEN) as Promise<void>,
+
+  setAlwaysOnTop: (flag: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_SET_ALWAYS_ON_TOP, flag) as Promise<void>,
+
   minimizeWindow: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE) as Promise<void>,
 
@@ -66,6 +84,16 @@ declare global {
         consecutiveFailures: number;
       }>;
       reportActivity: (agentCount: number, taskCount: number) => Promise<void>;
+      getWindowState: () => Promise<{
+        isMaximized: boolean;
+        isMinimized: boolean;
+        isFullScreen: boolean;
+        bounds: { x: number; y: number; width: number; height: number };
+        isAlwaysOnTop: boolean;
+      }>;
+      setWindowBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => Promise<void>;
+      toggleFullscreen: () => Promise<void>;
+      setAlwaysOnTop: (flag: boolean) => Promise<void>;
       minimizeWindow: () => Promise<void>;
       maximizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
