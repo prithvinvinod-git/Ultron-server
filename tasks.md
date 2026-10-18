@@ -723,12 +723,12 @@ no account of *why*, and this is the revision every later one is compared agains
 
 ## Phase 11 — Automation
 
-- [ ] **T170** `app/scheduler/manager.py` — APScheduler async, one-time / recurring / delayed jobs, persistent job store
-- [ ] **T171** Event-triggered automation — subscribe to bus, evaluate rules, create tasks
-- [ ] **T172** Persistent workflows
-- [ ] **T173** Notification dispatch wiring (Core → providers)
-- [ ] **T174** Phase 11 tests — one-time, recurring, delayed, event-triggered
-- [ ] **T175** **PHASE 11 verification**
+- [x] **T170** `app/scheduler/manager.py` — APScheduler async, one-time / recurring / delayed jobs, persistent job store
+- [x] **T171** Event-triggered automation — subscribe to bus, evaluate rules, create tasks
+- [x] **T172** Persistent workflows
+- [x] **T173** Notification dispatch wiring (Core → providers)
+- [x] **T174** Phase 11 tests — one-time, recurring, delayed, event-triggered
+- [x] **T175** **PHASE 11 verification**
 
 **Phase 11 gate:** `SCHEDULE_TRIGGERED` fires and produces a real task
 
