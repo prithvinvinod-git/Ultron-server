@@ -12,7 +12,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 
 import { agentsApi, devicesApi, healthApi, metricsApi, nodesApi, notificationsApi, schedulesApi, tasksApi, toolsApi, ApiError } from "./api";
-import type { StepCreate, TaskPriority } from "./api";
+import type { ScheduleCreate, ScheduleUpdate, StepCreate, TaskPriority } from "./api";
 import { broadcastUnauthorized } from "./auth";
 import { onEnvelope } from "./events";
 
@@ -206,6 +206,49 @@ export function reportMutationError(error: unknown): void {
     return;
   }
   toast.error(error instanceof Error ? error.message : "request failed");
+}
+
+export function useScheduleActions() {
+  const queryClient = useQueryClient();
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: queryKeys.schedules });
+  const ok = (message: string) => () => {
+    toast.success(message);
+    refresh();
+  };
+  const options = { onError: reportMutationError };
+  return {
+    create: useMutation({
+      ...options,
+      mutationFn: (body: ScheduleCreate) => schedulesApi.create(body),
+      onSuccess: ok("Schedule created"),
+    }),
+    update: useMutation({
+      ...options,
+      mutationFn: ({ id, body }: { id: string; body: ScheduleUpdate }) =>
+        schedulesApi.update(id, body),
+      onSuccess: ok("Schedule updated"),
+    }),
+    pause: useMutation({
+      ...options,
+      mutationFn: (id: string) => schedulesApi.pause(id),
+      onSuccess: ok("Schedule paused"),
+    }),
+    resume: useMutation({
+      ...options,
+      mutationFn: (id: string) => schedulesApi.resume(id),
+      onSuccess: ok("Schedule resumed"),
+    }),
+    fire: useMutation({
+      ...options,
+      mutationFn: (id: string) => schedulesApi.fire(id),
+      onSuccess: ok("Schedule fired"),
+    }),
+    remove: useMutation({
+      ...options,
+      mutationFn: (id: string) => schedulesApi.remove(id),
+      onSuccess: ok("Schedule removed"),
+    }),
+  };
 }
 
 /**

@@ -558,11 +558,42 @@ export const metricsApi = {
 // Schedules and notifications route modules land in T509/T510; these clients are
 // typed against the server models those routes expose so the panels only need
 // the wiring commit.
+export interface ScheduleCreate {
+  name: string;
+  kind?: ScheduleKind;
+  cron_expression?: string | null;
+  interval_seconds?: number | null;
+  run_at?: string | null;
+  payload?: Record<string, unknown>;
+  project_id?: string | null;
+}
+
+export interface ScheduleUpdate {
+  name?: string | null;
+  cron_expression?: string | null;
+  interval_seconds?: number | null;
+  run_at?: string | null;
+  payload?: Record<string, unknown> | null;
+}
+
+export interface FireResult {
+  schedule_id: string;
+  fired: boolean;
+  task_id: string | null;
+}
+
 export const schedulesApi = {
   list: () => api.get<Schedule[]>("/schedules"),
   get: (id: string) => api.get<Schedule>(`/schedules/${id}`),
+  create: (body: ScheduleCreate) => api.post<Schedule>("/schedules", body),
+  update: (id: string, body: ScheduleUpdate) => {
+    const init: RequestInit = { method: "PATCH" };
+    init.body = JSON.stringify(body);
+    return request<Schedule>(`/schedules/${id}`, init);
+  },
   pause: (id: string) => api.post<Schedule>(`/schedules/${id}/pause`),
   resume: (id: string) => api.post<Schedule>(`/schedules/${id}/resume`),
+  fire: (id: string) => api.post<FireResult>(`/schedules/${id}/fire`),
   remove: (id: string) => api.del<void>(`/schedules/${id}`),
 };
 

@@ -9,6 +9,7 @@ import { CoreDisplay, CoreMetrics } from '@/components/ultron/core-display';
 import { AppShell } from '@/components/ultron/shell/app-shell';
 import { EventsPanel, HealthPanel, NetworkPanel, SessionPanel, TaskPanel, ToolsPanel } from '@/components/ultron/widgets';
 import { PanelGrid } from '@/components/ultron/shell/registry';
+import { SchedulesPanel } from '@/components/ultron/schedules';
 import { useEventStream } from '@/lib/events';
 import { voiceApi } from '@/lib/api';
 import { VoiceClient } from '@/lib/voice';
@@ -109,7 +110,7 @@ function Index() {
     agents: <PanelGrid tab="agents" />,
     tasks: <PanelGrid tab="tasks" />,
     fleet: <PanelGrid tab="fleet" />,
-    schedules: <div className="shell-panels"><PlannedPanel title="Schedules" task="T511" /></div>,
+    schedules: <div className="shell-panels"><SchedulesPanel /></div>,
     notifications: <div className="shell-panels"><PlannedPanel title="Notifications" task="T512" /></div>,
     system: <PanelGrid tab="system" />,
   };

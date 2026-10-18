@@ -1,13 +1,13 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, Play, Pause, RotateCw, Square, Trash2, X } from "lucide-react";
+import { Check, Pause, Play, RotateCw, Square, Trash2, X, Zap } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ApiError, toolsApi } from "@/lib/api";
-import type { Agent, Task, TaskPriority } from "@/lib/api";
+import type { Agent, Schedule, ScheduleUpdate, Task, TaskPriority } from "@/lib/api";
 import { broadcastUnauthorized } from "@/lib/auth";
-import { useAgent, useAgentActions, useAgents, useDevice, useDevices, useNode, useNodes, useTask, useTaskActions, useTasks, useTaskSteps, useTool, useTools } from "@/lib/queries";
+import { useAgent, useAgentActions, useAgents, useDevice, useDevices, useNode, useNodes, useScheduleActions, useSchedules, useTask, useTaskActions, useTasks, useTaskSteps, useTool, useTools } from "@/lib/queries";
 import type { Selection } from "@/lib/workspace";
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
@@ -438,6 +438,152 @@ function FallbackInspector({ selection }: { selection: Selection }) {
   return <Field label={selection.kind.toUpperCase()} value={selection.id} />;
 }
 
+function ScheduleControls({ schedule }: { schedule: Schedule }) {
+  const actions = useScheduleActions();
+  const [name, setName] = useState(schedule.name);
+  const [interval, setInterval] = useState(schedule.interval_seconds?.toString() ?? "");
+  const [cron, setCron] = useState(schedule.cron_expression ?? "");
+  const [runAt, setRunAt] = useState(schedule.run_at ?? "");
+
+  const busy = Object.values(actions).some((mutation) => mutation.isPending);
+  const armed = schedule.status === "active";
+  const completed = schedule.status === "completed" || schedule.status === "failed";
+
+  function save() {
+    const body: ScheduleUpdate = {};
+    const trimmed = name.trim();
+    if (trimmed && trimmed !== schedule.name) body.name = trimmed;
+    if (schedule.kind === "interval") {
+      const seconds = Number(interval);
+      if (interval.trim() && Number.isFinite(seconds) && seconds >= 1 && seconds !== schedule.interval_seconds) {
+        body.interval_seconds = seconds;
+      }
+    }
+    if (schedule.kind === "cron" && cron.trim() && cron.trim() !== schedule.cron_expression) {
+      body.cron_expression = cron.trim();
+    }
+    if (schedule.kind === "once" && runAt.trim() && runAt.trim() !== schedule.run_at) {
+      body.run_at = runAt.trim();
+    }
+    if (Object.keys(body).length) actions.update.mutate({ id: schedule.id, body });
+  }
+
+  return (
+    <div className="inspector-controls">
+      <div className="inspector-group">
+        <span className="inspector-group-title">LIFECYCLE</span>
+        <div className="inspector-buttons">
+          {armed ? (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => actions.pause.mutate(schedule.id)}>
+              <Pause />
+              Pause
+            </Button>
+          ) : null}
+          {schedule.status === "paused" ? (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => actions.resume.mutate(schedule.id)}>
+              <Play />
+              Resume
+            </Button>
+          ) : null}
+          {!completed ? (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => actions.fire.mutate(schedule.id)}>
+              <Zap />
+              Fire now
+            </Button>
+          ) : null}
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => actions.remove.mutate(schedule.id)}>
+            <Trash2 />
+            Delete
+          </Button>
+        </div>
+      </div>
+
+      <div className="inspector-group">
+        <span className="inspector-group-title">DEFINITION</span>
+        <input
+          aria-label="Schedule name"
+          value={name}
+          disabled={busy}
+          onChange={(event) => setName(event.target.value)}
+        />
+        {schedule.kind === "interval" ? (
+          <div className="inspector-row">
+            <input
+              aria-label="Interval seconds"
+              value={interval}
+              disabled={busy}
+              inputMode="numeric"
+              onChange={(event) => setInterval(event.target.value)}
+            />
+            <Button variant="ghost" size="sm" disabled={busy} onClick={save}>
+              Save
+            </Button>
+          </div>
+        ) : null}
+        {schedule.kind === "cron" ? (
+          <div className="inspector-row">
+            <input
+              aria-label="Cron expression"
+              value={cron}
+              disabled={busy}
+              onChange={(event) => setCron(event.target.value)}
+            />
+            <Button variant="ghost" size="sm" disabled={busy} onClick={save}>
+              Save
+            </Button>
+          </div>
+        ) : null}
+        {schedule.kind === "once" ? (
+          <div className="inspector-row">
+            <input
+              aria-label="Run at"
+              value={runAt}
+              disabled={busy}
+              onChange={(event) => setRunAt(event.target.value)}
+            />
+            <Button variant="ghost" size="sm" disabled={busy} onClick={save}>
+              Save
+            </Button>
+          </div>
+        ) : null}
+        {schedule.kind !== "interval" && schedule.kind !== "cron" && schedule.kind !== "once" ? (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={save}>
+            Save name
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="inspector-group">
+        <span className="inspector-group-title">PAYLOAD</span>
+        <pre className="inspector-code">{JSON.stringify(schedule.payload, null, 2)}</pre>
+      </div>
+    </div>
+  );
+}
+
+function ScheduleInspector({ id }: { id: string }) {
+  const { data } = useSchedules();
+  const schedule = (data ?? []).find((item) => item.id === id);
+  if (!schedule) return <div className="panel-empty">schedule not found</div>;
+  return (
+    <>
+      <div className="inspector-title">{schedule.name}</div>
+      <Field label="STATUS" value={schedule.status} />
+      <Field label="KIND" value={schedule.kind} />
+      <Field label="CRON" value={schedule.cron_expression ?? "—"} />
+      <Field label="INTERVAL" value={schedule.interval_seconds ? `${schedule.interval_seconds}s` : "—"} />
+      <Field label="RUN AT" value={schedule.run_at ? timestamp(schedule.run_at) : "—"} />
+      <Field label="NEXT RUN" value={schedule.next_run_at ? timestamp(schedule.next_run_at) : "—"} />
+      <Field label="LAST RUN" value={schedule.last_run_at ? timestamp(schedule.last_run_at) : "—"} />
+      <Field label="LAST TASK" value={schedule.last_task_id ?? "—"} />
+      <Field label="RUNS" value={`${schedule.run_count} · ${schedule.failure_count} failed`} />
+      <Field label="LAST ERROR" value={schedule.last_error ?? "—"} />
+      <Field label="ID" value={schedule.id} />
+      <ScheduleControls key={`${schedule.id}:${schedule.status}:${schedule.next_run_at ?? ""}`} schedule={schedule} />
+    </>
+  );
+}
+
 /** Right-hand inspector: renders the detail view for the current selection. */
 export function SelectionInspector({ selection, onClose }: { selection: Selection; onClose: () => void }) {
   return (
@@ -456,6 +602,8 @@ export function SelectionInspector({ selection, onClose }: { selection: Selectio
         <NodeInspector id={selection.id} />
       ) : selection.kind === "device" ? (
         <DeviceInspector id={selection.id} />
+      ) : selection.kind === "schedule" ? (
+        <ScheduleInspector id={selection.id} />
       ) : (
         <FallbackInspector selection={selection} />
       )}
