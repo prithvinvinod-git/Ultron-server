@@ -24,6 +24,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { IPC_CHANNELS } from "./ipc-channels";
+import { LifecycleTracker } from "./lifecycle";
 import { startStaticServer } from "./static-server";
 import type { StaticServerHandle } from "./static-server";
 
@@ -49,6 +50,7 @@ function log(level: "info" | "error", message: string, extra?: Record<string, un
 }
 
 let staticHandle: StaticServerHandle | null = null;
+let tracker: LifecycleTracker | null = null;
 
 async function resolveStartURL(): Promise<string> {
   if (DEV_URL) {
@@ -94,9 +96,16 @@ function createWindow(startURL: string): BrowserWindow {
   return win;
 }
 
-function registerIpcHandlers(win: BrowserWindow): void {
+function registerIpcHandlers(win: BrowserWindow, tracker: LifecycleTracker): void {
   ipcMain.handle(IPC_CHANNELS.APP_VERSION, () => app.getVersion());
   ipcMain.handle(IPC_CHANNELS.BACKEND_INFO, () => ({ backendUrl: BACKEND_URL }));
+  ipcMain.handle(IPC_CHANNELS.LIFECYCLE_GET, () => tracker.info);
+  ipcMain.handle(
+    IPC_CHANNELS.LIFECYCLE_REPORT,
+    (_event, payload: { agentCount: number; taskCount: number }) => {
+      tracker.reportActivity(payload.agentCount, payload.taskCount);
+    },
+  );
   ipcMain.handle(IPC_CHANNELS.WINDOW_MINIMIZE, () => win.minimize());
   ipcMain.handle(IPC_CHANNELS.WINDOW_MAXIMIZE, () => win.maximize());
   ipcMain.handle(IPC_CHANNELS.WINDOW_CLOSE, () => win.close());
@@ -120,7 +129,19 @@ function registerNavigationGuards(win: BrowserWindow, allowedOrigin: string): vo
 async function main(): Promise<void> {
   const startURL = await resolveStartURL();
   const win = createWindow(startURL);
-  registerIpcHandlers(win);
+
+  tracker = new LifecycleTracker({
+    backendUrl: BACKEND_URL,
+    onState: (state) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.LIFECYCLE_STATE, state);
+      }
+    },
+    onError: (message) => log("error", "lifecycle", { message }),
+  });
+  tracker.start();
+
+  registerIpcHandlers(win, tracker);
 
   const allowedOrigin = new URL(startURL).origin;
   registerNavigationGuards(win, allowedOrigin);
@@ -175,6 +196,26 @@ async function main(): Promise<void> {
                 wsMessage = wsResult === 'ok' ? wsMessage : wsResult;
                 ws.close();
               } catch (e) { wsMessage = String(e).slice(0, 100); }
+              let lcStates = [];
+              let lcInfo = null;
+              try {
+                const probe = async (label, agents, tasks) => {
+                  await (window.ultron).reportActivity(agents, tasks);
+                  await new Promise((r) => setTimeout(r, 300));
+                  const info = await (window.ultron).getLifecycleInfo();
+                  lcStates.push(label + ":" + info.state);
+                  return info.state;
+                };
+                lcInfo = await (window.ultron).getLifecycleInfo();
+                lcStates.push("initial:" + String(lcInfo.state));
+                await probe("agents", 3, 0);
+                await probe("tasks", 0, 2);
+                await probe("idle", 0, 0);
+                lcInfo = await (window.ultron).getLifecycleInfo();
+                lcStates.push("final:" + String(lcInfo.state));
+              } catch (e) {
+                lcStates.push("error:" + String(e).slice(0, 80));
+              }
               return {
                 url: location.href,
                 title: document.title,
@@ -190,6 +231,7 @@ async function main(): Promise<void> {
                 proxyBody,
                 wsConnected,
                 wsMessage,
+                lcStates,
               };
             })()`,
           )
@@ -207,8 +249,13 @@ async function main(): Promise<void> {
               proxyBody?: string;
               wsConnected?: boolean;
               wsMessage?: string | null;
+              lcStates?: string[];
             };
-            const ok = r.hasShell === true && r.hasNode === false && r.hasUltron === true && !!r.appVersion && r.navBlocked === true && r.openDenied === true && r.backendInfo?.backendUrl === 'http://127.0.0.1:8000' && (r.proxyStatus === 200 || r.proxyStatus === 'fetch-error') && (r.wsConnected === true || r.wsMessage === 'timeout');
+            const lcOk = Array.isArray(r.lcStates) &&
+              r.lcStates.some((s) => s.includes(":agent-active")) &&
+              r.lcStates.some((s) => s.includes(":task-executing")) &&
+              r.lcStates[r.lcStates.length - 1]?.endsWith(":idle");
+            const ok = r.hasShell === true && r.hasNode === false && r.hasUltron === true && !!r.appVersion && r.navBlocked === true && r.openDenied === true && r.backendInfo?.backendUrl === 'http://127.0.0.1:8000' && (r.proxyStatus === 200 || r.proxyStatus === 'fetch-error') && (r.wsConnected === true || r.wsMessage === 'timeout') && lcOk;
             log(ok ? "info" : "error", "smoke render result", { ...result });
             app.exit(ok ? 0 : 1);
           })
@@ -250,6 +297,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   log("info", "shutting down");
+  tracker?.shutdown();
   if (staticHandle) {
     void staticHandle.close();
     staticHandle = null;

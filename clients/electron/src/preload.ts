@@ -27,6 +27,17 @@ const api = {
   getBackendInfo: (): Promise<{ backendUrl: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BACKEND_INFO) as Promise<{ backendUrl: string }>,
 
+  getLifecycleInfo: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.LIFECYCLE_GET) as Promise<{
+      state: string;
+      agentCount: number;
+      taskCount: number;
+      consecutiveFailures: number;
+    }>,
+
+  reportActivity: (agentCount: number, taskCount: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.LIFECYCLE_REPORT, { agentCount, taskCount }) as Promise<void>,
+
   minimizeWindow: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE) as Promise<void>,
 
@@ -48,6 +59,13 @@ declare global {
     ultron: {
       getAppVersion: () => Promise<string>;
       getBackendInfo: () => Promise<{ backendUrl: string }>;
+      getLifecycleInfo: () => Promise<{
+        state: string;
+        agentCount: number;
+        taskCount: number;
+        consecutiveFailures: number;
+      }>;
+      reportActivity: (agentCount: number, taskCount: number) => Promise<void>;
       minimizeWindow: () => Promise<void>;
       maximizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;

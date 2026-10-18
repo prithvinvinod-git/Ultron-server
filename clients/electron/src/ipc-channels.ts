@@ -8,6 +8,9 @@
 export const IPC_CHANNELS = {
   APP_VERSION: "app:version",
   BACKEND_INFO: "backend:info",
+  LIFECYCLE_STATE: "lifecycle:state",
+  LIFECYCLE_GET: "lifecycle:get",
+  LIFECYCLE_REPORT: "lifecycle:report",
   WINDOW_MINIMIZE: "window:minimize",
   WINDOW_MAXIMIZE: "window:maximize",
   WINDOW_CLOSE: "window:close",
