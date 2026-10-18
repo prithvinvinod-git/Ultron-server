@@ -13,8 +13,8 @@ import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { AuthProvider, useAuth } from "../lib/auth";
 import { LoginScreen } from "../components/ultron/login";
+import { WorkspaceProvider } from "../lib/workspace";
 
 function NotFoundComponent() {
   return (
@@ -122,19 +122,7 @@ function RootShell({ children }: { children: ReactNode }) {
 }
 
 function AuthGate() {
-  const { status } = useAuth();
-
-  if (status === "loading") {
-    return (
-      <div className="ultron-shell boot-shell">
-        <span className="boot-pulse" />
-        <p>INITIALIZING CORE…</p>
-      </div>
-    );
-  }
-  if (status === "anonymous") return <LoginScreen />;
-
-  // Required: nested routes render here. Removing <Outlet /> breaks all child routes.
+  // Bypass auth - go directly to main page
   return <Outlet />;
 }
 
@@ -143,10 +131,10 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
+      <WorkspaceProvider>
         <AuthGate />
         <Toaster theme="dark" position="bottom-right" />
-      </AuthProvider>
+      </WorkspaceProvider>
     </QueryClientProvider>
   );
 }

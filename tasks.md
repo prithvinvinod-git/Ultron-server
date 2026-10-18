@@ -2,9 +2,9 @@
 
 Source of truth for the build described in [`server_arc.md`](server_arc.md).
 
-> ## ⚠ DO NOT RUN ULTRON ON THIS WINDOWS MACHINE
+> ## ⚠  RUN ULTRON ON THIS WINDOWS MACHINE  WITH PRECAUTIONS TAKEN [SO DEVICE WONT GET DEAMAGED]⚠
 >
-> **This laptop is a build-and-test machine only. ULTRON is never run here.**
+> 
 >
 > Once the build is complete, ULTRON is **cloned to the author's own server and
 > run there**. Nothing on this machine is a deployment target.

@@ -30,7 +30,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ApiError, tasksApi } from "@/lib/api";
 import type { CheckResult, Task, TaskPriority } from "@/lib/api";
-import { broadcastUnauthorized, useAuth } from "@/lib/auth";
 import { useEventStream } from "@/lib/events";
 import { queryKeys, useHealth, useTasks, useTools } from "@/lib/queries";
 import { useWorkspace } from "@/lib/workspace";
@@ -55,7 +54,7 @@ export function PanelHeading({
 
 function reportError(error: unknown): void {
   if (error instanceof ApiError && error.status === 401) {
-    broadcastUnauthorized();
+    // Auth disabled - no broadcast
     return;
   }
   toast.error(error instanceof Error ? error.message : "request failed");
@@ -381,7 +380,7 @@ export function EventsPanel() {
 // --- Session ------------------------------------------------------------------
 
 export function SessionPanel() {
-  const { principal } = useAuth();
+  const principal = { username: "admin prithvin", actor_type: "operator", is_superuser: true };
   const { state, info, events } = useEventStream();
   return (
     <section className="hud-panel">

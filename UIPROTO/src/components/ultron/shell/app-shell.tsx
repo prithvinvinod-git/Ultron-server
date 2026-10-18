@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Bot, Cpu, LogOut, Wifi } from "lucide-react";
+import { Bot, Cpu, LogOut, Wifi, User } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/lib/auth";
 import { useEventStream } from "@/lib/events";
 import { useAgents, useHealth, useTasks } from "@/lib/queries";
 import { TABS, useWorkspace } from "@/lib/workspace";
@@ -24,7 +23,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const health = useHealth();
   const agents = useAgents();
   const tasks = useTasks();
-  const { principal, logout } = useAuth();
+  const principal = { username: "admin prithvin" };
+  const logout = () => {};
   const [clock, setClock] = useState("--:--:--");
 
   useEffect(() => {
