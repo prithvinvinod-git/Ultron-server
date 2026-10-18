@@ -25,6 +25,19 @@ export function setToken(token: string | null): void {
   else window.localStorage.removeItem(TOKEN_KEY);
 }
 
+export const REFRESH_KEY = "ultron.refresh";
+
+export function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(REFRESH_KEY);
+}
+
+export function setRefreshToken(token: string | null): void {
+  if (typeof window === "undefined") return;
+  if (token) window.localStorage.setItem(REFRESH_KEY, token);
+  else window.localStorage.removeItem(REFRESH_KEY);
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -68,9 +81,53 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   for (const [key, value] of Object.entries(authHeaders())) headers.set(key, value);
 
   const res = await fetch(path, { ...init, headers });
+
+  // An expired access token gets exactly one silent refresh-and-retry. The
+  // credential endpoints are excluded: a 401 from `/auth/login` is a wrong
+  // password, and `/auth/refresh` is the refresh call itself.
+  if (res.status === 401 && !isCredentialPath(path)) {
+    if (await refreshAccessToken()) return request<T>(path, init);
+  }
+
   const body = await parseBody(res);
   if (!res.ok) throw errorFrom(res, body);
   return body as T;
+}
+
+function isCredentialPath(path: string): boolean {
+  return path.startsWith("/auth/login") || path.startsWith("/auth/refresh");
+}
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+/**
+ * Rotate the refresh token for a fresh access token, coalescing concurrent
+ * callers into one request. Resolves `false` when there is nothing to refresh
+ * or the server refused; the caller then surfaces the original 401.
+ */
+export async function refreshAccessToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+  refreshInFlight = (async () => {
+    try {
+      const res = await fetch("/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) return false;
+      const tokens = (await res.json()) as TokenResponse;
+      setToken(tokens.access_token);
+      setRefreshToken(tokens.refresh_token);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
 }
 
 export const api = {

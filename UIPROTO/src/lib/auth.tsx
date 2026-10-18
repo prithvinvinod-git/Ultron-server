@@ -12,7 +12,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { ApiError, getToken, login as loginRequest, logout as logoutRequest, setToken, whoami } from "./api";
+import { ApiError, authApi, getRefreshToken, getToken, login as loginRequest, logout as logoutRequest, setRefreshToken, setToken, whoami } from "./api";
 import type { Principal } from "./api";
 
 type AuthStatus = "loading" | "authenticated" | "anonymous";
@@ -22,6 +22,7 @@ interface AuthContextValue {
   principal: Principal | null;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -38,16 +39,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [principal, setPrincipal] = useState<Principal | null>(null);
 
   const verify = useCallback(async () => {
-    if (!getToken()) {
+    if (!getToken() && !getRefreshToken()) {
       setStatus("anonymous");
       setPrincipal(null);
       return;
     }
     try {
+      // whoami() refreshes an expired access token once (see request()), so a
+      // live refresh token gets the user straight back into an authenticated
+      // session without a re-login.
       setPrincipal(await whoami());
       setStatus("authenticated");
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) setToken(null);
+      if (error instanceof ApiError && error.status === 401) {
+        setToken(null);
+        setRefreshToken(null);
+      }
       setPrincipal(null);
       setStatus("anonymous");
     }
@@ -60,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onUnauthorized = () => {
       setToken(null);
+      setRefreshToken(null);
       setPrincipal(null);
       setStatus("anonymous");
     };
@@ -70,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     const tokens = await loginRequest(username, password);
     setToken(tokens.access_token);
+    setRefreshToken(tokens.refresh_token);
     setPrincipal(await whoami());
     setStatus("authenticated");
   }, []);
@@ -82,13 +91,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // the outcome the user asked for.
     }
     setToken(null);
+    setRefreshToken(null);
     setPrincipal(null);
     setStatus("anonymous");
   }, []);
 
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    await authApi.changePassword(currentPassword, newPassword);
+  }, []);
+
   const value = useMemo(
-    () => ({ status, principal, login, logout }),
-    [status, principal, login, logout],
+    () => ({ status, principal, login, logout, changePassword }),
+    [status, principal, login, logout, changePassword],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

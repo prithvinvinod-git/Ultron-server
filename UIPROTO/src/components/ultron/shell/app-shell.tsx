@@ -8,6 +8,7 @@ import { useEventStream } from "@/lib/events";
 import { useAgents, useHealth, useTasks } from "@/lib/queries";
 import { TABS, useWorkspace } from "@/lib/workspace";
 import { SelectionInspector } from "@/components/ultron/shell/inspector";
+import { ChangePasswordDialog } from "@/components/ultron/shell/change-password";
 
 const ACTIVE_AGENT_STATUSES = new Set(["created", "initializing", "ready", "running", "waiting", "verifying"]);
 const OPEN_TASK_STATUSES = new Set(["pending", "queued", "running", "blocked", "paused"]);
@@ -50,6 +51,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {online ? "SYSTEM OPERATIONAL" : readiness ? "SYSTEM DEGRADED" : "SYSTEM STANDBY"}
           <span> / </span>
           {principal?.username ?? "SESSION"} · {clock}
+          <ChangePasswordDialog />
           <Button variant="ghost" size="icon" title="Sign out" aria-label="Sign out" onClick={() => void logout()}>
             <LogOut />
           </Button>
