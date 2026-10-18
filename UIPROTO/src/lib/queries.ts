@@ -25,7 +25,9 @@ export const queryKeys = {
   tool: (name: string) => ["tools", name] as const,
   health: ["health"] as const,
   nodes: ["nodes"] as const,
+  node: (id: string) => ["nodes", id] as const,
   devices: ["devices"] as const,
+  device: (id: string) => ["devices", id] as const,
   schedules: ["schedules"] as const,
   notifications: ["notifications"] as const,
   metrics: ["metrics"] as const,
@@ -107,10 +109,28 @@ export function useNodes() {
   });
 }
 
+export function useNode(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.node(id ?? ""),
+    queryFn: () => nodesApi.get(id as string),
+    enabled: Boolean(id),
+    refetchInterval: 15000,
+  });
+}
+
 export function useDevices() {
   return useQuery({
     queryKey: queryKeys.devices,
     queryFn: devicesApi.list,
+    refetchInterval: 15000,
+  });
+}
+
+export function useDevice(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.device(id ?? ""),
+    queryFn: () => devicesApi.get(id as string),
+    enabled: Boolean(id),
     refetchInterval: 15000,
   });
 }

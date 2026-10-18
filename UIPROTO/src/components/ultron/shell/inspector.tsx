@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ApiError, toolsApi } from "@/lib/api";
 import type { Agent, Task, TaskPriority } from "@/lib/api";
 import { broadcastUnauthorized } from "@/lib/auth";
-import { useAgent, useAgentActions, useAgents, useTask, useTaskActions, useTasks, useTaskSteps, useTool, useTools } from "@/lib/queries";
+import { useAgent, useAgentActions, useAgents, useDevice, useDevices, useNode, useNodes, useTask, useTaskActions, useTasks, useTaskSteps, useTool, useTools } from "@/lib/queries";
 import type { Selection } from "@/lib/workspace";
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
@@ -395,6 +395,45 @@ function ToolInspector({ name }: { name: string }) {
   );
 }
 
+function NodeInspector({ id }: { id: string }) {
+  const { data: detail } = useNode(id);
+  const { data } = useNodes();
+  const node = detail ?? (data ?? []).find((item) => item.node_id === id);
+  if (!node) return <div className="panel-empty">node not found</div>;
+  return (
+    <>
+      <div className="inspector-title">{node.name}</div>
+      <Field label="STATUS" value={node.status} />
+      <Field label="TYPE" value={node.node_type} />
+      <Field label="VERSION" value={node.version} />
+      <Field label="CAPABILITIES" value={node.capabilities.length ? node.capabilities.join(", ") : "—"} />
+      <Field label="CLIENT OF" value={node.client_of ?? "—"} />
+      <Field label="CONNECTED" value={node.connected_at ? timestamp(node.connected_at) : "—"} />
+      <Field label="LAST SEEN" value={node.last_seen ? timestamp(node.last_seen) : "—"} />
+      <Field label="NODE ID" value={node.node_id} />
+    </>
+  );
+}
+
+function DeviceInspector({ id }: { id: string }) {
+  const { data: detail } = useDevice(id);
+  const { data } = useDevices();
+  const device = detail ?? (data ?? []).find((item) => item.device_id === id);
+  if (!device) return <div className="panel-empty">device not found</div>;
+  return (
+    <>
+      <div className="inspector-title">{device.name}</div>
+      <Field label="STATUS" value={device.status} />
+      <Field label="TYPE" value={device.device_type} />
+      <Field label="FIRMWARE" value={device.firmware_version ?? "—"} />
+      <Field label="CAPABILITIES" value={device.capabilities.length ? device.capabilities.join(", ") : "—"} />
+      <Field label="CONNECTED" value={device.connected_at ? timestamp(device.connected_at) : "—"} />
+      <Field label="LAST SEEN" value={device.last_seen ? timestamp(device.last_seen) : "—"} />
+      <Field label="ID" value={device.device_id} />
+    </>
+  );
+}
+
 function FallbackInspector({ selection }: { selection: Selection }) {
   return <Field label={selection.kind.toUpperCase()} value={selection.id} />;
 }
@@ -413,6 +452,10 @@ export function SelectionInspector({ selection, onClose }: { selection: Selectio
         <TaskInspector id={selection.id} />
       ) : selection.kind === "tool" ? (
         <ToolInspector name={selection.id} />
+      ) : selection.kind === "node" ? (
+        <NodeInspector id={selection.id} />
+      ) : selection.kind === "device" ? (
+        <DeviceInspector id={selection.id} />
       ) : (
         <FallbackInspector selection={selection} />
       )}

@@ -108,7 +108,7 @@ function Index() {
       <aside className="widget-column" aria-label="Session, capabilities and events"><SessionPanel /><ToolsPanel /><EventsPanel /><HealthPanel /></aside></div>,
     agents: <PanelGrid tab="agents" />,
     tasks: <PanelGrid tab="tasks" />,
-    fleet: <div className="shell-panels"><PlannedPanel title="Fleet" task="T507" /></div>,
+    fleet: <PanelGrid tab="fleet" />,
     schedules: <div className="shell-panels"><PlannedPanel title="Schedules" task="T511" /></div>,
     notifications: <div className="shell-panels"><PlannedPanel title="Notifications" task="T512" /></div>,
     system: <PanelGrid tab="system" />,

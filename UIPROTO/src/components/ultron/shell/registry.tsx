@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Activity, Bot, Radio, ShieldCheck, Terminal, Wrench } from "lucide-react";
+import { Activity, Bot, Cpu, Radio, ShieldCheck, Terminal, Wrench } from "lucide-react";
 
 import { AgentsPanel } from "@/components/ultron/agents";
+import { DevicesPanel, FleetPanel } from "@/components/ultron/fleet";
 import {
   EventsPanel,
   HealthPanel,
@@ -33,6 +34,8 @@ export const PANELS: PanelDef[] = [
   { id: "tasks", title: "Mission queue", icon: Activity, tab: "tasks", order: 10, render: () => <TaskPanel /> },
   { id: "agents", title: "Agents", icon: Bot, tab: "agents", order: 10, render: () => <AgentsPanel /> },
   { id: "tools-agents", title: "Capabilities", icon: Wrench, tab: "agents", order: 20, render: () => <ToolsPanel /> },
+  { id: "nodes", title: "Node fleet", icon: Radio, tab: "fleet", order: 10, render: () => <FleetPanel /> },
+  { id: "devices", title: "Devices", icon: Cpu, tab: "fleet", order: 20, render: () => <DevicesPanel /> },
   { id: "network", title: "Connection", icon: Radio, tab: "system", order: 10, render: () => <NetworkPanel /> },
   { id: "health", title: "System health", icon: ShieldCheck, tab: "system", order: 20, render: () => <HealthPanel /> },
   { id: "session", title: "Session", icon: Terminal, tab: "system", order: 30, render: () => <SessionPanel /> },
