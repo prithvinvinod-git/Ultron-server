@@ -1,0 +1,18 @@
+{
+  "name": "ultron-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ULTRON Windows desktop shell — wraps the existing UIPROTO console (spec 69.4)",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "npm run build && electron .",
+    "smoke": "npm run build && electron . --smoke"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "electron": "^44.9.0",
+    "typescript": "^7.0.2"
+  }
+}
