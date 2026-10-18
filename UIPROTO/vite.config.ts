@@ -27,6 +27,10 @@ const API_PREFIXES = [
   "/tasks",
   "/tools",
   "/nodes",
+  "/devices",
+  "/voice",
+  "/schedules",
+  "/notifications",
 ];
 
 export default defineConfig({

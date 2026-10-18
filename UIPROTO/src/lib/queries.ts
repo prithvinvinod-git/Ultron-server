@@ -10,7 +10,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
-import { agentsApi, healthApi, tasksApi, toolsApi } from "./api";
+import { agentsApi, devicesApi, healthApi, metricsApi, nodesApi, notificationsApi, schedulesApi, tasksApi, toolsApi } from "./api";
 import { onEnvelope } from "./events";
 
 export const queryKeys = {
@@ -18,6 +18,12 @@ export const queryKeys = {
   tasks: ["tasks"] as const,
   tools: ["tools"] as const,
   health: ["health"] as const,
+  nodes: ["nodes"] as const,
+  devices: ["devices"] as const,
+  schedules: ["schedules"] as const,
+  notifications: ["notifications"] as const,
+  metrics: ["metrics"] as const,
+  steps: (taskId: string) => ["tasks", taskId, "steps"] as const,
 };
 
 export function useAgents() {
@@ -61,6 +67,54 @@ export function useHealth() {
   });
 }
 
+export function useNodes() {
+  return useQuery({
+    queryKey: queryKeys.nodes,
+    queryFn: nodesApi.list,
+    refetchInterval: 15000,
+  });
+}
+
+export function useDevices() {
+  return useQuery({
+    queryKey: queryKeys.devices,
+    queryFn: devicesApi.list,
+    refetchInterval: 15000,
+  });
+}
+
+export function useSchedules() {
+  return useQuery({
+    queryKey: queryKeys.schedules,
+    queryFn: schedulesApi.list,
+    refetchInterval: 15000,
+  });
+}
+
+export function useNotifications() {
+  return useQuery({
+    queryKey: queryKeys.notifications,
+    queryFn: notificationsApi.list,
+    refetchInterval: 15000,
+  });
+}
+
+export function useMetrics() {
+  return useQuery({
+    queryKey: queryKeys.metrics,
+    queryFn: metricsApi.text,
+    refetchInterval: 15000,
+  });
+}
+
+export function useTaskSteps(taskId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.steps(taskId ?? ""),
+    queryFn: () => tasksApi.steps(taskId as string),
+    enabled: Boolean(taskId),
+  });
+}
+
 /** Invalidate the right list when the event bus reports work on it. */
 export function useLiveInvalidation(): void {
   const queryClient = useQueryClient();
@@ -71,6 +125,14 @@ export function useLiveInvalidation(): void {
           void queryClient.invalidateQueries({ queryKey: queryKeys.agents });
         } else if (event.event_type.startsWith("TASK_")) {
           void queryClient.invalidateQueries({ queryKey: queryKeys.tasks });
+        } else if (event.event_type.startsWith("SCHEDULE")) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.schedules });
+        } else if (event.event_type.startsWith("NOTIFICATION")) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.notifications });
+        } else if (event.event_type.startsWith("NODE")) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.nodes });
+        } else if (event.event_type.startsWith("DEVICE")) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.devices });
         }
       }),
     [queryClient],

@@ -81,6 +81,8 @@ export const api = {
     return request<T>(path, init);
   },
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /** For non-JSON endpoints such as the Prometheus `/metrics` exposition. */
+  text: (path: string) => request<string>(path),
 };
 
 // --- Domain types (mirroring the server's pydantic response models) ----------
@@ -178,6 +180,98 @@ export interface Tool {
   category: string;
 }
 
+export type VerificationOutcome = "success" | "partial" | "failed" | "unverified";
+
+export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+export interface TaskStep {
+  id: string;
+  task_id: string;
+  position: number;
+  name: string;
+  description: string | null;
+  status: StepStatus;
+  attempt: number;
+  depends_on: string[];
+  input_payload: Record<string, unknown> | null;
+  output_payload: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export interface StepCreate {
+  name: string;
+  description?: string | null;
+  position?: number | null;
+  depends_on?: string[];
+  input_payload?: Record<string, unknown> | null;
+}
+
+export interface ToolValidation {
+  valid: boolean;
+  tool: string;
+  arguments: Record<string, unknown>;
+}
+
+export type NodeType = "windows" | "server" | "esp32" | "future";
+export type NodeStatus = "online" | "offline" | "degraded";
+
+export interface Node {
+  node_id: string;
+  node_type: NodeType;
+  name: string;
+  capabilities: string[];
+  status: NodeStatus;
+  last_seen: string | null;
+  connected_at: string | null;
+  version: string;
+  client_of: string | null;
+}
+
+export type DeviceStatus = "unknown" | "online" | "offline" | "disabled";
+
+export interface Device {
+  device_id: string;
+  name: string;
+  device_type: string;
+  capabilities: string[];
+  status: DeviceStatus;
+  last_seen: string | null;
+  connected_at: string | null;
+  firmware_version: string | null;
+}
+
+export type ScheduleKind = "interval" | "cron" | "once" | "event";
+export type ScheduleStatus = "active" | "paused" | "completed" | "failed";
+
+export interface Schedule {
+  id: string;
+  name: string;
+  kind: ScheduleKind;
+  status: ScheduleStatus;
+  cron_expression: string | null;
+  interval_seconds: number | null;
+  run_at: string | null;
+  payload: Record<string, unknown>;
+  last_run_at: string | null;
+  last_task_id: string | null;
+  next_run_at: string | null;
+  run_count: number;
+  failure_count: number;
+  last_error: string | null;
+}
+
+export type NotificationLevel = "info" | "warning" | "error" | "critical";
+
+export interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  level: NotificationLevel;
+  source: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface CheckResult {
   name: string;
   status: "ok" | "degraded" | "failed" | "skipped";
@@ -220,6 +314,21 @@ export function whoami(): Promise<Principal> {
 export function logout(): Promise<void> {
   return request<void>("/auth/logout", { method: "POST" });
 }
+
+/** Auth surface beyond the login/me/logout helpers above (T502/T503). */
+export const authApi = {
+  login,
+  me: whoami,
+  logout,
+  /** Rotate a refresh token for a fresh pair; the old token is invalidated. */
+  refresh: (refreshToken: string) => api.post<TokenResponse>("/auth/refresh", { refresh_token: refreshToken }),
+  /** Change the password after proving the current one; 204 on success. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>("/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+};
 
 // --- SSE (Server-Sent Events) ------------------------------------------------
 
@@ -336,6 +445,7 @@ export interface StreamConnectionInfo {
 export const agentsApi = {
   list: () => api.get<Agent[]>("/agents"),
   types: () => api.get<AgentType[]>("/agents/types"),
+  get: (id: string) => api.get<Agent>(`/agents/${id}`),
   create: (body: { agent_type: string; name: string; model?: string | null }) =>
     api.post<Agent>("/agents", body),
   cancel: (id: string, reason = "cancelled from console") =>
@@ -344,22 +454,63 @@ export const agentsApi = {
   resume: (id: string) => api.post<Agent>(`/agents/${id}/resume`),
   complete: (id: string) => api.post<Agent>(`/agents/${id}/complete`),
   fail: (id: string, error: string) => api.post<Agent>(`/agents/${id}/fail`, { error }),
+  assignTask: (id: string, taskId: string) => api.post<Agent>(`/agents/${id}/task`, { task_id: taskId }),
+  assignModel: (id: string, model: string | null) => api.post<Agent>(`/agents/${id}/model`, { model }),
+  assignTools: (id: string, tools: string[]) => api.post<Agent>(`/agents/${id}/tools`, { tools }),
+  assignPermissions: (id: string, permissions: string[]) =>
+    api.post<Agent>(`/agents/${id}/permissions`, { permissions }),
   destroy: (id: string) => api.del<void>(`/agents/${id}`),
 };
 
 export const tasksApi = {
   list: () => api.get<Task[]>("/tasks"),
+  get: (id: string) => api.get<Task>(`/tasks/${id}`),
   create: (goal: string, priority?: TaskPriority) =>
     api.post<Task>("/tasks", priority ? { goal, priority } : { goal }),
   cancel: (id: string) => api.post<Task>(`/tasks/${id}/cancel`),
   retry: (id: string) => api.post<Task>(`/tasks/${id}/retry`),
   priority: (id: string, priority: TaskPriority) =>
     api.post<Task>(`/tasks/${id}/priority`, { priority }),
+  steps: (id: string) => api.get<TaskStep[]>(`/tasks/${id}/steps`),
+  addStep: (id: string, body: StepCreate) => api.post<TaskStep>(`/tasks/${id}/steps`, body),
   remove: (id: string) => api.del<void>(`/tasks/${id}`),
 };
 
 export const toolsApi = {
   list: () => api.get<Tool[]>("/tools"),
+  get: (name: string) => api.get<Tool>(`/tools/${encodeURIComponent(name)}`),
+  validate: (name: string, args: Record<string, unknown>) =>
+    api.post<ToolValidation>(`/tools/${encodeURIComponent(name)}/validate`, { arguments: args }),
+};
+
+export const nodesApi = {
+  list: () => api.get<Node[]>("/nodes"),
+  get: (id: string) => api.get<Node>(`/nodes/${id}`),
+};
+
+export const devicesApi = {
+  list: () => api.get<Device[]>("/devices"),
+  get: (id: string) => api.get<Device>(`/devices/${id}`),
+};
+
+export const metricsApi = {
+  /** The Prometheus text exposition; parsed client-side by the diagnostics panel. */
+  text: () => api.text("/metrics"),
+};
+
+// Schedules and notifications route modules land in T509/T510; these clients are
+// typed against the server models those routes expose so the panels only need
+// the wiring commit.
+export const schedulesApi = {
+  list: () => api.get<Schedule[]>("/schedules"),
+  get: (id: string) => api.get<Schedule>(`/schedules/${id}`),
+  pause: (id: string) => api.post<Schedule>(`/schedules/${id}/pause`),
+  resume: (id: string) => api.post<Schedule>(`/schedules/${id}/resume`),
+  remove: (id: string) => api.del<void>(`/schedules/${id}`),
+};
+
+export const notificationsApi = {
+  list: () => api.get<NotificationItem[]>("/notifications"),
 };
 
 export const healthApi = {
