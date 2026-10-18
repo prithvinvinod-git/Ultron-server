@@ -13,6 +13,7 @@ table.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import delete as sa_delete, func, select
@@ -124,6 +125,30 @@ class EventRepository(UuidRepository[Event]):
             .where(Event.event_type == event_type, Event.occurred_at >= since)
             .order_by(Event.occurred_at.desc())
         )
+        return await self._fetch_all(apply_limit(apply_offset(statement, offset), limit))
+
+    async def list_by_types(
+        self,
+        event_types: Sequence[str],
+        *,
+        since: datetime | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[Event]:
+        """Return events of any of ``event_types``, newest first.
+
+        The multi-type form exists for the notification history (T510, §45):
+        "recent alerts" is the union of a curated set of types, and querying them
+        one at a time would be one round trip per type. ``since`` is optional
+        here because the caller already bounds the result by ``limit``; an empty
+        ``event_types`` returns nothing rather than everything.
+        """
+        if not event_types:
+            return []
+        statement = select(Event).where(Event.event_type.in_(list(event_types)))
+        if since is not None:
+            statement = statement.where(Event.occurred_at >= since)
+        statement = statement.order_by(Event.occurred_at.desc(), Event.sequence.desc())
         return await self._fetch_all(apply_limit(apply_offset(statement, offset), limit))
 
     async def list_for_project(

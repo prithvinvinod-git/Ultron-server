@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     )
     from app.devices.manager import DeviceManager
     from app.models.router import ModelRouter
+    from app.notifications.service import NotificationService
     from app.observability.health import HealthService
     from app.scheduler.manager import ScheduleManager
     from app.tasks.manager import TaskManager
@@ -204,6 +205,16 @@ class ContainerProtocol(Protocol):
         Declared here for the same reason as ``events``: the routes need the
         scheduler without importing the composition root, so a test can supply a
         stub with an in-memory schedule store instead of a live database.
+        """
+        ...
+
+    @property
+    def notifications(self) -> NotificationService:
+        """The §45 notification facade (T096), read by ``/notifications`` (T510).
+
+        Declared here for the same reason as ``events``: the routes report the
+        active provider and send test notifications without importing the
+        composition root, so a test can supply a facade over a recording double.
         """
         ...
 

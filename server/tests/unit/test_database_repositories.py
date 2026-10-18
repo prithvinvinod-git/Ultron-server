@@ -1123,6 +1123,27 @@ class TestEventRepository:
         recent = await events.list_by_type("x", since=now - timedelta(hours=2))
         assert len(recent) == 1
 
+    async def test_listing_by_several_types_unions_them_newest_first(
+        self, db: AsyncSession
+    ) -> None:
+        events = EventRepository(db)
+        now = datetime.now(UTC)
+        await events.append(event_type="a", occurred_at=now - timedelta(hours=3))
+        await events.append(event_type="b", occurred_at=now - timedelta(hours=1))
+        await events.append(event_type="c", occurred_at=now - timedelta(hours=2))
+        await db.commit()
+
+        rows = await events.list_by_types(("a", "b"))
+        assert [e.event_type for e in rows] == ["b", "a"]
+
+    async def test_listing_no_types_returns_nothing(self, db: AsyncSession) -> None:
+        """An empty type set is "none", never "everything"."""
+        events = EventRepository(db)
+        await events.append(event_type="a")
+        await db.commit()
+
+        assert await events.list_by_types(()) == []
+
     async def test_retention_needs_a_cutoff_and_reports_a_count(self, db: AsyncSession) -> None:
         import inspect
 
