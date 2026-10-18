@@ -99,10 +99,28 @@ function registerIpcHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.WINDOW_CLOSE, () => win.close());
 }
 
+function registerNavigationGuards(win: BrowserWindow, allowedOrigin: string): void {
+  win.webContents.setWindowOpenHandler(() => {
+    log("info", "blocked window.open");
+    return { action: "deny" };
+  });
+
+  win.webContents.on("will-navigate", (event, url) => {
+    const target = new URL(url);
+    if (target.origin !== allowedOrigin) {
+      log("info", "blocked external navigation", { url, allowedOrigin });
+      event.preventDefault();
+    }
+  });
+}
+
 async function main(): Promise<void> {
   const startURL = await resolveStartURL();
   const win = createWindow(startURL);
   registerIpcHandlers(win);
+
+  const allowedOrigin = new URL(startURL).origin;
+  registerNavigationGuards(win, allowedOrigin);
 
   if (SMOKE) {
     // Automated gate: wait for the renderer to report a mounted shell, then
@@ -124,6 +142,12 @@ async function main(): Promise<void> {
               if (hasUltron) {
                 try { appVersion = await window.ultron.getAppVersion(); } catch {}
               }
+              const initialUrl = location.href;
+              try { window.location.href = 'https://evil.example.com/'; } catch {}
+              await new Promise(r => setTimeout(r, 500));
+              const navBlocked = location.href === initialUrl;
+              let openDenied = false;
+              try { openDenied = window.open('https://evil.example.com/') === null; } catch { openDenied = true; }
               return {
                 url: location.href,
                 title: document.title,
@@ -132,6 +156,8 @@ async function main(): Promise<void> {
                 hasNode,
                 hasUltron,
                 appVersion,
+                navBlocked,
+                openDenied,
               };
             })()`,
           )
@@ -142,8 +168,10 @@ async function main(): Promise<void> {
               hasNode?: boolean;
               hasUltron?: boolean;
               appVersion?: string | null;
+              navBlocked?: boolean;
+              openDenied?: boolean;
             };
-            const ok = r.hasShell === true && r.hasNode === false && r.hasUltron === true && !!r.appVersion;
+            const ok = r.hasShell === true && r.hasNode === false && r.hasUltron === true && !!r.appVersion && r.navBlocked === true && r.openDenied === true;
             log(ok ? "info" : "error", "smoke render result", { ...result });
             app.exit(ok ? 0 : 1);
           })
