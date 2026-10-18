@@ -33,6 +33,7 @@ import type { CheckResult, Task, TaskPriority } from "@/lib/api";
 import { broadcastUnauthorized, useAuth } from "@/lib/auth";
 import { useEventStream } from "@/lib/events";
 import { queryKeys, useHealth, useTasks, useTools } from "@/lib/queries";
+import { useWorkspace } from "@/lib/workspace";
 
 export function PanelHeading({
   label,
@@ -264,13 +265,19 @@ function TaskRow({
   onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { select } = useWorkspace();
   const isOpen = OPEN_STATUSES.has(task.status);
   return (
     <div className="task-item">
       <Button
         variant="ghost"
         className={`task-row ${task.status === "completed" ? "task-done" : ""}`}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          setOpen((value) => {
+            if (!value) select({ kind: "task", id: task.id });
+            return !value;
+          });
+        }}
         aria-expanded={open}
       >
         <span className="task-check">{task.status === "completed" ? <Check size={11} /> : null}</span>
@@ -310,6 +317,7 @@ function TaskRow({
 
 export function ToolsPanel() {
   const { data, isLoading } = useTools();
+  const { select } = useWorkspace();
   const tools = data ?? [];
   return (
     <section className="hud-panel">
@@ -318,14 +326,19 @@ export function ToolsPanel() {
       {data && tools.length === 0 ? <div className="panel-empty">no tools registered</div> : null}
       <div className="task-list">
         {tools.slice(0, 6).map((tool) => (
-          <div key={tool.name} className="agent-row">
+          <button
+            key={tool.name}
+            type="button"
+            className="agent-row agent-button"
+            onClick={() => select({ kind: "tool", id: tool.name })}
+          >
             <span className="agent-dot" data-on />
             <div>
               <strong>{tool.name}</strong>
               <small>{tool.category} · L{tool.permission_level}</small>
             </div>
             <span className="agent-pct">{tool.audit ? "AUDIT" : ""}</span>
-          </div>
+          </button>
         ))}
       </div>
       <div className="panel-foot">

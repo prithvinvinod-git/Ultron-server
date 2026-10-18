@@ -17,6 +17,7 @@ import { ApiError, agentsApi } from "@/lib/api";
 import type { Agent, AgentStatus } from "@/lib/api";
 import { broadcastUnauthorized } from "@/lib/auth";
 import { queryKeys, useAgents } from "@/lib/queries";
+import { useWorkspace } from "@/lib/workspace";
 
 const ACTIVE_STATUSES: ReadonlySet<AgentStatus> = new Set([
   "created",
@@ -138,6 +139,7 @@ function SpawnForm({ onClose }: { onClose: () => void }) {
 export function AgentsPanel() {
   const { data, isLoading, error } = useAgents();
   const actions = useAgentActions();
+  const { select } = useWorkspace();
   const [selected, setSelected] = useState<string | null>(null);
   const [spawning, setSpawning] = useState(false);
 
@@ -167,7 +169,11 @@ export function AgentsPanel() {
               key={agent.id}
               type="button"
               className={`agent-row agent-button${selected === agent.id ? " is-selected" : ""}`}
-              onClick={() => setSelected(selected === agent.id ? null : agent.id)}
+              onClick={() => {
+                const next = selected === agent.id ? null : agent.id;
+                setSelected(next);
+                select(next ? { kind: "agent", id: next } : null);
+              }}
               aria-pressed={selected === agent.id}
             >
               <span className="agent-dot" data-on={on} />
@@ -206,7 +212,7 @@ export function AgentsPanel() {
               Cancel
             </Button>
           ) : null}
-          <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>
+          <Button variant="ghost" size="sm" onClick={() => { setSelected(null); select(null); }}>
             <RotateCw />
             Refresh view
           </Button>

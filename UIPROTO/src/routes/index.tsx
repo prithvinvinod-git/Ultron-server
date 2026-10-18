@@ -8,6 +8,7 @@ import { CommandConsole } from '@/components/ultron/command-console';
 import { CoreDisplay, CoreMetrics } from '@/components/ultron/core-display';
 import { AppShell } from '@/components/ultron/shell/app-shell';
 import { EventsPanel, HealthPanel, NetworkPanel, SessionPanel, TaskPanel, ToolsPanel } from '@/components/ultron/widgets';
+import { PanelGrid } from '@/components/ultron/shell/registry';
 import { useEventStream } from '@/lib/events';
 import { voiceApi } from '@/lib/api';
 import { VoiceClient } from '@/lib/voice';
@@ -105,12 +106,12 @@ function Index() {
         </div>}
         <div className="mode-selector" aria-label="Core protocol">{[{name:'Focus',icon:Box},{name:'Code',icon:Code2},{name:'Creative',icon:Layers}].map(({name,icon:Icon}) => <Button key={name} variant="ghost" aria-pressed={mode === name} onClick={() => setMode(name)}><Icon />{name.toUpperCase()}</Button>)}</div><div className="core-footer-label"><ShieldCheck size={10} />PROTECTED BY ULTRON SENTINEL</div></section>
       <aside className="widget-column" aria-label="Session, capabilities and events"><SessionPanel /><ToolsPanel /><EventsPanel /><HealthPanel /></aside></div>,
-    agents: <div className="shell-panels"><AgentsPanel /><ToolsPanel /></div>,
-    tasks: <div className="shell-panels"><TaskPanel /></div>,
+    agents: <PanelGrid tab="agents" />,
+    tasks: <PanelGrid tab="tasks" />,
     fleet: <div className="shell-panels"><PlannedPanel title="Fleet" task="T507" /></div>,
     schedules: <div className="shell-panels"><PlannedPanel title="Schedules" task="T511" /></div>,
     notifications: <div className="shell-panels"><PlannedPanel title="Notifications" task="T512" /></div>,
-    system: <div className="shell-panels"><HealthPanel /><ToolsPanel /><EventsPanel /><SessionPanel /><NetworkPanel /></div>,
+    system: <PanelGrid tab="system" />,
   };
 
   return <AppShell>{views[tab]}<CommandConsole /></AppShell>;

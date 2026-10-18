@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { useEventStream } from "@/lib/events";
 import { useAgents, useHealth, useTasks } from "@/lib/queries";
 import { TABS, useWorkspace } from "@/lib/workspace";
+import { SelectionInspector } from "@/components/ultron/shell/inspector";
 
 const ACTIVE_AGENT_STATUSES = new Set(["created", "initializing", "ready", "running", "waiting", "verifying"]);
 const OPEN_TASK_STATUSES = new Set(["pending", "queued", "running", "blocked", "paused"]);
@@ -74,19 +75,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="shell-workspace">{children}</div>
 
-        {selection && (
-          <aside className="shell-inspector" aria-label="Inspector">
-            <div className="panel-heading">
-              <h2>Inspector</h2>
-              <span>{selection.kind.toUpperCase()}</span>
-            </div>
-            <div className="inspector-field">
-              <span>ID</span>
-              <code>{selection.id}</code>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => select(null)}>Close</Button>
-          </aside>
-        )}
+        {selection && <SelectionInspector selection={selection} onClose={() => select(null)} />}
       </div>
 
       <footer className="bottom-bar">
