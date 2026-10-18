@@ -7,6 +7,7 @@
 
 export const IPC_CHANNELS = {
   APP_VERSION: "app:version",
+  BACKEND_INFO: "backend:info",
   WINDOW_MINIMIZE: "window:minimize",
   WINDOW_MAXIMIZE: "window:maximize",
   WINDOW_CLOSE: "window:close",

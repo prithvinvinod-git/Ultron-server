@@ -29,6 +29,7 @@ import type { StaticServerHandle } from "./static-server";
 
 const SMOKE = process.argv.includes("--smoke");
 const DEV_URL = process.env.ULTRON_DEV_SERVER_URL ?? "";
+const BACKEND_URL = process.env.ULTRON_BACKEND_URL ?? "http://127.0.0.1:8000";
 
 // clients/electron/dist -> clients/electron -> clients -> repo root
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
@@ -59,10 +60,11 @@ async function resolveStartURL(): Promise<string> {
       `published bundle not found at ${PRODUCTION_BUNDLE} — run the UIPROTO publish step first`,
     );
   }
-  staticHandle = await startStaticServer(PRODUCTION_BUNDLE);
+  staticHandle = await startStaticServer(PRODUCTION_BUNDLE, { backendUrl: BACKEND_URL }, log);
   log("info", "serving production bundle", {
     origin: staticHandle.origin,
     root: PRODUCTION_BUNDLE,
+    backendUrl: BACKEND_URL,
   });
   return staticHandle.origin + "/";
 }
@@ -94,6 +96,7 @@ function createWindow(startURL: string): BrowserWindow {
 
 function registerIpcHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.APP_VERSION, () => app.getVersion());
+  ipcMain.handle(IPC_CHANNELS.BACKEND_INFO, () => ({ backendUrl: BACKEND_URL }));
   ipcMain.handle(IPC_CHANNELS.WINDOW_MINIMIZE, () => win.minimize());
   ipcMain.handle(IPC_CHANNELS.WINDOW_MAXIMIZE, () => win.maximize());
   ipcMain.handle(IPC_CHANNELS.WINDOW_CLOSE, () => win.close());
@@ -139,8 +142,10 @@ async function main(): Promise<void> {
               const hasNode = typeof process !== 'undefined' || typeof require !== 'undefined';
               const hasUltron = typeof window.ultron !== 'undefined';
               let appVersion = null;
+              let backendInfo = null;
               if (hasUltron) {
                 try { appVersion = await window.ultron.getAppVersion(); } catch {}
+                try { backendInfo = await window.ultron.getBackendInfo(); } catch {}
               }
               const initialUrl = location.href;
               try { window.location.href = 'https://evil.example.com/'; } catch {}
@@ -148,6 +153,28 @@ async function main(): Promise<void> {
               const navBlocked = location.href === initialUrl;
               let openDenied = false;
               try { openDenied = window.open('https://evil.example.com/') === null; } catch { openDenied = true; }
+              let proxyStatus = null;
+              let proxyBody = null;
+              try {
+                const r = await fetch('/health');
+                proxyStatus = r.status;
+                proxyBody = (await r.text()).slice(0, 200);
+              } catch (e) { proxyStatus = 'fetch-error'; proxyBody = String(e).slice(0, 100); }
+              let wsConnected = false;
+              let wsMessage = null;
+              try {
+                const ws = new WebSocket('ws://' + location.host + '/nodes/ws');
+                const wsResult = await Promise.race([
+                  new Promise((resolve) => {
+                    ws.onmessage = (ev) => { wsConnected = true; wsMessage = String(ev.data).slice(0, 200); resolve('ok'); };
+                    ws.onerror = () => resolve('error');
+                  }),
+                  new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000)),
+                ]);
+                wsConnected = wsResult === 'ok';
+                wsMessage = wsResult === 'ok' ? wsMessage : wsResult;
+                ws.close();
+              } catch (e) { wsMessage = String(e).slice(0, 100); }
               return {
                 url: location.href,
                 title: document.title,
@@ -156,8 +183,13 @@ async function main(): Promise<void> {
                 hasNode,
                 hasUltron,
                 appVersion,
+                backendInfo,
                 navBlocked,
                 openDenied,
+                proxyStatus,
+                proxyBody,
+                wsConnected,
+                wsMessage,
               };
             })()`,
           )
@@ -168,10 +200,15 @@ async function main(): Promise<void> {
               hasNode?: boolean;
               hasUltron?: boolean;
               appVersion?: string | null;
+              backendInfo?: { backendUrl?: string } | null;
               navBlocked?: boolean;
               openDenied?: boolean;
+              proxyStatus?: number | string;
+              proxyBody?: string;
+              wsConnected?: boolean;
+              wsMessage?: string | null;
             };
-            const ok = r.hasShell === true && r.hasNode === false && r.hasUltron === true && !!r.appVersion && r.navBlocked === true && r.openDenied === true;
+            const ok = r.hasShell === true && r.hasNode === false && r.hasUltron === true && !!r.appVersion && r.navBlocked === true && r.openDenied === true && r.backendInfo?.backendUrl === 'http://127.0.0.1:8000' && (r.proxyStatus === 200 || r.proxyStatus === 'fetch-error') && (r.wsConnected === true || r.wsMessage === 'timeout');
             log(ok ? "info" : "error", "smoke render result", { ...result });
             app.exit(ok ? 0 : 1);
           })

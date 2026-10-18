@@ -20,19 +20,22 @@ import { IPC_CHANNELS } from "./ipc-channels";
 try {
   console.log("[preload] starting, contextBridge:", typeof contextBridge !== "undefined", "ipcRenderer:", typeof ipcRenderer !== "undefined");
 
-  const api = {
-    getAppVersion: (): Promise<string> =>
-      ipcRenderer.invoke(IPC_CHANNELS.APP_VERSION) as Promise<string>,
+const api = {
+  getAppVersion: (): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_VERSION) as Promise<string>,
 
-    minimizeWindow: (): Promise<void> =>
-      ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE) as Promise<void>,
+  getBackendInfo: (): Promise<{ backendUrl: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BACKEND_INFO) as Promise<{ backendUrl: string }>,
 
-    maximizeWindow: (): Promise<void> =>
-      ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MAXIMIZE) as Promise<void>,
+  minimizeWindow: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE) as Promise<void>,
 
-    closeWindow: (): Promise<void> =>
-      ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CLOSE) as Promise<void>,
-  };
+  maximizeWindow: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MAXIMIZE) as Promise<void>,
+
+  closeWindow: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CLOSE) as Promise<void>,
+};
 
   contextBridge.exposeInMainWorld("ultron", api);
   console.log("[preload] ultron bridge exposed");
@@ -44,6 +47,7 @@ declare global {
   interface Window {
     ultron: {
       getAppVersion: () => Promise<string>;
+      getBackendInfo: () => Promise<{ backendUrl: string }>;
       minimizeWindow: () => Promise<void>;
       maximizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
