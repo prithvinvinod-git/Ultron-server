@@ -1,0 +1,17 @@
+{
+  "name": "ULTRON OS",
+  "short_name": "ULTRON",
+  "description": "ULTRON - Command Center",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#00ff66",
+  "icons": [
+    {
+      "src": "favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
