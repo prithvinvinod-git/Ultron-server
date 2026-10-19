@@ -31,8 +31,10 @@ from typing import Final
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
+    Counter,
     Gauge,
     GCCollector,
+    Histogram,
     PlatformCollector,
     ProcessCollector,
     generate_latest,
@@ -52,6 +54,15 @@ _STATUSES: Final[tuple[HealthStatus, ...]] = (
     HealthStatus.SKIPPED,
 )
 
+#: The one registry every exporter in this module writes to. Process and GC
+#: metrics come free and are genuinely useful for sizing a 4 GB VM (A§59.25);
+#: they are registered here rather than via prometheus_client's global default
+#: so two app factories in one test session cannot collide on a metric name.
+_REGISTRY: Final[CollectorRegistry] = CollectorRegistry()
+ProcessCollector(registry=_REGISTRY)
+PlatformCollector(registry=_REGISTRY)
+GCCollector(registry=_REGISTRY)
+
 
 class HealthMetrics:
     """Gauges describing the most recent health report.
@@ -62,14 +73,8 @@ class HealthMetrics:
     caller is also returning.
     """
 
-    def __init__(self) -> None:
-        self._registry = CollectorRegistry()
-        # Process and GC metrics come free and are genuinely useful for sizing a
-        # 4 GB VM (§59.25); they are registered explicitly rather than via the
-        # global default registry.
-        ProcessCollector(registry=self._registry)
-        PlatformCollector(registry=self._registry)
-        GCCollector(registry=self._registry)
+    def __init__(self, registry: CollectorRegistry = _REGISTRY) -> None:
+        self._registry = registry
 
         self._check_status = Gauge(
             "ultron_health_check_status",
@@ -145,11 +150,161 @@ class HealthMetrics:
         return generate_latest(self._registry)
 
 
-#: Process-wide instance. Module-level because the gauges must outlive a single
+#: Meters for the agent/task/tool/model/bus subsystems (T180/T181/T183).
+#:
+#: These are *separate* from the health gauges because they answer a different
+#: question: health says "is the deployment usable", these say "what is the
+#: work doing". Keeping them in one registry means a single ``/metrics`` scrape
+#: carries both, which is the point of a single scrape endpoint.
+#:
+#: Counters are cumulative and derive from the event stream (a subscriber in
+#: :mod:`app.observability.monitoring` feeds them), so instrumentation lives in
+#: one place rather than in every manager. Gauges that describe *current* state
+#: (agents/tasks by status) are maintained by the same subscriber as it sees the
+#: lifecycle transitions, which is the only writer and therefore cannot drift.
+class SubsystemMetrics:
+    """Prometheus meters for agents, tasks, tools, models, the bus and host."""
+
+    def __init__(self, registry: CollectorRegistry = _REGISTRY) -> None:
+        self._registry = registry
+
+        # -- Agents ---------------------------------------------------------
+        self.agents_current = Gauge(
+            "ultron_agents_current",
+            "Agents currently in each lifecycle state.",
+            ("status",),
+            registry=registry,
+        )
+        self.agents_started = Counter(
+            "ultron_agents_started",
+            "Agents that began running, by agent type.",
+            ("agent_type",),
+            registry=registry,
+        )
+        self.agents_finished = Counter(
+            "ultron_agents_finished",
+            "Agents that reached a terminal state, by outcome.",
+            ("outcome",),
+            registry=registry,
+        )
+
+        # -- Tasks ----------------------------------------------------------
+        self.tasks_current = Gauge(
+            "ultron_tasks_current",
+            "Tasks currently in each lifecycle state.",
+            ("status",),
+            registry=registry,
+        )
+        self.tasks_created = Counter(
+            "ultron_tasks_created",
+            "Tasks created.",
+            ("priority",),
+            registry=registry,
+        )
+        self.tasks_finished = Counter(
+            "ultron_tasks_finished",
+            "Tasks that reached a terminal state, by outcome.",
+            ("outcome",),
+            registry=registry,
+        )
+        self.task_duration = Histogram(
+            "ultron_task_duration_seconds",
+            "Wall-clock duration of a task from start to terminal state.",
+            buckets=(1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200),
+            registry=registry,
+        )
+
+        # -- Tools ----------------------------------------------------------
+        self.tool_executions = Counter(
+            "ultron_tool_executions",
+            "Tool executions by tool name and outcome.",
+            ("tool", "outcome"),
+            registry=registry,
+        )
+        self.tool_duration = Histogram(
+            "ultron_tool_duration_seconds",
+            "Wall-clock duration of a tool execution.",
+            ("tool",),
+            buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 300),
+            registry=registry,
+        )
+
+        # -- Models ---------------------------------------------------------
+        self.model_requests = Counter(
+            "ultron_model_requests",
+            "Model requests by model and provider.",
+            ("model", "provider"),
+            registry=registry,
+        )
+        self.model_tokens = Counter(
+            "ultron_model_tokens",
+            "Model tokens consumed by model and kind (prompt/completion).",
+            ("model", "kind"),
+            registry=registry,
+        )
+        self.model_latency = Histogram(
+            "ultron_model_latency_seconds",
+            "Wall-clock latency of a model call, by model.",
+            ("model",),
+            buckets=(0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+            registry=registry,
+        )
+
+        # -- Event bus ------------------------------------------------------
+        self.bus_published = Counter(
+            "ultron_event_bus_published",
+            "Events published, by event type.",
+            ("event_type",),
+            registry=registry,
+        )
+        self.bus_subscribers = Gauge(
+            "ultron_event_bus_subscribers",
+            "Active subscribers on the in-process event bus.",
+            registry=registry,
+        )
+
+        # -- Host resources -------------------------------------------------
+        self.resource_cpu = Gauge(
+            "ultron_resource_cpu_percent",
+            "Host CPU utilisation as a percentage.",
+            registry=registry,
+        )
+        self.resource_ram = Gauge(
+            "ultron_resource_ram_percent",
+            "Host RAM utilisation as a percentage.",
+            registry=registry,
+        )
+        self.resource_disk = Gauge(
+            "ultron_resource_disk_percent",
+            "Host disk utilisation as a percentage (low is bad).",
+            registry=registry,
+        )
+        self.resource_gpu = Gauge(
+            "ultron_resource_gpu_percent",
+            "GPU utilisation as a percentage, when a GPU is present.",
+            registry=registry,
+        )
+
+    @property
+    def registry(self) -> CollectorRegistry:
+        return self._registry
+
+    def render(self) -> bytes:
+        """Render the shared registry in Prometheus text format."""
+        return generate_latest(self._registry)
+
+
+#: Process-wide instances. Module-level because the meters must outlive a single
 #: request; a scrape is a read of retained state, not a fresh computation.
 _METRICS: Final[HealthMetrics] = HealthMetrics()
+_SUBSYSTEMS: Final[SubsystemMetrics] = SubsystemMetrics()
 
 
 def get_metrics() -> HealthMetrics:
-    """Return the shared exporter."""
+    """Return the shared health exporter."""
     return _METRICS
+
+
+def get_subsystem_metrics() -> SubsystemMetrics:
+    """Return the shared subsystem exporter (T180/T181/T183)."""
+    return _SUBSYSTEMS

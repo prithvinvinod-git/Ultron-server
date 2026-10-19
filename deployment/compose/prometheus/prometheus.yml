@@ -1,0 +1,17 @@
+# Prometheus scrape configuration for ULTRON (T184, spec §32).
+#
+# Optional profile: this file is only used when the `observability` compose
+# profile is enabled. The ULTRON API serves /metrics on the internal network;
+# it is never exposed publicly (§32), so Prometheus reaches it by service name.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: ultron-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ultron-api:8000"]
+        labels:
+          service: ultron
+          component: api

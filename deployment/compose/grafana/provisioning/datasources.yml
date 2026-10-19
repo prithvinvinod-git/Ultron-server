@@ -1,0 +1,14 @@
+# Grafana data-source provisioning (T184, spec §32).
+#
+# Points Grafana at the Prometheus container in the same compose profile. The
+# URL is the compose service name, which is resolvable only on the internal
+# network; nothing here is reachable from outside the host.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

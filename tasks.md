@@ -4,7 +4,7 @@ Source of truth for the build described in [`server_arc.md`](server_arc.md).
 
 > ## ⚠  RUN ULTRON ON THIS WINDOWS MACHINE  WITH PRECAUTIONS TAKEN [SO DEVICE WONT GET DEAMAGED]⚠
 >
-> 
+>
 >
 > Once the build is complete, ULTRON is **cloned to the author's own server and
 > run there**. Nothing on this machine is a deployment target.
@@ -736,13 +736,13 @@ no account of *why*, and this is the revision every later one is compared agains
 
 ## Phase 12 — Observability
 
-- [ ] **T180** `app/observability/metrics.py` — Prometheus registry, metric definitions per subsystem
-- [ ] **T181** `/metrics` endpoint + counters/gauges/histograms for agents, tasks, tools, models, bus
-- [ ] **T182** Resource monitor → `CPU_HIGH`, `RAM_HIGH`, `DISK_LOW`, `GPU_HIGH` with configurable thresholds
-- [ ] **T183** Agent/task monitoring + model-usage metrics
-- [ ] **T184** `deployment/compose/{prometheus,grafana}` + dashboard JSON (optional compose profile)
-- [ ] **T185** Phase 12 tests — metric registration, threshold events
-- [ ] **T186** **PHASE 12 verification**
+- [x] **T180** `app/observability/metrics.py` — Prometheus registry, metric definitions per subsystem
+- [x] **T181** `/metrics` endpoint + counters/gauges/histograms for agents, tasks, tools, models, bus
+- [x] **T182** Resource monitor → `CPU_HIGH`, `RAM_HIGH`, `DISK_LOW`, `GPU_HIGH` with configurable thresholds
+- [x] **T183** Agent/task monitoring + model-usage metrics
+- [x] **T184** `deployment/compose/{prometheus,grafana}` + dashboard JSON (optional compose profile)
+- [x] **T185** Phase 12 tests — metric registration, threshold events
+- [x] **T186** **PHASE 12 verification**
 
 **Phase 12 gate:** `/metrics` scrapes clean; thresholds emit events
 
@@ -1388,7 +1388,7 @@ T300+ are numbered here to avoid colliding with the original plan and T220+.
 - [ ] **T307** Bounded one-way outbox - client-to-server only, so there is no merge problem. Queue bounded by count and age, entries expire rather than grow, and every entry carries a client-generated idempotency key so a replay after an ambiguous failure cannot double-apply. **Optional**: skipped entirely if cross-device hand-off of queued work is not wanted, at no cost to the offline goal.
 - [ ] **T308** Offline is read-mostly and honest - cached data shows its age; a queued command is visibly pending, never optimistically reported as done (§59.25). Operations needing server authority - permissions, models, devices, anything destructive - queue or refuse offline rather than pretending to have succeeded.
 - [ ] **T309** Firestore security rules, reviewed as carefully as §31 - owner-scoped, deny-by-default, with the rule set treated as the authorisation layer for everything a client can write. A permissive rule set leaks the dataset regardless of what the server enforces. Dependency: T307.
-
+ 
 ### Rejected - retained so it is not re-proposed
 
 - [x] **SKIP - Firestore as a full copy of the PostgreSQL database** (§60.3). Rejected because a mirror of the authoritative store is a permanent second source of truth with no specified reconciliation, and its failure modes are worse than having no mirror: a **revoked** session or consumed refresh token stays usable in the copy until it catches up, so the audit log shows the denial while the credential keeps working; `tasks`/`task_steps` replayed from a stale copy can double-execute; conflict resolution on `memories`/`messages` is undefined; client-writable data makes security rules the real authorisation layer; and it doubles write cost at the exact tier that needs the free tier. PostgreSQL stays the single source of truth (§23).

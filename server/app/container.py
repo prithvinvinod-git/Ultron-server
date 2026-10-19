@@ -99,6 +99,8 @@ from app.observability.health import (
     check_redis,
 )
 from app.observability.logging import get_logger
+from app.observability.monitoring import MetricsSubscriber
+from app.observability.resources import ResourceMonitor
 from app.scheduler.automation import EventAutomation
 from app.scheduler.manager import ScheduleManager
 from app.scheduler.planning import build_task_factory
@@ -165,6 +167,8 @@ class Container:
         self._schedule_manager: ScheduleManager | None = None
         self._event_automation: EventAutomation | None = None
         self._notification_dispatch: NotificationDispatch | None = None
+        self._metrics_subscriber: MetricsSubscriber | None = None
+        self._resource_monitor: ResourceMonitor | None = None
         self._register_default_checks()
 
     # --------------------------------------------------------------------- #
@@ -277,6 +281,31 @@ class Container:
                 bus=self.events,
             )
         return self._notification_dispatch
+
+    @property
+    def metrics_subscriber(self) -> MetricsSubscriber:
+        """Return the bus→metrics bridge (T181/T183, spec A§32).
+
+        Cheap to build: it holds no I/O until :meth:`start` subscribes to the
+        bus, so a deployment that never enables metrics pays nothing for it.
+        """
+        if self._metrics_subscriber is None:
+            self._metrics_subscriber = MetricsSubscriber(self.events)
+        return self._metrics_subscriber
+
+    @property
+    def resource_monitor(self) -> ResourceMonitor:
+        """Return the host resource monitor (T182, spec A§32).
+
+        Holds no I/O until :meth:`start`; safe to build when resource monitoring
+        is disabled (it simply never starts a poll loop).
+        """
+        if self._resource_monitor is None:
+            self._resource_monitor = ResourceMonitor(
+                settings=self.settings.observability,
+                bus=self.events,
+            )
+        return self._resource_monitor
 
     @property
     def browser_sessions(self) -> BrowserSessionManager:
@@ -528,6 +557,19 @@ class Container:
         await self._start_node_gateway()
         await self._start_device_manager()
         await self._start_scheduler()
+        await self._start_observability()
+
+    async def _start_observability(self) -> None:
+        """Start the metrics subscriber and resource monitor (T181/T182/T183).
+
+        The metrics subscriber is always started: it only reads the bus and
+        writes in-process counters, so it costs one task and no I/O. The
+        resource monitor is started only when enabled and only when the host can
+        actually be sampled; both conditions are enforced inside
+        :meth:`ResourceMonitor.start`, which is a no-op otherwise.
+        """
+        await self.metrics_subscriber.start()
+        await self.resource_monitor.start()
 
     async def _start_scheduler(self) -> None:
         """Start the §44 scheduler, event automation and §45 dispatch (T170-T173).
@@ -660,6 +702,12 @@ class Container:
         if self._device_manager is not None:
             await self._device_manager.stop()
             self._device_manager = None
+        if self._resource_monitor is not None:
+            await self._resource_monitor.stop()
+            self._resource_monitor = None
+        if self._metrics_subscriber is not None:
+            await self._metrics_subscriber.stop()
+            self._metrics_subscriber = None
         if self._events is not None:
             self._events.close()
         if self._browser_sessions is not None:

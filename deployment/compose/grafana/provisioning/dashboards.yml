@@ -1,0 +1,17 @@
+# Grafana dashboard provisioning (T184, spec §32).
+#
+# Grafana loads every JSON dashboard placed in the provided folder at startup,
+# so the ULTRON dashboard ships with the profile rather than being imported by
+# hand. Editing in the UI is disabled: the file is the source of truth.
+apiVersion: 1
+
+providers:
+  - name: ULTRON
+    orgId: 1
+    folder: ULTRON
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

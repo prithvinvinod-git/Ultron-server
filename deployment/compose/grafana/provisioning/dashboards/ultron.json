@@ -1,0 +1,164 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "Ready",
+      "type": "stat",
+      "targets": [
+        { "expr": "ultron_health_ready", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "title": "Startup warnings",
+      "type": "stat",
+      "targets": [
+        { "expr": "ultron_startup_warnings", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "title": "Bus subscribers",
+      "type": "stat",
+      "targets": [
+        { "expr": "ultron_event_bus_subscribers", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "title": "Events published (rate)",
+      "type": "stat",
+      "targets": [
+        { "expr": "sum(rate(ultron_event_bus_published_total[5m]))", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 10,
+      "title": "Host resources",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "ultron_resource_cpu_percent", "legendFormat": "cpu", "refId": "A" },
+        { "expr": "ultron_resource_ram_percent", "legendFormat": "ram", "refId": "B" },
+        { "expr": "ultron_resource_disk_percent", "legendFormat": "disk", "refId": "C" },
+        { "expr": "ultron_resource_gpu_percent", "legendFormat": "gpu", "refId": "D" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 11,
+      "title": "Tasks by state",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "ultron_tasks_current", "legendFormat": "{{status}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 12,
+      "title": "Agents by state",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "ultron_agents_current", "legendFormat": "{{status}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 13,
+      "title": "Task duration (p50/p95)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(ultron_task_duration_seconds_bucket[10m])) by (le))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum(rate(ultron_task_duration_seconds_bucket[10m])) by (le))", "legendFormat": "p95", "refId": "B" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 14,
+      "title": "Tool executions by outcome (rate)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum(rate(ultron_tool_executions_total[5m])) by (outcome)", "legendFormat": "{{outcome}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "id": 15,
+      "title": "Model requests by model (rate)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum(rate(ultron_model_requests_total[5m])) by (model)", "legendFormat": "{{model}}", "refId": "A" }
+      ]
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["ultron"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "ULTRON Core",
+  "uid": "ultron-core",
+  "version": 1
+}
