@@ -752,15 +752,15 @@ no account of *why*, and this is the revision every later one is compared agains
 
 - [ ] **T190** `deployment/docker/Dockerfile` — multi-stage, non-root user, no dev deps - `DEFERRED` - no Docker. The server path is non-Docker systemd (T194); keep this as a documented alternative.
 - [ ] **T191** Root `docker-compose.yml` — `ultron-api`, `postgres`, `redis`, `ollama`; optional `prometheus`, `grafana`; explicit `depends_on` + healthchecks - `DEFERRED` - no Docker Compose. Notably it also assumed `ollama` on the host, which the online-first policy excludes.
-- [ ] **T192** `deployment/systemd/ultron-api.service`, `ultron-worker.service` - `FUTURE` - the actual deployment path for the author's server. Needed before ULTRON runs anywhere.
-- [ ] **T193** Ubuntu deployment docs — clone → prerequisites → `.env` → `docker compose up -d` → migrations → health check - `REVISED` - the documented path is non-Docker systemd, not `docker compose up`. Written for the server, not this machine.
-- [ ] **T194** Non-Docker / systemd deployment path - `FUTURE` - **this is the deployment path**, superseding T190/T191/T193.
-- [ ] **T195** `deployment/scripts/` — backup, restore, migrate, health check
-- [ ] **T196** Security hardening — no public PostgreSQL/Redis/Ollama, non-root, secret handling
-- [ ] **T197** `/opt/ultron` server directory layout (spec §47) with persistent volumes
-- [ ] **T198** **PHASE 13 verification**
+- [x] **T192** `deployment/systemd/ultron-api.service` - done. The worker unit was **not** created: no `ultron worker` entrypoint exists (`app/__main__.py` is unwritten) and all background work starts in-process, so a second unit would duplicate it. Recorded honestly in `deployment/systemd/README.md` instead of shipping a unit that cannot start.
+- [ ] **T193** Ubuntu deployment docs — clone → prerequisites → `.env` → `docker compose up -d` → migrations → health check - `REVISED` - the documented path is non-Docker systemd; see `deployment/README.md` + `deployment/systemd/README.md`. Not marked done: a separate `docs/deployment.md` is still Phase X/T203.
+- [x] **T194** Non-Docker / systemd deployment path - done (`deployment/systemd/` + `deployment/README.md`); supersedes T190/T191/T193.
+- [x] **T195** `deployment/scripts/` — `backup.sh`, `restore.sh`, `migrate.sh`, `health-check.sh`, `_common.sh`; all pass `bash -n`.
+- [x] **T196** Security hardening — documented in `deployment/README.md` §Hardening; enforced by the unit's sandbox directives. No public datastores, non-root user, secrets outside the repo.
+- [x] **T197** `/opt/ultron` server directory layout (spec §47) with persistent volumes — documented in `deployment/README.md`; writable paths match the unit's `ReadWritePaths`.
+- [x] **T198** **PHASE 13 verification** — scripts syntax-checked (`bash -n`, all pass). **Not machine-verified:** systemd unit syntax (`systemd-analyze verify` unavailable on Windows) and a live `systemctl start`; both recorded as unverified, not passed.
 
-**Phase 13 gate:** `docker compose up -d` on a clean machine reaches healthy
+**Phase 13 gate:** revised from `docker compose up -d ... healthy` (Docker deferred) to: **`systemd` unit + scripts are deployable and syntax-verified; the live `systemctl`/`systemd-analyze` step is unverified on this host.**
 
 ---
 

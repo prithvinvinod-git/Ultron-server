@@ -1,0 +1,78 @@
+# ULTRON API service (T192, spec A§47).
+#
+# This is the real deployment path: ULTRON runs as a hardened systemd unit on
+# Ubuntu Server, not under Docker (T194 supersedes T190/T191/T193). The unit is
+# deliberately explicit about the two things that go wrong in production:
+#
+#   * The working directory and the environment file are absolute. systemd does
+#     not run a login shell, so `PATH`, the virtualenv, and `.env` must all be
+#     named rather than inferred.
+#   * The process is confined. It runs as a dedicated unprivileged user with a
+#     restrictive filesystem view, so a compromised tool cannot reach the rest
+#     of the host (A§31). Writes are allowed only where ULTRON actually writes.
+#
+# Install:
+#   sudo cp deployment/systemd/ultron-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ultron-api
+#
+# See deployment/systemd/README.md for the full runbook.
+
+[Unit]
+Description=ULTRON API (agentic AI operating environment)
+Documentation=https://github.com/prithvinvinod-git/Ultron-server
+# Do not start until the datastores and the network answer; /ready would
+# otherwise flap at boot.
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ultron
+Group=ultron
+# /opt/ultron/config holds .env; /opt/ultron/server is the checkout.
+WorkingDirectory=/opt/ultron/server
+EnvironmentFile=/opt/ultron/config/.env
+# systemd does not run a login shell, so PATH must be stated. This mirrors
+# scripts/_bootstrap.sh, which searches ~/.local/bin, ~/.cargo/bin and
+# /usr/local/bin for uv. Keep the same three locations here.
+Environment=PATH=/opt/ultron/.local/bin:/opt/ultron/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+
+# Wait a little past SHUTDOWN_TIMEOUT so the app's own graceful drain wins.
+TimeoutStopSec=40
+# The same command scripts/start.sh runs, minus reload. `uv` is resolved from
+# the PATH above; workers>1 requires Redis coordination (A§24) and is left at 1.
+ExecStart=/usr/bin/env uv run --project /opt/ultron/server \
+    uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+Restart=on-failure
+RestartSec=5
+
+# --- Sandboxing (A§31) ----------------------------------------------------- #
+# A read-only view of the whole filesystem, with writes only where needed.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# AF_UNIX + AF_INET/AF_INET6 for Postgres/Redis/Ollama; AF_NETLINK is required
+# by some DNS resolutions. Everything else is denied.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# The only writable areas: logs, workspace clones, and non-database data.
+ReadWritePaths=/opt/ultron/logs /opt/ultron/workspaces /opt/ultron/data
+
+[Install]
+WantedBy=multi-user.target
