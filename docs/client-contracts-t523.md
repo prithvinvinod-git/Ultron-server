@@ -151,3 +151,33 @@ Key enums used across all clients (see UIPROTO/src/lib/api.ts):
 ## Conclusion
 
 All contracts already exist. No new endpoints introduced. Reuse principle satisfied. Map cross-checked against server routes.
+
+## 13. ESP32 Protocol Subset (T525)
+
+**Scope:** Minimal contract the ESP32 touchscreen firmware speaks (A§69.7, A§31, A§64.9, A§26). Server remains authoritative - all commands validated independently of interface.
+
+### Required ESP32 Subset
+
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| GET | /health | Check connectivity | Lightweight ping |
+| POST | /auth/login | Authenticate device | Username/password as per existing auth contract (A§30) |
+| GET | /auth/me | Verify session | After login |
+| GET | /devices/{id} | Get device state | Device registration/presence |
+| POST | /devices/{id}/register | Register device | Establish device identity (A§29) |
+| POST | /devices/{id}/heartbeat | Heartbeat | Presence/keepalive (A§29) |
+| GET | /agents | List agents | Status display on compact UI |
+| GET | /tasks | List tasks | Task queue/status for compact display |
+| POST | /tasks | Create task (optional) | If UI allows task submission from device |
+| GET | /events | SSE (or polled) | Status updates - but note ESP32 may prefer polling over SSE (memory constraints). Either way, same event semantics. |
+| POST | /chat/stream | Query/chat (if implemented) | Compact chat subset |
+
+### Server-Side Validation
+
+- **Auth enforced:** All state-changing ops require valid Bearer token (existing dependency chain)
+- **Independent validation:** Server validates every command regardless of client type (desktop/PWA/ESP32)
+- **Strict subset:** ESP32 cannot access Windows Node Bridge, OS-level operations, or privileged management endpoints not explicitly listed
+- **Idempotency/authority:** Server never trusts client state - always re-reads from DB/state
+- **Rate limiting/retry semantics:** As per existing middleware - device path subject to same auth checks, correlation IDs, audit logging
+
+**ESP32 Considerations:** Compact UI (A§69.9) needs minimal payloads. SSE may be heavy for ESP32-WROOM-32 (2.4" TFT) - polling is acceptable if preferred; semantics must match existing contracts. No new endpoints - reuse only.
