@@ -13,6 +13,8 @@ import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { OfflineBanner } from "../components/ultron/offline-banner";
+import { PWARegister } from "../components/ultron/pwa";
 import { LoginScreen } from "../components/ultron/login";
 import { WorkspaceProvider } from "../lib/workspace";
 
@@ -134,6 +136,8 @@ function RootComponent() {
       <WorkspaceProvider>
         <AuthGate />
         <Toaster theme="dark" position="bottom-right" />
+        <PWARegister />
+        <OfflineBanner />
       </WorkspaceProvider>
     </QueryClientProvider>
   );

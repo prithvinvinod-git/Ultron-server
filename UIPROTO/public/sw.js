@@ -19,3 +19,15 @@ self.addEventListener('fetch', event => {
   if (url.includes('/auth') || url.includes('/events') || url.includes('/chat') || url.includes('/api')) return;
   event.respondWith(caches.match(event.request).then(r => r || fetch(event.request).catch(() => r)));
 });
+
+self.addEventListener('fetch', event => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (url.pathname.includes('/auth') || url.pathname.includes('/events') || url.pathname.includes('/chat')) {
+    event.respondWith(fetch(event.request).catch(() => caches.match('/offline.html') || new Response('OFFLINE')));
+    return;
+  }
+  event.respondWith(
+    caches.match(event.request).then(cached => cached || fetch(event.request).catch(() => caches.match('/offline.html')))
+  );
+});
