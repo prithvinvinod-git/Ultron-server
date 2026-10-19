@@ -766,21 +766,21 @@ no account of *why*, and this is the revision every later one is compared agains
 
 ## Phase X — Documentation
 
-- [ ] **T200** `README.md` — what ULTRON is, quickstart, status table
-- [ ] **T201** `docs/architecture.md` — layers, Mermaid diagrams
-- [ ] **T202** `docs/development.md` — Windows workflow, scripts, branching
-- [ ] **T203** `docs/deployment.md` — Ubuntu + Docker + systemd
-- [ ] **T204** `docs/configuration.md` — every env var
-- [ ] **T205** `docs/agents.md`
-- [ ] **T206** `docs/tools.md`
-- [ ] **T207** `docs/models.md`
-- [ ] **T208** `docs/memory.md`
-- [ ] **T209** `docs/security.md`
-- [ ] **T210** `docs/computer-nodes.md`
-- [ ] **T211** `docs/voice.md`
-- [ ] **T212** `docs/esp32.md`
-- [ ] **T213** `docs/troubleshooting.md`
-- [ ] **T214** `docs/api.md`
+- [x] **T200** `README.md` — what ULTRON is, quickstart, status table
+- [x] **T201** `docs/architecture.md` — layers, Mermaid diagrams
+- [x] **T202** `docs/development.md` — Windows workflow, scripts, branching
+- [x] **T203** `docs/deployment.md` — Ubuntu + Docker + systemd
+- [x] **T204** `docs/configuration.md` — every env var
+- [x] **T205** `docs/agents.md`
+- [x] **T206** `docs/tools.md`
+- [x] **T207** `docs/models.md`
+- [x] **T208** `docs/memory.md`
+- [x] **T209** `docs/security.md`
+- [x] **T210** `docs/computer-nodes.md`
+- [x] **T211** `docs/voice.md`
+- [x] **T212** `docs/esp32.md`
+- [x] **T213** `docs/troubleshooting.md`
+- [x] **T214** `docs/api.md`
 - [ ] **T215** **FINAL §56 DEFINITION-OF-DONE verification** — every checkbox, with evidence
 
 **Final gate:** spec §56 checklist complete, with honest notes for anything unverified
