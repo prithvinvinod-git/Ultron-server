@@ -998,3 +998,83 @@ Facts that carried the Core/REST work (now delivered):
   spatial code exists until those tasks go `[x]`.
 
 - Phase 11 unit tests pass (353 related passed across triggers+phase11+repos+errors); full suite interrupted due to timeout (long-running).
+
+---
+
+## K. Fixes owed over the tasks completed this pass (Phase X, E/C/M/F/D)
+
+Recorded after finishing T200-T215 (Phase X docs + §56 DoD) and the unified-client
+ledger T514-T537. Everything below is a **known gap** the task lines do not close
+by themselves. Order is rough priority, not dependency.
+
+### K1. Command-center wiring T511-T513 are still open
+
+These sit just before the client ledger in `tasks.md` (~line 1821) and are **not**
+part of it, so they were left `[ ]`:
+
+| Task | State | What is missing |
+|---|---|---|
+| T511 Schedules panel + inspector | partial | `SchedulesPanel` renders in the shell, but the inspector/selection wiring and its gate are not recorded |
+| T512 Notifications panel | not started | `index.tsx` still renders `PlannedPanel title="Notifications" task="T512"` |
+| T513 Command-center wiring verification | not started | the end-to-end wiring gate for T500-T512 was never run |
+
+Fix before claiming the command center "done": finish T511/T512, then run T513's
+verification and record it with a `**gate:**` line.
+
+### K2. Unified-client paths verified only historically
+
+T537 re-ran the gates but the **backend was down**, so these are unverified *this
+pass* (they were green at T522 with a live backend):
+
+- Electron live-backend REST/WS + reconnection (T519/T520) — smoke exited 1 with
+  `proxyStatus 502`, `lcStates: disconnected`.
+- PWA install prompt + offline load (T527) — no browser driven.
+- PWA mobile visual rendering (T528) — CSS is only type-checked, never rendered.
+
+Fix: with the server up, re-run `npm run smoke` in `clients/electron` and record
+`proxyStatus 200` + `initial:connected`; drive a browser for the PWA offline/
+responsive checks. Until then T537's report stands as-is.
+
+### K3. ESP32 firmware is skeleton-only and unverified
+
+Per D047, `firmware/esp32-ui/` is written-but-unverified:
+
+- **T529** hardware spec (controller, resolution, touch IC, pin map, calibration)
+  is **unknown** — `docs/esp32-hardware-t529.md` lists the blockers.
+- **T534** compilation **never ran** — no `arduino-cli`/`platformio`/`pio`
+  installed (only host `gcc`, which cannot target ESP32).
+- **T532/T533** screen rendering, touch and reconnect are unverified — no board.
+- `hardware_config.h` is `#error`-gated and will not compile until T529 is filled.
+
+Fix: on a machine with the toolchain, fill `hardware_config.h` from real hardware,
+compile, and record verbatim output; then verify screens/touch/reconnect on the
+board. Do not mark T531-T534 "passing" before that (§69.11, D045).
+
+### K4. Auth gate is bypassed by directive (D046) — a deliberate deviation
+
+`AuthGate` in `UIPROTO/src/routes/__root.tsx` renders the workspace
+unconditionally; the shell shows a static principal; `ChangePasswordDialog` is
+stubbed. `LoginScreen` + `AuthProvider` remain implemented but unwired.
+**This is intentional**, but it means the UI's auth-failure path is untested and
+the console opens with no session.
+
+Fix (only if the directive changes): re-wire `AuthGate` to `AuthProvider` and
+re-run the auth-failure path; otherwise record it as a standing deviation.
+
+### K5. Ledger hygiene carried from this pass
+
+- `tasks.md` counts in `README.md` and the status log should be refreshed again
+  now that T200-T215 and T514-T537 moved (the T200 table predates them).
+- Phase 1 still reports 17/18 (T025 `DEFERRED`, no Docker) and Phase 13 is 6/9
+  (T190/T191 deferred, T193 revised) — unchanged, but they are the only phases
+  short of complete and should not be presented as equal to the closed ones.
+- `server/tests/unit/test_scheduler_phase11.py` + `test_scheduler_triggers.py`
+  still carry the 7 ruff + 8 mypy errors committed with T174 (pre-existing noise;
+  gates apply to changed files only). Not introduced here; still owed a cleanup.
+
+### K6. Docs written this pass are code-grounded but un-exercised
+
+`docs/{memory,security,computer-nodes,voice,esp32,troubleshooting,api}.md` were
+written from source, not from a running system. The API surface, health statuses
+and failure modes they describe are unit-test-backed but have never been observed
+on a live socket (B1/H). Re-read them against the server once it is deployed.
