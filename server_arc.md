@@ -7832,6 +7832,16 @@ layer. Whether the existing frontend is shared or a separate mobile application
 is more appropriate is investigated and the trade-offs documented *before*
 substantial restructuring.
 
+> **Implementation note (T526-T528).** The console is *shared* as a responsive
+> PWA; mobile never reaches the Windows Node Bridge. The authentication gate is
+> **deliberately bypassed in the UI by project-owner directive** (see D046):
+> `AuthGate` renders the workspace unconditionally and the shell shows a static
+> principal. The `LoginScreen` and `AuthProvider` remain fully implemented
+> against `/auth/login`, `/auth/me`, `/auth/refresh` and `/auth/logout`, but are
+> unwired; re-enabling is a one-line change. Data operations still route through
+> Core. Responsive rendering is verified by type-check only; visual/mobile
+> rendering is unverified (no browser driven).
+
 ## 69.9 ESP32 TOUCHSCREEN UI PLAN
 
 A standalone embedded UI for the existing **ESP32-WROOM-32 + 2.4-inch
@@ -7849,6 +7859,17 @@ runs AI models and never renders the desktop interface.** A proposed layout is
 manager, screen manager, screen components, network manager, ULTRON protocol
 client) - not mandatory if the repository already has a suitable firmware
 structure.
+
+> **Implementation note (T529-T534).** The hardware specification is **unknown**
+> (no datasheet/board in the repo): display and touch controllers, resolution,
+> pin map and calibration are all recorded as blockers in
+> `docs/esp32-hardware-t529.md`. `docs/esp32-libraries-t530.md` records a
+> *provisional* library evaluation (TFT_eSPI display; XPT2046 touch if confirmed;
+> LVGL rejected on WROOM-32 footprint), conditional on T529. The skeleton exists
+> under `firmware/esp32-ui/` with `hardware_config.h` intentionally `#error`-gated
+> until the unknowns are filled. **Compilation is unverified** - no ESP32
+> toolchain is installed - as are screen rendering and touch/reconnect behaviour
+> (no hardware). Per D047 this is written-but-unverified, never "passing".
 
 ## 69.10 DOCUMENTATION
 
@@ -7892,6 +7913,8 @@ the command-center wiring block (T500-T513): **E0** audit + baseline (T514-T515)
 | D043 | The mobile PWA never reaches the Windows Node Bridge; all privileged operations route through Core + §15 (T526) | §69.8; mobile is the least trusted surface and must not carry desktop OS authority |
 | D044 | The ESP32 UI renders a compact protocol subset and never runs models or the desktop UI (T529/T532) | §69.9; the WROOM-32 cannot host the desktop interface and must stay a thin client over §64.9 |
 | D045 | No client milestone is marked done until built and verified; hardware paths that cannot be exercised here are recorded as **unverified**, never "passing" (T513/T522/T534/T537) | §69.11 and §54; the project's honesty rule applies to clients exactly as it applies to the server |
+| D046 | The UI authentication gate is deliberately bypassed (AuthGate renders the workspace unconditionally) while the `LoginScreen`/`AuthProvider` stay implemented but unwired (T528) | Project-owner directive: open directly onto the main page. Data paths still route through Core, so no backend authorization is bypassed; the gate is disabled, not deleted |
+| D047 | ESP32 firmware ships as a **skeleton** with `hardware_config.h` `#error`-gated until the T529 unknowns are filled, and compilation is recorded **unverified** (T531-T534) | §69.9 and D045: the hardware specification is unknown and no ESP32 toolchain is present, so no pin/controller is assumed and no compile is claimed |
 
 ## 69.14 DOCUMENTATION-ONLY DISCLAIMER
 
@@ -7900,3 +7923,11 @@ being written here. No Electron shell, preload bridge, shared client package, PW
 manifest, or ESP32 firmware exists until its `tasks.md` entry is `[x]` with a
 passing gate (§54): "ULTRON has a unified client" is a roadmap line, not a status
 line.
+
+> **Status after T514-T534 (recorded in `tasks.md`).** Electron (T516-T522),
+> shared contracts (T523-T525), the PWA (T526-T528) and the ESP32 **skeleton**
+> (T529-T534) are written. What is *verified*: the prototype build, `tsc`, the
+> Electron smoke tests, the packaged `ULTRON.exe` (T522). What is **unverified**:
+> live-backend auth/restart paths, PWA install/offline behaviour, mobile visual
+> rendering, and all ESP32 hardware behaviour including compilation. This
+> footnote is the honest state, not a claim that the firmware runs.
