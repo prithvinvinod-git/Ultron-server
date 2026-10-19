@@ -71,9 +71,9 @@ sequenceDiagram
     TR-->>Agent: outcome
 ```
 
-Verification decides `SUCCESS`, `PARTIAL`, `FAILED`, `UNVERIFIED` (see
-[`verification.md`](verification.md), to be written as part of the doc set; its
-role is codified in `app/verification/` and the gate above).
+Verification decides `SUCCESS`, `PARTIAL`, `FAILED`, `UNVERIFIED` (implemented
+in `app/verification/`; see [`architecture.md`](architecture.md) for its place
+in the request path).
 
 ## Key configuration
 
