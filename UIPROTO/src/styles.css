@@ -407,6 +407,34 @@
   .inspector-field code{font-size:10px;}
 }
 
+/* --- unified shell: mobile / PWA layout (T528) --------------------------- */
+@media (max-width:900px){
+  .ultron-shell{height:auto;min-height:100svh;}
+  .shell-body{flex-direction:column;min-height:0;}
+  .shell-rail{flex-direction:row;gap:4px;padding:8px;border-right:0;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none;position:sticky;top:0;z-index:20;background:var(--background);}
+  .shell-rail::-webkit-scrollbar{display:none;}
+  .shell-rail button{width:34px;height:34px;flex:0 0 auto;}
+  .shell-workspace{min-height:0;}
+  .shell-inspector{width:auto;border-left:0;border-top:1px solid var(--border);max-height:60svh;overflow-y:auto;scrollbar-width:thin;padding:12px 14px;}
+  .shell-inspector::-webkit-scrollbar{width:6px;}
+  .shell-inspector::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+  .shell-panels{grid-template-columns:1fr;padding:0 14px 14px;gap:14px;}
+  .panel-wide{grid-column:span 1;}
+  .workspace-grid{grid-template-columns:1fr;max-width:640px;padding:0 16px 16px;gap:16px;}
+  .core-workspace{grid-column:1;grid-row:auto;}
+  .widget-column{min-height:0;}
+  .command-header{flex-wrap:wrap;gap:8px;}
+  .session-status{flex-wrap:wrap;white-space:normal;}
+  .bottom-bar{flex-wrap:wrap;gap:8px;}
+}
+
+@media (max-width:520px){
+  .shell-rail{padding:6px;}
+  .shell-rail button{width:32px;height:32px;}
+  .shell-panels{padding-inline:10px;}
+  .workspace-grid{padding-inline:10px;gap:12px;}
+}
+
 /* --- registry panels + inspector (T501) --------------------------------- */
 .panel-wide{grid-column:span 2;}
 .inspector-title{font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--foreground);overflow-wrap:anywhere;}
