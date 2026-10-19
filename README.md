@@ -30,20 +30,26 @@ live task log and [`server_arc.md`](server_arc.md) for the specification.
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Prerequisites and repository foundation | **complete** |
-| 1 | Foundation: config, logging, PostgreSQL, Redis, API, WebSocket | in progress (4 of 17: config, logging, errors, DB session) |
-| 2 | Core: events, permissions, tools, tasks, agents, orchestrator | not started |
-| 3 | Model system: Ollama, OpenAI, Gemini, Anthropic, router | not started |
-| 4 | Coding agent: workspaces, OpenCode engine, verification | not started |
-| 5 | Tool runtime: filesystem, terminal, git, python, web, system | not started |
-| 6 | Research and browser agents | not started |
-| 7 | Memory: short/long/episodic/semantic/project | not started |
-| 8 | Computer node gateway and agent | not started |
-| 9 | Voice: STT, TTS, wake word | not started |
-| 10 | ESP32 / IoT device gateway | not started |
-| 11 | Automation: scheduler, triggers, notifications | not started |
-| 12 | Observability: metrics, monitoring, Grafana | not started |
-| 13 | Production deployment: Docker, systemd, Ubuntu | not started |
+| 0 | Prerequisites and repository foundation | **complete** (8/8) |
+| 1 | Foundation: config, logging, PostgreSQL, Redis, API, WebSocket | **complete** (17/18; T025 Docker dev stack deferred) |
+| 2 | Core: events, permissions, tools, tasks, agents, orchestrator | **complete** (24/24) |
+| 3 | Model system: Ollama, OpenAI, Gemini, Anthropic, router | **complete** (11/11) |
+| 4 | Coding agent: workspaces, OpenCode engine, verification | **complete** (8/8) |
+| 5 | Tool runtime: filesystem, terminal, git, python, web, system | **complete** (10/10) |
+| 6 | Research and browser agents | **complete** (8/8) |
+| 7 | Memory: short/long/episodic/semantic/project | **complete** (11/11) |
+| 8 | Computer node gateway and agent | **complete** (9/9) |
+| 9 | Voice: STT, TTS, wake word | **complete** (7/7) |
+| 10 | ESP32 / IoT device gateway | **complete** (8/8) |
+| 11 | Automation: scheduler, triggers, notifications | **complete** (6/6) |
+| 12 | Observability: metrics, monitoring, Grafana | **complete** (7/7) |
+| 13 | Production deployment: systemd, Ubuntu | **partial** (6/9; Docker path T190/T191 deferred) |
+| X | Documentation | in progress |
+
+Counts are computed from [`tasks.md`](tasks.md); a task is only counted where
+the ledger records it `[x]` with a verification line. The one open Phase 1 task
+(T025, Docker dev stack) is deferred rather than unfinished: the dev machine has
+no Docker, and native PostgreSQL serves migrations and tests.
 
 ---
 
