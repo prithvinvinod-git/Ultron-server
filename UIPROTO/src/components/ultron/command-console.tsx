@@ -27,7 +27,7 @@ interface Message {
   pending?: boolean;
 }
 
-export function CommandConsole() {
+export function CommandConsole({ onChat }: { onChat?: (prompt: string) => void } = {}) {
   const queryClient = useQueryClient();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -35,6 +35,8 @@ export function CommandConsole() {
   const nextId = useRef(1);
   const controller = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const onChatRef = useRef(onChat);
+  onChatRef.current = onChat;
 
   const scroll = () => {
     requestAnimationFrame(() => {
@@ -50,6 +52,7 @@ export function CommandConsole() {
     event.preventDefault();
     const prompt = input.trim();
     if (!prompt || busy) return;
+    onChatRef.current?.(prompt);
     setInput("");
     setBusy(true);
 

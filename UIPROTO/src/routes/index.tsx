@@ -5,6 +5,7 @@ import { Box, Code2, Layers, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AgentsPanel } from '@/components/ultron/agents';
 import { CommandConsole } from '@/components/ultron/command-console';
+import { ChatPanel } from '@/components/ultron/chat/chat-panel';
 import { CoreDisplay, CoreMetrics } from '@/components/ultron/core-display';
 import { AppShell } from '@/components/ultron/shell/app-shell';
 import { EventsPanel, HealthPanel, NetworkPanel, SessionPanel, TaskPanel, ToolsPanel } from '@/components/ultron/widgets';
@@ -56,6 +57,14 @@ function Index() {
   const [voicePartial, setVoicePartial] = useState(''); const [voiceFinal, setVoiceFinal] = useState('');
   const [voiceAnswer, setVoiceAnswer] = useState(''); const [voiceError, setVoiceError] = useState<string | null>(null);
   const voiceRef = useRef<VoiceClient | null>(null);
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeed, setChatSeed] = useState<{ id: number; prompt: string } | null>(null);
+  const seedCounter = useRef(0);
+  function openChat(prompt: string) {
+    setChatSeed({ id: ++seedCounter.current, prompt });
+    setChatOpen(true);
+  }
 
   useEffect(() => () => { voiceRef.current?.stop(); voiceRef.current = null; }, []);
 
@@ -115,5 +124,5 @@ function Index() {
     system: <PanelGrid tab="system" />,
   };
 
-  return <AppShell>{views[tab]}<CommandConsole /></AppShell>;
+  return <AppShell>{views[tab]}<CommandConsole onChat={openChat} /><ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} /></AppShell>;
 }
