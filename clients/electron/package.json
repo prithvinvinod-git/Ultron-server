@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "npm run build && electron .",
     "start:dev": "ULTRON_DEV_SERVER_URL=http://localhost:8080 npm run build && electron .",
+    "dev:app": "node dev-app.mjs",
     "smoke": "npm run build && electron . --smoke",
     "package": "npm run build && npx electron-builder",
     "package:dir": "npm run build && npx electron-builder --dir"

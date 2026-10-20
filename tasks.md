@@ -9,12 +9,21 @@ Source of truth for the build described in [`server_arc.md`](server_arc.md).
 > Once the build is complete, ULTRON is **cloned to the author's own server and
 > run there**. Nothing on this machine is a deployment target.
 >
+> **Build/test policy (updated):** all building and testing happens on this
+> **Windows dev system** — there is **no remote server involved** during build
+> and test. The remote/server stage is **post-build only** (clone-and-run on the
+> author's server). The client (UI/Electron) may therefore be built and launched
+> here against the local dev server for real-time iteration; only the runtime
+> boundary below still holds.
+>
 > This is a deliberate safety boundary, not a limitation to work around:
 >
 > - **Do not** start the API server (`uvicorn`, `fastapi run`, `python -m app`, a
 >   packaged executable, or a Windows service).
-> - **Do not** run the web/desktop client, the Orb, a voice session, a device
->   bridge, the scheduler, or any background worker that runs the real runtime.
+> - **Do not** run the real runtime: the Orb, a voice session, a device
+>   bridge, the scheduler, or any background worker. (The **client UI/Electron
+>   shell against a local `vite dev` server is permitted** — build tooling, not
+>   the runtime; see `docs/uiclient-conflict-electron-launch.md`.)
 > - **Do not** enable `BROWSER_ENABLED`, `SCHEDULER_ENABLED`, `COMPUTER_NODES_ENABLED`,
 >   `DEVICES_ENABLED`, `VOICE_ENABLED` or `REDIS_EVENT_BRIDGE` on this host.
 > - **Do not** point the API at anything outside this machine.

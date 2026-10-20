@@ -990,7 +990,10 @@ Facts that carried the Core/REST work (now delivered):
   and `powershell -File scripts/test.ps1` (pytest, non-integration). Run from
   repo root with `$env:PYTHONIOENCODING='utf-8'`; tests only via `uv run
   pytest …` from `server/`.
-- Never run ULTRON on this Windows machine (no uvicorn/startup/clients).
+- Build/test happens **on this Windows dev system; no remote server** during
+  build/test (the server is post-build only). The client UI/Electron shell may
+  run here against a local `vite dev` server for live iteration; the runtime
+  (uvicorn/worker/scheduler/voice/device bridge) still never runs here.
 - Encoding: always write files with the edit/write tools, never PowerShell
   `-replace` (it mangled UTF-8 `§`/dashes once already).
 - The doc addendum added 97 roadmap tasks (T395-T491) + decisions; none are
