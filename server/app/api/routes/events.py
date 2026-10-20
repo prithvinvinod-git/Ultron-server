@@ -1,4 +1,4 @@
-"""Authenticated receive-only event stream (T023, spec §19/§27/§29).
+"""Receive-only event stream (T023, spec §19/§27/§29).
 
 One endpoint, ``GET /events``, speaking Server-Sent Events.
 
@@ -10,23 +10,14 @@ event, cancelling work, streaming audio. Those need explicit HTTP calls (T320)
 or a later bidirectional stream. That trade was made deliberately, not
 discovered later.
 
-**Authentication uses the ``Authorization`` header, which means the client cannot
-use ``EventSource``.** ``EventSource`` sends no custom headers and accepts no
-request body, so it cannot present a bearer token except as a query parameter —
-and §30 makes these long-lived opaque credentials, so a token in the URL ends up
-in proxy and access logs. The client must therefore use ``fetch()`` with a
-``ReadableStream`` and parse the frames itself.
-
-The trade is real and worth stating: ``EventSource``'s automatic reconnect and
-frame parsing are both lost, so T320 reimplements them. The alternative was a
-same-origin HttpOnly cookie, which needs a BFF in front of the API and inherits
-CSRF concerns. Between a hand-written parser and a CSRF surface, the parser is
-the smaller problem to own.
-
-This is why ``/events`` reads the header through the ordinary
-``require_principal`` dependency rather than doing its own token handling: the
-stream is authenticated exactly like every other route, and an unauthenticated
-subscriber gets a ``401`` before any stream opens.
+**Authentication was removed.** The stream used to require a bearer credential
+presented via the ``Authorization`` header (which is why the fetch()-based client
+never used ``EventSource``). Built-in authentication is gone — it moves to an
+external provider (Firebase) — so every request is now attributed to the static
+principal and the stream opens without a credential. The client still uses
+``fetch()`` with a ``ReadableStream`` and parses the frames itself; that remains
+necessary because ``EventSource`` cannot carry the ``Last-Event-ID`` header the
+same way and the frames are richer than ``EventSource``'s model.
 """
 
 from __future__ import annotations
@@ -87,7 +78,6 @@ def _retry_hint(milliseconds: int) -> bytes:
     summary="Event stream (Server-Sent Events)",
     response_description="A text/event-stream of events.",
     responses={
-        status.HTTP_401_UNAUTHORIZED: {"description": "No usable credential."},
         status.HTTP_422_UNPROCESSABLE_CONTENT: {"description": "Invalid topic filter."},
         status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "The stream is at capacity."},
     },
@@ -113,7 +103,7 @@ async def stream_events(
         ),
     ),
 ) -> StreamingResponse:
-    """Open an authenticated, receive-only event stream.
+    """Open a receive-only event stream.
 
     Resumes from ``Last-Event-ID`` when present, replaying anything missed. A
     client that has fallen too far behind gets a ``stream.lagged`` event telling

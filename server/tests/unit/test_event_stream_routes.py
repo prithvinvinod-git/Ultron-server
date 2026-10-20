@@ -1,13 +1,13 @@
-"""Route tests for the authenticated event stream (T023, spec §19/§27).
+"""Route tests for the event stream (T023, spec §19/§27).
 
-These tests cover the HTTP surface: that the stream requires a credential, that
-its headers survive a real deployment, and that a topic filter is validated
-rather than silently ignored.
+These tests cover the HTTP surface: that the stream opens for any caller now
+that built-in authentication is removed, that its headers survive a real
+deployment, and that a topic filter is validated rather than silently ignored.
 
 The stream body is driven two ways, both necessary. ``TestClient`` runs the
 ASGI app to completion before it returns anything -- it buffers the whole
 response -- so any request that *succeeds* hangs forever against a stream that
-never ends; only the finite refusals (401, 422, 503) travel over HTTP. To see
+never ends; only the finite refusals (422, 503) travel over HTTP. To see
 actual frames, and to read the status and headers of an open stream,
 :class:`TestStreamGenerator` and ``open_stream`` call the route function
 directly and walk its async generator, which is the same object
@@ -15,9 +15,8 @@ directly and walk its async generator, which is the same object
 
 What is worth pinning here is the set of things that are silently wrong in a way
 a manual test would miss: a missing ``X-Accel-Buffering`` header (a stream that
-works locally and hangs behind nginx), a filter that accepts a misspelled topic
-(a client waiting forever for events that cannot exist), and an unauthenticated
-stream (the whole point of the T023 authentication decision).
+works locally and hangs behind nginx), and a filter that accepts a misspelled
+topic (a client waiting forever for events that cannot exist).
 """
 
 from __future__ import annotations
@@ -31,8 +30,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import CORRELATION_HEADERS, MAX_CORRELATION_LENGTH
-from app.api.routes.auth import router as auth_router
+from app.api.dependencies import (
+    CORRELATION_HEADERS,
+    MAX_CORRELATION_LENGTH,
+    require_principal,
+)
 from app.api.routes.events import SSE_CONTENT_TYPE, router as events_router, stream_events
 from app.config import get_settings
 from app.events.bus import (
@@ -52,17 +54,17 @@ pytestmark = pytest.mark.unit
 
 
 class StubContainer:
-    """The slice of the container the stream route and its auth dependency reach.
+    """The slice of the container the stream route reaches.
 
     ``events`` is a *real* ``EventBus*, not a mock. The route subscribes, streams
     and unsubscribes against it, and a stub would assert only that the route
     called a stub -- which is not what makes this endpoint trustworthy.
 
-    The repository factories and ``session_scope`` are here because the auth
-    dependency pulls them in to resolve a token. They hand back the same doubles
-    the auth route tests use and are never touched by the stream itself; leaving
-    them off would fail in ``get_db_session`` before the route ran, which would
-    say nothing about the stream.
+    The repository factories and ``session_scope`` are leftovers from when the
+    auth dependency built an ``Authenticator`` per request. Built-in
+    authentication is gone and ``require_principal`` is static, so nothing pulls
+    them in anymore; they stay only because removing them is a rewrite of a stub
+    that still satisfies the container protocol.
     """
 
     def __init__(self, repositories: dict[str, Any], bus: EventBus, settings: Any) -> None:
@@ -116,13 +118,14 @@ class FakeRequest:
         return self.disconnected
 
 
-def _principal() -> Principal:
-    return Principal(
-        actor_type="user",
-        user_id=None,
-        username="alice",
-        is_superuser=False,
-    )
+def _principal(request: FakeRequest) -> Principal:
+    """The principal the route would get from the dependency, obtained the same way.
+
+    ``require_principal`` is a synchronous call on the static principal; this
+    keeps the direct-call tests going through it rather than hand-building a
+    ``Principal`` the route never sees in production.
+    """
+    return require_principal(cast(Request, request))
 
 
 async def open_stream(
@@ -137,7 +140,7 @@ async def open_stream(
     ``TestClient`` cannot do this: its transport runs the ASGI app to
     completion and only then returns the buffered response, so a request that
     succeeds would block forever against a stream that never ends. The finite
-    failures (401, 422, 503) still travel over HTTP; everything that opens the
+    failures (422, 503) still travel over HTTP; everything that opens the
     stream comes through here, against the same code the HTTP layer calls.
 
     Header names are passed lower-case because ``FakeRequest`` carries a plain
@@ -146,7 +149,7 @@ async def open_stream(
     request = FakeRequest(app, headers=headers)
     return await stream_events(
         cast(Request, request),
-        _principal(),
+        _principal(request),
         topics=topics,
         last_event_id=last_event_id,
     )
@@ -177,7 +180,6 @@ def settings(security: Any) -> Any:
 
 @pytest.fixture
 def app(
-    authenticator: Any,
     settings: Any,
     audit_sink: Any,
     bus: EventBus,
@@ -185,18 +187,13 @@ def app(
 ) -> FastAPI:
     """An app with the events router and the real middleware and handlers.
 
-    The exception handlers are required, not incidental: a 401 raised by the auth
-    dependency only becomes a 401 because ``add_exception_handlers`` is installed.
+    The exception handlers are required, not incidental: a 422 raised by the
+    topic gate only becomes a 422 because ``add_exception_handlers`` is
+    installed.
     """
-    _service, users, sessions, devices = authenticator
     application = FastAPI()
     application.state.container = StubContainer(
-        {
-            "users": users,
-            "sessions": sessions,
-            "devices": devices,
-            "audit": audit_sink,
-        },
+        {"audit": audit_sink},
         bus,
         settings,
     )
@@ -206,35 +203,8 @@ def app(
         candidates=CORRELATION_HEADERS,
         max_length=MAX_CORRELATION_LENGTH,
     )
-    application.include_router(auth_router)
     application.include_router(events_router)
     return application
-
-
-@pytest.fixture
-def token(client: TestClient, make_user: Any, authenticator: Any) -> str:
-    """A real access token for a real account.
-
-    Obtained through the ``/auth/login`` endpoint rather than by calling the
-    authenticator directly, so the stream's auth path is the one production uses
-    -- including the audit row a login writes. The authenticator fixture is
-    requested so the user repository is the one the login route reads.
-    """
-    _service, users, _sessions, _devices = authenticator
-    users.users.append(make_user())
-
-    response = client.post(
-        "/auth/login",
-        json={"username": "alice", "password": "correct horse battery staple"},
-    )
-    assert response.status_code == 200, response.text
-    token: str = response.json()["access_token"]
-    return token
-
-
-@pytest.fixture
-def auth(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
@@ -248,51 +218,25 @@ def client(app: FastAPI) -> Any:
 
 
 class TestAuthentication:
-    def test_an_unauthenticated_stream_is_refused(self, client: TestClient) -> None:
-        """The stream carries transcripts and device state; it is never open.
+    """Built-in authentication is removed: no credential is ever refused.
 
-        This is the whole consequence of the T023 decision. A stream accepting
-        anonymous connections would hand every event to anyone who found the URL,
-        so the auth check runs before the subscription is created rather than after
-        the first frame.
-        """
-        response = client.get("/events")
-        assert response.status_code == 401
-        assert "error" in response.json()
-
-    def test_a_malformed_header_is_refused(self, client: TestClient) -> None:
-        """Non-empty but unparseable must not be treated as absent."""
-        response = client.get("/events", headers={"Authorization": "Token nonsense"})
-        assert response.status_code == 401
-
-    def test_an_unknown_token_is_refused(self, client: TestClient) -> None:
-        response = client.get(
-            "/events", headers={"Authorization": "Bearer ultron-does-not-know-this"}
-        )
-        assert response.status_code == 401
-
-    def test_a_refused_stream_creates_no_subscription(
-        self, client: TestClient, app: FastAPI
-    ) -> None:
-        """Auth must run before the fan-out registers.
-
-        Registering first and rejecting later would leave a subscription behind
-        that keeps receiving events for a caller who never got a stream -- an
-        unbounded leak reachable by anyone who can make a bad request.
-        """
-        assert client.get("/events").status_code == 401
-        assert app.state.container.events.subscriber_count == 0
+    Every request is attributed to the static principal from
+    ``require_principal`` until an external verifier (Firebase) is wired in, so
+    the old 401-refusal tests are gone. What remains is the property that used
+    to be implied by them: an anonymous caller reaches a working stream.
+    """
 
     @pytest.mark.asyncio
-    async def test_an_authenticated_stream_opens(self, app: FastAPI) -> None:
-        """The happy path, asserted on status and content type only.
+    async def test_an_anonymous_stream_opens(self, app: FastAPI) -> None:
+        """A caller with no credential gets a stream, not a 401.
 
         Over HTTP this would hang: ``TestClient`` buffers to completion (see
-        ``open_stream``), and this response never completes. That a credential
-        is what earns the 200 is proven by the refusals above; here the route's
-        own output is under the microscope.
+        ``open_stream``), and this response never completes. So the open is
+        driven through ``open_stream`` against the route function itself, with
+        no Authorization header in sight.
         """
         response = await open_stream(app)
+        assert response.status_code != 401
         assert response.status_code == 200
         assert response.headers["content-type"].startswith(SSE_CONTENT_TYPE)
         await _body(response).aclose()
@@ -346,14 +290,14 @@ class TestStreamingHeaders:
 
 
 class TestTopicFilter:
-    def test_an_unknown_topic_is_a_422(self, client: TestClient, auth: dict[str, str]) -> None:
+    def test_an_unknown_topic_is_a_422(self, client: TestClient) -> None:
         """Reject rather than silently drop.
 
         A client asking for ``agentz`` should get an error, not an open stream that
         never receives anything -- the second failure is indistinguishable from an
         idle system, which is precisely what this codebase is trying to avoid.
         """
-        response = client.get("/events", headers=auth, params={"topics": "agentz"})
+        response = client.get("/events", params={"topics": "agentz"})
         assert response.status_code == 422
         assert "agentz" in response.text
 
@@ -387,19 +331,22 @@ class TestTopicFilter:
         assert response.status_code == 200
         await _body(response).aclose()
 
-    def test_the_error_names_the_known_topics(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
+    def test_the_error_names_the_known_topics(self, client: TestClient) -> None:
         """The client cannot guess the vocabulary; the error is where it learns it."""
-        response = client.get("/events", headers=auth, params={"topics": "nonsense"})
+        response = client.get("/events", params={"topics": "nonsense"})
         assert "agent" in response.text
         assert "task" in response.text
 
     def test_an_unknown_topic_creates_no_subscription(
-        self, client: TestClient, auth: dict[str, str], app: FastAPI
+        self, client: TestClient, app: FastAPI
     ) -> None:
-        """Validation happens before the fan-out registers."""
-        client.get("/events", headers=auth, params={"topics": "agentz"})
+        """Validation happens before the fan-out registers.
+
+        Registering first and rejecting later would leave a subscription behind
+        that keeps receiving events for a caller who never got a stream -- an
+        unbounded leak reachable by anyone who can make a bad request.
+        """
+        client.get("/events", params={"topics": "agentz"})
         assert app.state.container.events.subscriber_count == 0
 
 
@@ -409,7 +356,7 @@ class TestTopicFilter:
 
 
 class TestCapacity:
-    def test_a_full_bus_refuses_with_503(self, app: FastAPI, token: str) -> None:
+    def test_a_full_bus_refuses_with_503(self, app: FastAPI) -> None:
         """Refusing one client beats degrading every already-connected client.
 
         The alternative -- accepting the subscriber into a queue it will never
@@ -420,7 +367,7 @@ class TestCapacity:
         full.subscribe()
         app.state.container.events = full
 
-        response = TestClient(app).get("/events", headers={"Authorization": f"Bearer {token}"})
+        response = TestClient(app).get("/events")
         assert response.status_code == 503
         assert full.subscriber_count == 1
 
@@ -561,7 +508,7 @@ class TestStreamGenerator:
         """
         request = FakeRequest(app)
         response = await stream_events(
-            cast(Request, request), _principal(), topics=None, last_event_id=None
+            cast(Request, request), _principal(request), topics=None, last_event_id=None
         )
         iterator = _body(response)
         await iterator.__anext__()

@@ -38,12 +38,16 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict
 
-from app.api.dependencies import Container, get_authenticator
+from app.api.dependencies import (
+    STATIC_PRINCIPAL_ID,
+    STATIC_PRINCIPAL_USERNAME,
+    Container,
+)
 from app.core.errors import UltronError
 from app.events.bus import Subscription
 from app.events.types import EventType
 from app.observability import get_logger
-from app.security.audit import ACTOR_ANONYMOUS
+from app.security.audit import ACTOR_USER
 from app.security.authentication import Principal
 from app.voice.manager import VoiceManager, VoiceSession, VoiceState
 from app.voice.stt.base import AudioChunk
@@ -161,44 +165,25 @@ async def voice_ws(websocket: WebSocket) -> None:
 
     await websocket.accept()
 
-    principal = await _authenticate(container, websocket)
-    if principal is None:
-        await _safe_send_json(
-            websocket,
-            {"type": "error", "code": "AUTH_ERROR", "message": "a valid token is required"},
-        )
-        await websocket.close(code=_WS_POLICY_VIOLATION)
-        return
-
+    principal = _principal()
     await _run_session(websocket, container, principal)
 
 
-async def _authenticate(container: Container, websocket: WebSocket) -> Principal | None:
-    """Resolve the caller from the ``token`` query parameter, or return ``None``."""
-    token = websocket.query_params.get("token")
-    if not token:
-        if container.settings.security.allow_anonymous:
-            return Principal(
-                actor_type=ACTOR_ANONYMOUS,
-                user_id=None,
-                username=None,
-                is_superuser=False,
-            )
-        return None
+def _principal() -> Principal:
+    """The caller for a voice session.
 
-    try:
-        async with container.session_scope() as session:
-            authenticator = await get_authenticator(container, session)
-            return await authenticator.authenticate_token(
-                token, ip_address=_client_ip(websocket)
-            )
-    except UltronError:
-        return None
-    except Exception:
-        _LOGGER.exception(
-            "voice websocket authentication failed", extra={"event": "voice.auth_failed"}
-        )
-        return None
+    Built-in authentication has been removed (auth moves to an external provider,
+    Firebase), so every voice socket is attributed to the same static
+    administrator — no ``token`` query parameter is checked. The WS handshake is
+    still accepted before this runs, so a future verifier can close an
+    unauthenticated socket here instead; that is the single place this changes.
+    """
+    return Principal(
+        actor_type=ACTOR_USER,
+        user_id=STATIC_PRINCIPAL_ID,
+        username=STATIC_PRINCIPAL_USERNAME,
+        is_superuser=True,
+    )
 
 
 async def _run_session(
@@ -425,10 +410,6 @@ async def _safe_send_json(
         return
     async with lock:
         await _send()
-
-
-def _client_ip(websocket: WebSocket) -> str | None:
-    return websocket.client.host if websocket.client is not None else None
 
 
 __all__ = ["VoiceEngines", "router"]

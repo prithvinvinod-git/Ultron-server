@@ -228,7 +228,15 @@ def test_ws_rejects_a_bad_control_frame(api: TestClient) -> None:
     )
 
 
-def test_ws_requires_a_token_when_not_anonymous(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ws_opens_even_when_anonymous_is_disallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Built-in auth is removed, so the socket no longer gates on a token.
+
+    ``security.allow_anonymous`` used to make the route refuse a socket with no
+    credential (an ``AUTH_ERROR`` frame). With auth delegated to an external
+    provider, every socket is attributed to the static principal and opens; the
+    setting is dormant until a verifier is wired back in. This asserts the new
+    contract: a session frame, never an auth error.
+    """
     monkeypatch.setenv("ALLOWED_HOSTS", "testserver")
     monkeypatch.setenv("METRICS_ENABLED", "false")
     reload_settings()
@@ -240,8 +248,8 @@ def test_ws_requires_a_token_when_not_anonymous(monkeypatch: pytest.MonkeyPatch)
         client.websocket_connect("/voice/ws") as ws,
     ):
         frame = ws.receive_json()
-        assert frame["type"] == "error"
-        assert frame["code"] == "AUTH_ERROR"
+        assert frame["type"] == "session"
+        assert frame["type"] != "error"
 
 
 def test_ws_utterance_end_closes_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:

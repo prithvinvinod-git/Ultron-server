@@ -5,7 +5,6 @@ import { Box, Code2, Layers, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AgentsPanel } from '@/components/ultron/agents';
 import { CommandConsole } from '@/components/ultron/command-console';
-import { ChatPanel } from '@/components/ultron/chat/chat-panel';
 import { CoreDisplay, CoreMetrics } from '@/components/ultron/core-display';
 import { AppShell } from '@/components/ultron/shell/app-shell';
 import { EventsPanel, HealthPanel, NetworkPanel, SessionPanel, TaskPanel, ToolsPanel } from '@/components/ultron/widgets';
@@ -13,8 +12,9 @@ import { PanelGrid } from '@/components/ultron/shell/registry';
 import { SchedulesPanel } from '@/components/ultron/schedules';
 import { useEventStream } from '@/lib/events';
 import { voiceApi } from '@/lib/api';
-import { VoiceClient } from '@/lib/voice';
-import type { VoiceState } from '@/lib/voice';
+import { ChatPanel } from '@/components/ultron/chat/chat-panel';
+import { LiveMode } from '@/components/ultron/chat/live-mode';
+import { useLiveSession } from '@/components/ultron/chat/use-live-session';
 import { useAgents, useHealth, useLiveInvalidation, useTasks } from '@/lib/queries';
 import { useWorkspace } from '@/lib/workspace';
 import type { TabId } from '@/lib/workspace';
@@ -52,11 +52,7 @@ function Index() {
   const tasks = useTasks();
 
   const [paused, setPaused] = useState(false); const [mode, setMode] = useState('Focus');
-  const [voice, setVoice] = useState(false);
-  const [voiceState, setVoiceState] = useState<VoiceState>('idle');
-  const [voicePartial, setVoicePartial] = useState(''); const [voiceFinal, setVoiceFinal] = useState('');
-  const [voiceAnswer, setVoiceAnswer] = useState(''); const [voiceError, setVoiceError] = useState<string | null>(null);
-  const voiceRef = useRef<VoiceClient | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<{ id: number; prompt: string } | null>(null);
@@ -66,33 +62,22 @@ function Index() {
     setChatOpen(true);
   }
 
-  useEffect(() => () => { voiceRef.current?.stop(); voiceRef.current = null; }, []);
+  const live = useLiveSession({ onError: setVoiceError });
+  const voice = live.active || live.status !== 'idle';
+  const voiceState = live.status;
 
   async function toggleVoice() {
-    if (voice) {
-      voiceRef.current?.stop(); voiceRef.current = null; setVoice(false); setVoiceState('idle'); return;
-    }
-    setVoiceError(null); setVoicePartial(''); setVoiceFinal(''); setVoiceAnswer('');
+    if (live.active) { live.stop(); return; }
+    setVoiceError(null);
     try {
       const engines = await voiceApi.engines();
       if (!engines.enabled || !engines.stt.available) {
         setVoiceError(engines.stt.reason ?? (engines.enabled ? 'Speech-to-text is unavailable on the server.' : 'Voice is disabled on the server.'));
         return;
       }
-      const client = new VoiceClient({
-        onState: state => { setVoiceState(state); if (state === 'closed') { setVoice(false); voiceRef.current = null; } },
-        onPartial: setVoicePartial,
-        onFinal: text => { setVoiceFinal(text); setVoicePartial(''); },
-        onAnswer: setVoiceAnswer,
-        onError: message => { setVoiceError(message); setVoice(false); voiceRef.current = null; },
-      });
-      voiceRef.current = client;
-      client.unlock();
-      setVoice(true);
-      await client.start();
+      await live.start();
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : 'Could not start voice mode.');
-      setVoice(false); voiceRef.current = null;
     }
   }
 
@@ -107,13 +92,7 @@ function Index() {
   const views: Record<TabId, ReactNode> = {
     command: <div className="workspace-grid"><aside className="widget-column" aria-label="Tasks and system access"><NetworkPanel /><TaskPanel /><AgentsPanel /></aside>
       <section className="core-workspace" aria-label="Ultron orchestrator"><div className="core-headline">ORCHESTRATOR <span>/</span> <strong>CORE 01</strong> <span>/</span> {online ? 'ACTIVE' : 'STANDBY'}</div><CoreDisplay online={online} paused={paused} voice={voice} voiceState={voiceState} mode={mode} onToggleVoice={toggleVoice} /><CoreMetrics agentActive={activeAgents} agentTotal={agentList.length} taskOpen={openTasks} latencyMs={latencyMs} />
-        {voice && <div className="voice-hud" role="status" aria-live="polite">
-          <div className="voice-hud-head"><span className="status-dot" />VOICE · {voiceState.toUpperCase()}</div>
-          {voicePartial ? <div className="voice-hud-line user">{voicePartial}</div> : voiceFinal ? <div className="voice-hud-line user">{voiceFinal}</div> : null}
-          {voiceAnswer && <div className="voice-hud-line core">{voiceAnswer}</div>}
-          {voiceError && <div className="voice-hud-error">{voiceError}</div>}
-          <div className="voice-hud-hint">Speak naturally — pause to send. Talk over ULTRON to interrupt.</div>
-        </div>}
+        {voiceError && <div className="voice-hud-error core-voice-error" role="alert">{voiceError}</div>}
         <div className="mode-selector" aria-label="Core protocol">{[{name:'Focus',icon:Box},{name:'Code',icon:Code2},{name:'Creative',icon:Layers}].map(({name,icon:Icon}) => <Button key={name} variant="ghost" aria-pressed={mode === name} onClick={() => setMode(name)}><Icon />{name.toUpperCase()}</Button>)}</div><div className="core-footer-label"><ShieldCheck size={10} />PROTECTED BY ULTRON SENTINEL</div></section>
       <aside className="widget-column" aria-label="Session, capabilities and events"><SessionPanel /><ToolsPanel /><EventsPanel /><HealthPanel /></aside></div>,
     agents: <PanelGrid tab="agents" />,
@@ -124,5 +103,7 @@ function Index() {
     system: <PanelGrid tab="system" />,
   };
 
-  return <AppShell>{views[tab]}<CommandConsole onChat={openChat} /><ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} /></AppShell>;
+  return <AppShell>{views[tab]}<CommandConsole onChat={openChat} /><ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} onStartLive={() => { setChatOpen(false); void toggleVoice(); }} />
+    {voice && <div className="live-overlay"><LiveMode status={live.status} activity={live.activity} subtitle={live.subtitle} captions={live.captions} level={live.level} onStop={live.stop} /></div>}
+  </AppShell>;
 }

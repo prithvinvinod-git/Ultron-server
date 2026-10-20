@@ -162,11 +162,6 @@ export function startStaticServer(
   }
 
   const server = createServer((req, res) => {
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      res.writeHead(405, { Allow: "GET, HEAD" }).end();
-      return;
-    }
-
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     let pathname: string;
     try {
@@ -176,10 +171,19 @@ export function startStaticServer(
       return;
     }
 
-    // T519: API prefixes proxy to the backend (REST + SSE stream).
+    // T519: API prefixes proxy to the backend (REST + SSE stream). This must be
+    // checked *before* the GET/HEAD guard: proxied API requests legitimately use
+    // POST/PUT/PATCH/DELETE (e.g. `POST /chat/stream`), so guarding methods here
+    // would answer every API write with 405 and the app could never chat.
     if (backendUrl && isApiPrefix(pathname)) {
       log("info", "proxying API request", { path: pathname, backendUrl });
       proxyRequest(req, res, backendUrl, log);
+      return;
+    }
+
+    // Static assets are read-only: anything but GET/HEAD is a client error.
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405, { Allow: "GET, HEAD" }).end();
       return;
     }
 

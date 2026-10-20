@@ -103,13 +103,15 @@ def test_every_expected_route_is_mounted(client: Any) -> None:
     """
     paths = _schema_paths(client)
     assert {"/health", "/ready", "/metrics"} <= paths
-    assert {
+    # The built-in `/auth` router was removed (auth moves to Firebase), so none
+    # of its paths may be advertised anymore.
+    assert not {
         "/auth/login",
         "/auth/refresh",
         "/auth/logout",
         "/auth/me",
         "/auth/password",
-    } <= paths
+    } & paths
     # The event stream (T023) is part of the contract, not a side channel.
     assert {"/events"} <= paths
 
@@ -155,7 +157,7 @@ def test_openapi_schema_generates(client: Any) -> None:
     response = client.get("/openapi.json")
     assert response.status_code == 200
     schema = response.json()
-    assert "/auth/login" in schema["paths"]
+    assert "/auth/login" not in schema["paths"]
     assert "/health" in schema["paths"]
     # The Core REST surface (T051) is mounted alongside the T022-T024 routes.
     assert "/tasks" in schema["paths"]
@@ -183,37 +185,37 @@ def test_wrong_method_returns_the_error_envelope(client: Any) -> None:
     assert "detail" not in response.json()
 
 
-def test_protected_route_without_a_token_is_401(client: Any) -> None:
-    """Unauthenticated is the default, and it must actually be enforced.
+def test_removed_auth_route_is_gone(client: Any) -> None:
+    """The built-in auth surface must be unreachable, not just unused.
 
-    A smoke test that logged in first would miss the single most important
-    property of the assembled app: that an anonymous caller gets nothing.
+    Auth now lives behind an external provider (Firebase); with the local router
+    deleted, `/auth/me` is an ordinary unmatched path and must return the ULTRON
+    error envelope rather than a login prompt or a stray route.
     """
     response = client.get("/auth/me")
-    assert response.status_code == 401
+    assert response.status_code == 404
     body = response.json()
     assert body["error"]["code"]
     assert "token" not in response.text.lower(), "no credential may appear in an error"
 
 
-def test_malformed_authorization_header_is_rejected(client: Any) -> None:
-    """A non-empty but unparseable header must not be treated as anonymous."""
-    response = client.get("/auth/me", headers={"Authorization": "Token abc"})
-    assert response.status_code == 401
+def test_event_stream_is_reachable_without_a_token(client: Any) -> None:
+    """With built-in auth removed, the stream no longer refuses anonymous callers.
 
-
-def test_event_stream_refuses_an_anonymous_caller(client: Any) -> None:
-    """The stream is mounted on the real app and guarded there.
-
-    Carried from T024 as the stream-connect check. The happy path itself
-    cannot travel over ``TestClient`` -- the stream never ends and its
-    transport buffers to completion -- but the refusal is finite, and a
-    stream that answered an anonymous caller would leak every event on the
-    system. The full-stack happy path is covered by the T023 route tests.
+    A live ``GET /events`` cannot be made here: ``TestClient``'s transport runs
+    the ASGI app to completion and returns only the buffered response, so a
+    success would block forever against a stream that never ends. Reachability
+    is therefore asserted from the contract instead -- the path is advertised,
+    and the stream's principal dependency is the static one that never raises a
+    401. The streaming behaviour itself is covered by the T023 route tests, which
+    drive the route function directly rather than through ``TestClient``.
     """
-    response = client.get("/events")
-    assert response.status_code == 401
-    assert "error" in response.json()
+    assert "/events" in _schema_paths(client)
+
+    from app.api.dependencies import require_principal
+
+    principal = require_principal(None)  # type: ignore[arg-type]
+    assert principal.is_superuser
 
 
 # --------------------------------------------------------------------------- #

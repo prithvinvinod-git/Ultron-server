@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Maximize2, Minimize2, X } from "lucide-react";
+import { Maximize2, Minimize2, AudioLines, X } from "lucide-react";
 
 import { ApiError, streamChat, voiceApi } from "@/lib/api";
 import { broadcastUnauthorized } from "@/lib/auth";
@@ -29,9 +29,11 @@ export interface ChatPanelProps {
   onClose: () => void;
   /** A prompt pushed in from the console (submitted from the command bar). */
   seed?: { id: number; prompt: string } | null;
+  /** Open hands-free live voice mode (the "chat read" trigger). */
+  onStartLive?: () => void;
 }
 
-export function ChatPanel({ open, onClose, seed }: ChatPanelProps) {
+export function ChatPanel({ open, onClose, seed, onStartLive }: ChatPanelProps) {
   const queryClient = useQueryClient();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -264,6 +266,16 @@ export function ChatPanel({ open, onClose, seed }: ChatPanelProps) {
             )}
           </div>
           <div className="chat-panel-actions">
+            {onStartLive ? (
+              <button
+                type="button"
+                onClick={onStartLive}
+                aria-label="Live voice mode"
+                title="Live voice mode"
+              >
+                <AudioLines size={15} />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setMaximized((v) => !v)}

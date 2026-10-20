@@ -41,7 +41,7 @@ from app.core.errors import InvalidInputError
 from app.events.bus import EventBus
 from app.observability import get_request_id
 from app.security import tokens
-from app.security.audit import ACTOR_ANONYMOUS, AuditLogger
+from app.security.audit import ACTOR_USER, AuditLogger
 from app.security.authentication import Authenticator, Principal
 
 if TYPE_CHECKING:
@@ -86,6 +86,13 @@ CORRELATION_HEADERS: tuple[str, ...] = ("X-Request-ID", "X-Correlation-ID")
 #: response header, so it is length-limited. An unbounded header value is free to
 #: put a megabyte into every log line belonging to one request.
 MAX_CORRELATION_LENGTH: int = 128
+
+#: The single principal every request is attributed to now that built-in
+#: authentication is removed. It is a fixed, well-known administrator identity,
+#: not a secret: it exists so audit rows and ``actor_id`` fields stay populated
+#: until an external verifier (Firebase) supplies a real principal here.
+STATIC_PRINCIPAL_ID: uuid.UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+STATIC_PRINCIPAL_USERNAME: str = "admin prithvin"
 
 
 class ContainerProtocol(Protocol):
@@ -382,50 +389,40 @@ def bearer_credential(request: Request) -> str:
     return tokens.extract_bearer(request.headers.get("authorization"))
 
 
-async def require_principal(
-    request: Request,
-    authenticator: Annotated[Authenticator, Depends(get_authenticator)],
-) -> Principal:
-    """Resolve the caller, or reject the request.
+def require_principal(request: Request) -> Principal:
+    """Return the caller's principal.
 
-    Raises:
-        AuthError: no usable credential, or a session token for a route that
-            accepts only interactive callers.
-        InvalidCredentialsError: a wrong API key or device token.
+    Built-in authentication has been removed: every request is attributed to a
+    single static administrator and no credential is inspected. This is the
+    deliberate interim state while authentication moves to an external provider
+    (Firebase) — the function keeps its name, signature and ``Auth`` alias so the
+    routes that require a principal (and the ``actor_id`` they audit against) do
+    not change, and the swap to a real verifier later happens here and nowhere
+    else.
+
+    ``request`` is kept as a parameter so callers can continue to depend on this
+    the same way, and so a future implementation has the request in hand.
     """
-    if allows_anonymous(request):
-        return Principal(
-            actor_type=ACTOR_ANONYMOUS,
-            user_id=None,
-            username=None,
-            is_superuser=False,
-        )
-
-    credential = bearer_credential(request)
-    address = client_ip(request)
-
-    if credential.startswith(tokens.API_KEY_PREFIX):
-        return await authenticator.authenticate_api_key(credential, ip_address=address)
-    if credential.startswith(tokens.DEVICE_TOKEN_PREFIX):
-        return await authenticator.authenticate_device(credential, ip_address=address)
-    return await authenticator.authenticate_token(credential, ip_address=address)
+    del request  # unused until a real verifier is wired in
+    return Principal(
+        actor_type=ACTOR_USER,
+        user_id=STATIC_PRINCIPAL_ID,
+        username=STATIC_PRINCIPAL_USERNAME,
+        is_superuser=True,
+    )
 
 
 def require_superuser(
     principal: Annotated[Principal, Depends(require_principal)],
-    authenticator: Annotated[Authenticator, Depends(get_authenticator)],
 ) -> Principal:
-    """Return the principal, or reject unless it is an administrator.
+    """Return the principal.
 
-    Kept separate from :func:`require_principal` on purpose: chaining two
-    dependencies makes "this route is admin-only" visible in the signature, where
-    a reviewer will look, instead of buried in a call in the body.
-
-    The decision is delegated to the authenticator rather than restated here.
-    Two copies of an authorization rule drift, and the copy that is tested is
-    the one that actually guards the route.
+    With built-in authentication removed every caller is the static
+    administrator, so this is now the same result as :func:`require_principal`.
+    It is kept separate so "this route is admin-only" stays visible in the
+    signature — the distinction becomes real again when an external verifier
+    replaces the static principal.
     """
-    authenticator.require_superuser(principal)
     return principal
 
 

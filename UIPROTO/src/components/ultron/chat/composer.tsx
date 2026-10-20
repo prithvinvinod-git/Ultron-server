@@ -56,7 +56,7 @@ export function Composer({
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
+    el.style.height = "44px";
   }, [value]);
 
   /* Slash commands — typing "/" offers the agent's tools. */

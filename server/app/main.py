@@ -186,7 +186,6 @@ def _include_routers(app: FastAPI) -> None:
     """
     from app.api.routes import (
         agents,
-        auth,
         chat,
         devices,
         events,
@@ -199,7 +198,10 @@ def _include_routers(app: FastAPI) -> None:
         voice,
     )
 
-    app.include_router(auth.router)
+    # The built-in `/auth` router was removed: authentication moves to an
+    # external provider (Firebase), so no login/refresh/logout/password surface
+    # is mounted. Requests are attributed to the static principal in
+    # `app.api.dependencies.require_principal` until that verifier is wired in.
     app.include_router(health.router)
     app.include_router(events.router)
     app.include_router(agents.router)

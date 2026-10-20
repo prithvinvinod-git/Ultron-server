@@ -21,8 +21,6 @@
  * audio is always resampled to the rate the server actually named.
  */
 
-import { getToken } from "./api";
-
 export type VoiceState =
   | "idle"
   | "connecting"
@@ -64,9 +62,7 @@ registerProcessor("ultron-capture", UltronCapture);
 
 function wsUrl(): string {
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const token = getToken();
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${scheme}//${window.location.host}/voice/ws${query}`;
+  return `${scheme}//${window.location.host}/voice/ws`;
 }
 
 /** Resample mono float samples to 16-bit little-endian PCM at ``outputRate``. */

@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Bot, Cpu, LogOut, Wifi, User } from "lucide-react";
+import { Bot, Cpu, Wifi } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useEventStream } from "@/lib/events";
 import { useAgents, useHealth, useTasks } from "@/lib/queries";
 import { TABS, useWorkspace } from "@/lib/workspace";
 import { SelectionInspector } from "@/components/ultron/shell/inspector";
-import { ChangePasswordDialog } from "@/components/ultron/shell/change-password";
 
 const ACTIVE_AGENT_STATUSES = new Set(["created", "initializing", "ready", "running", "waiting", "verifying"]);
 const OPEN_TASK_STATUSES = new Set(["pending", "queued", "running", "blocked", "paused"]);
@@ -24,7 +23,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const agents = useAgents();
   const tasks = useTasks();
   const principal = { username: "admin prithvin" };
-  const logout = () => {};
   const [clock, setClock] = useState("--:--:--");
 
   useEffect(() => {
@@ -51,10 +49,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           {online ? "SYSTEM OPERATIONAL" : readiness ? "SYSTEM DEGRADED" : "SYSTEM STANDBY"}
           <span> / </span>
           {principal?.username ?? "SESSION"} · {clock}
-          <ChangePasswordDialog />
-          <Button variant="ghost" size="icon" title="Sign out" aria-label="Sign out" onClick={() => void logout()}>
-            <LogOut />
-          </Button>
         </div>
       </section>
 

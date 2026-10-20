@@ -6,37 +6,13 @@
  * `vite dev` the API prefixes are proxied to 127.0.0.1:8000 (see vite.config.ts),
  * so the same relative paths work in both environments.
  *
- * The bearer token lives in localStorage and is attached to every call. `/events`
- * and `/chat/stream` cannot use `EventSource` (it sends no Authorization header
- * and §30 keeps tokens out of URLs), so both are read through `fetch` +
- * ReadableStream and a hand-written SSE frame parser.
+ * Built-in authentication has been removed (auth moves to an external provider,
+ * Firebase), so no credential is attached to any request: the server attributes
+ * every call to its static principal. `/events` and `/chat/stream` are still read
+ * through `fetch` + ReadableStream and a hand-written SSE frame parser rather
+ * than `EventSource`, because that parser also carries `Last-Event-ID` and the
+ * frames are richer than `EventSource`'s model.
  */
-
-export const TOKEN_KEY = "ultron.token";
-
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(token: string | null): void {
-  if (typeof window === "undefined") return;
-  if (token) window.localStorage.setItem(TOKEN_KEY, token);
-  else window.localStorage.removeItem(TOKEN_KEY);
-}
-
-export const REFRESH_KEY = "ultron.refresh";
-
-export function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(REFRESH_KEY);
-}
-
-export function setRefreshToken(token: string | null): void {
-  if (typeof window === "undefined") return;
-  if (token) window.localStorage.setItem(REFRESH_KEY, token);
-  else window.localStorage.removeItem(REFRESH_KEY);
-}
 
 export class ApiError extends Error {
   constructor(
@@ -47,11 +23,6 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
-}
-
-function authHeaders(): Record<string, string> {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function parseBody(res: Response): Promise<unknown> {
@@ -78,56 +49,12 @@ function errorFrom(res: Response, body: unknown): ApiError {
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  for (const [key, value] of Object.entries(authHeaders())) headers.set(key, value);
 
   const res = await fetch(path, { ...init, headers });
-
-  // An expired access token gets exactly one silent refresh-and-retry. The
-  // credential endpoints are excluded: a 401 from `/auth/login` is a wrong
-  // password, and `/auth/refresh` is the refresh call itself.
-  if (res.status === 401 && !isCredentialPath(path)) {
-    if (await refreshAccessToken()) return request<T>(path, init);
-  }
 
   const body = await parseBody(res);
   if (!res.ok) throw errorFrom(res, body);
   return body as T;
-}
-
-function isCredentialPath(path: string): boolean {
-  return path.startsWith("/auth/login") || path.startsWith("/auth/refresh");
-}
-
-let refreshInFlight: Promise<boolean> | null = null;
-
-/**
- * Rotate the refresh token for a fresh access token, coalescing concurrent
- * callers into one request. Resolves `false` when there is nothing to refresh
- * or the server refused; the caller then surfaces the original 401.
- */
-export async function refreshAccessToken(): Promise<boolean> {
-  if (refreshInFlight) return refreshInFlight;
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return false;
-  refreshInFlight = (async () => {
-    try {
-      const res = await fetch("/auth/refresh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      });
-      if (!res.ok) return false;
-      const tokens = (await res.json()) as TokenResponse;
-      setToken(tokens.access_token);
-      setRefreshToken(tokens.refresh_token);
-      return true;
-    } catch {
-      return false;
-    } finally {
-      refreshInFlight = null;
-    }
-  })();
-  return refreshInFlight;
 }
 
 export const api = {
@@ -143,21 +70,6 @@ export const api = {
 };
 
 // --- Domain types (mirroring the server's pydantic response models) ----------
-
-export interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  expires_at: string;
-  refresh_expires_at: string | null;
-  session_id: string;
-}
-
-export interface Principal {
-  actor_type: string;
-  username: string | null;
-  is_superuser: boolean;
-}
 
 export type AgentStatus =
   | "created"
@@ -360,33 +272,6 @@ export interface ChatResponse {
   took_ms: number;
 }
 
-export function login(username: string, password: string): Promise<TokenResponse> {
-  return api.post<TokenResponse>("/auth/login", { username, password });
-}
-
-export function whoami(): Promise<Principal> {
-  return api.get<Principal>("/auth/me");
-}
-
-export function logout(): Promise<void> {
-  return request<void>("/auth/logout", { method: "POST" });
-}
-
-/** Auth surface beyond the login/me/logout helpers above (T502/T503). */
-export const authApi = {
-  login,
-  me: whoami,
-  logout,
-  /** Rotate a refresh token for a fresh pair; the old token is invalidated. */
-  refresh: (refreshToken: string) => api.post<TokenResponse>("/auth/refresh", { refresh_token: refreshToken }),
-  /** Change the password after proving the current one; 204 on success. */
-  changePassword: (currentPassword: string, newPassword: string) =>
-    request<void>("/auth/password", {
-      method: "POST",
-      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-    }),
-};
-
 // --- SSE (Server-Sent Events) ------------------------------------------------
 
 export interface SseFrame {
@@ -457,7 +342,6 @@ export async function streamChat(
   system?: string,
 ): Promise<void> {
   const headers = new Headers({ "Content-Type": "application/json", Accept: "text/event-stream" });
-  for (const [key, value] of Object.entries(authHeaders())) headers.set(key, value);
 
   const init: RequestInit = {
     method: "POST",
@@ -608,8 +492,7 @@ export const healthApi = {
    * body is the report, not an error, so a 503 is returned rather than thrown.
    */
   readiness: async (): Promise<HealthReport> => {
-    const headers = new Headers(authHeaders());
-    const res = await fetch("/ready", { headers });
+    const res = await fetch("/ready");
     const body = await parseBody(res);
     if (res.status === 503 && body && typeof body === "object") return body as HealthReport;
     if (!res.ok) throw errorFrom(res, body);

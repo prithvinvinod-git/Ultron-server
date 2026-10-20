@@ -5,15 +5,14 @@
  * multiply the server's fan-out and make reconnect storms during an outage far
  * worse. The store implements what `EventSource` would have given us for free --
  * frame parsing, automatic reconnect, and `Last-Event-ID` resumption -- because
- * `/events` authenticates with an `Authorization` header, which `EventSource`
- * cannot send (spec §19/§30).
+ * the frames carry richer state than `EventSource`'s model and the stream needs
+ * the `Last-Event-ID` header the store manages itself.
  */
 
 import { useSyncExternalStore } from "react";
 
-import { ApiError, getToken, readSse } from "./api";
+import { ApiError, readSse } from "./api";
 import type { EventEnvelope, StreamConnectionInfo } from "./api";
-import { broadcastUnauthorized } from "./auth";
 
 export type ConnectionState = "idle" | "connecting" | "open" | "closed";
 
@@ -63,24 +62,14 @@ function pushEvent(event: EventEnvelope): void {
 }
 
 async function connect(): Promise<void> {
-  if (!getToken()) {
-    update({ state: "idle" });
-    return;
-  }
   controller = new AbortController();
   update({ state: "connecting", error: null });
 
   const headers = new Headers({ Accept: "text/event-stream" });
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (lastEventId !== null) headers.set("Last-Event-ID", String(lastEventId));
 
   try {
     const res = await fetch("/events", { headers, signal: controller.signal });
-    if (res.status === 401) {
-      broadcastUnauthorized();
-      return;
-    }
     if (!res.ok || !res.body) throw new ApiError(res.status, `event stream refused (${res.status})`);
 
     update({ state: "open" });

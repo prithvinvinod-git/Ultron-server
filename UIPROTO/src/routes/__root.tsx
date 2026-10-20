@@ -15,7 +15,6 @@ import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { OfflineBanner } from "../components/ultron/offline-banner";
 import { PWARegister } from "../components/ultron/pwa";
-import { LoginScreen } from "../components/ultron/login";
 import { WorkspaceProvider } from "../lib/workspace";
 
 function NotFoundComponent() {
@@ -124,7 +123,8 @@ function RootShell({ children }: { children: ReactNode }) {
 }
 
 function AuthGate() {
-  // Bypass auth - go directly to main page
+  // Built-in authentication has been removed — the console renders directly.
+  // The gate returns here once an external provider (Firebase) is wired in.
   return <Outlet />;
 }
 
