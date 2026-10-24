@@ -22,10 +22,12 @@ from app.tools.browser import BrowserSessionManager, build_browser_tools
 from app.tools.computer import build_computer_tools
 from app.tools.filesystem import FilesystemSandbox, build_filesystem_tools
 from app.tools.git import build_git_tools
+from app.tools.memory import build_memory_tools
 from app.tools.python import build_python_tools
 from app.tools.registry import ToolRegistry
 from app.tools.system import build_system_tools
 from app.tools.terminal import build_terminal_tools
+from app.tools.util import build_util_tools
 from app.tools.web import DuckDuckGoProvider, build_web_tools
 from app.workspaces.manager import GitRunner
 
@@ -57,6 +59,8 @@ def iter_default_tools(
         *build_python_tools(settings.python_tool, sandbox),
         *build_web_tools(settings.web, search_provider=search_provider),
         *build_system_tools(settings.ollama),
+        *build_memory_tools(),
+        *build_util_tools(),
     ]
     if browser is not None and browser.enabled:
         tools.extend(

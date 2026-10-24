@@ -2,7 +2,8 @@
 
 Provider-independent: :class:`~app.voice.tts.base.TTSEngine` is the seam, and the
 adapters are two cloud engines
-(:class:`~app.voice.tts.elevenlabs.ElevenLabsTTS`) and local ones
+(:class:`~app.voice.tts.elevenlabs.ElevenLabsTTS`,
+:class:`~app.voice.tts.fish_audio.FishAudioTTS`) and local ones
 (:class:`~app.voice.tts.piper.PiperTTS`,
 :class:`~app.voice.tts.edge_tts.EdgeTTSTTS`). :func:`create_tts_engine` turns
 :class:`~app.config.VoiceSettings` into an engine -- a primary, or a primary
@@ -25,15 +26,18 @@ from app.voice.tts.availability import (
 from app.voice.tts.base import NullTTSEngine, TTSEngine
 from app.voice.tts.edge_tts import EdgeTTSTTS
 from app.voice.tts.elevenlabs import ElevenLabsTTS
+from app.voice.tts.fish_audio import FishAudioTTS
 from app.voice.tts.piper import PiperTTS
 from app.voice.tts.segments import split_sentences
 
 __all__ = [
     "EdgeTTSTTS",
     "ElevenLabsTTS",
+    "FishAudioTTS",
     "NullTTSEngine",
     "PiperTTS",
     "TTSEngine",
+    "build_tts_engine",
     "create_tts_engine",
     "edge_tts_available",
     "edge_tts_unavailable_reason",
@@ -45,17 +49,29 @@ __all__ = [
 _LOGGER = get_logger(__name__)
 
 
-def _build_tts_engine(settings: VoiceSettings, name: str) -> TTSEngine:
-    """Build one concrete TTS engine by name (``none``/unknown -> null)."""
+def build_tts_engine(settings: VoiceSettings, name: str) -> TTSEngine:
+    """Build one concrete TTS engine by name (``none``/unknown -> null).
+
+    Unlike :func:`create_tts_engine` this never consults ``VOICE_ENABLED`` and
+    never chains a fallback: it is the *named* engine the user asked for, so the
+    voice session can honour a per-request provider choice (§25.1). An unknown
+    name yields the honest null engine rather than a guess.
+    """
     if name == "piper":
         return PiperTTS(settings)
     if name == "elevenlabs":
         return ElevenLabsTTS(settings)
     if name == "edge-tts":
         return EdgeTTSTTS(settings)
+    if name == "fish-audio":
+        return FishAudioTTS(settings)
     if name == "none":
         return NullTTSEngine(reason="no TTS engine is configured")
     return NullTTSEngine(reason=f"unknown TTS engine '{name}'")
+
+
+#: Internal alias kept for the module's own call sites.
+_build_tts_engine = build_tts_engine
 
 
 def create_tts_engine(settings: VoiceSettings) -> TTSEngine:
@@ -83,7 +99,7 @@ def create_tts_engine(settings: VoiceSettings) -> TTSEngine:
         )
         return NullTTSEngine(reason="no TTS engine is configured")
 
-    primary = _build_tts_engine(settings, settings.tts_engine)
+    primary = build_tts_engine(settings, settings.tts_engine)
     fallback_name = settings.tts_fallback_engine
     if fallback_name in ("none", settings.tts_engine):
         engine = primary
@@ -92,7 +108,7 @@ def create_tts_engine(settings: VoiceSettings) -> TTSEngine:
         # module-level import would cycle through the sibling ``stt`` package.
         from app.voice.fallback import FallbackTTSEngine
 
-        engine = FallbackTTSEngine(primary, _build_tts_engine(settings, fallback_name))
+        engine = FallbackTTSEngine(primary, build_tts_engine(settings, fallback_name))
 
     if not engine.available:
         _LOGGER.warning(

@@ -237,6 +237,10 @@ class ProviderSettings(BaseModel):
     anthropic_base_url: str = "https://api.anthropic.com"
     anthropic_timeout: int = Field(default=60, ge=1)
 
+    openrouter_api_key: SecretStr = SecretStr("")
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_timeout: int = Field(default=60, ge=1)
+
     @property
     def openai_configured(self) -> bool:
         return bool(self.openai_api_key.get_secret_value().strip())
@@ -248,6 +252,10 @@ class ProviderSettings(BaseModel):
     @property
     def anthropic_configured(self) -> bool:
         return bool(self.anthropic_api_key.get_secret_value().strip())
+
+    @property
+    def openrouter_configured(self) -> bool:
+        return bool(self.openrouter_api_key.get_secret_value().strip())
 
 
 class ModelRouterSettings(BaseModel):
@@ -502,8 +510,8 @@ class VoiceSettings(BaseModel):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_stt_model: str = "whisper-large-v3-turbo"
 
-    tts_engine: Literal["none", "piper", "elevenlabs", "edge-tts"] = "none"
-    tts_fallback_engine: Literal["none", "piper", "elevenlabs", "edge-tts"] = "none"
+    tts_engine: Literal["none", "piper", "elevenlabs", "edge-tts", "fish-audio"] = "none"
+    tts_fallback_engine: Literal["none", "piper", "elevenlabs", "edge-tts", "fish-audio"] = "none"
     tts_model_path: str = ""
     tts_binary_path: str = "piper"
     tts_sample_rate: int = Field(default=22050, ge=8000)
@@ -516,6 +524,22 @@ class VoiceSettings(BaseModel):
     #: any other value (``mp3_*``) yields a compressed container.
     elevenlabs_output_format: str = "pcm_22050"
     edge_tts_voice: str = "en-US-AriaNeural"
+    fish_audio_api_key: SecretStr = SecretStr("")
+    fish_audio_base_url: str = "https://api.fish.audio"
+    fish_audio_voice_id: str = ""
+    #: Optional Fish Audio model id. Empty means "let Fish Audio choose", which
+    #: is what a personal account usually wants: a name the account does not
+    #: have would fail a request that would otherwise work.
+    fish_audio_model: str = ""
+    fish_audio_output_format: str = "mp3"
+    #: Default delivery cues for Fish Audio, as a comma-separated list
+    #: (``calm``, ``excited``, ``angry``, ...). They are rendered as inline
+    #: markers in front of the text, which is how Fish Audio reads a tone.
+    fish_audio_tags: str = ""
+    #: How a cue is written: ``bracket`` is the S2 syntax (``[calm]``), which is
+    #: what Fish Audio's current models expect; ``paren`` is the legacy S1
+    #: syntax (``(calm)``). The API does not convert between the two.
+    fish_audio_tag_style: Literal["bracket", "paren"] = "bracket"
 
     interruption_enabled: bool = True
     session_ttl: int = Field(default=300, ge=10)
@@ -697,6 +721,11 @@ class Settings(BaseSettings):
         "https://api.anthropic.com"
     )
     anthropic_timeout: Annotated[int, Field(alias="ANTHROPIC_TIMEOUT")] = 60
+    openrouter_api_key: Annotated[SecretStr, Field(alias="OPENROUTER_API_KEY")] = SecretStr("")
+    openrouter_base_url: Annotated[str, Field(alias="OPENROUTER_BASE_URL")] = (
+        "https://openrouter.ai/api/v1"
+    )
+    openrouter_timeout: Annotated[int, Field(alias="OPENROUTER_TIMEOUT")] = 60
 
     model_default: Annotated[str, Field(alias="MODEL_DEFAULT")] = "ollama:qwen2.5:7b-instruct"
     model_coding: Annotated[str, Field(alias="MODEL_CODING")] = ""
@@ -844,10 +873,11 @@ class Settings(BaseSettings):
     )
     groq_stt_model: Annotated[str, Field(alias="GROQ_STT_MODEL")] = "whisper-large-v3-turbo"
     tts_engine: Annotated[
-        Literal["none", "piper", "elevenlabs", "edge-tts"], Field(alias="TTS_ENGINE")
+        Literal["none", "piper", "elevenlabs", "edge-tts", "fish-audio"], Field(alias="TTS_ENGINE")
     ] = "none"
     tts_fallback_engine: Annotated[
-        Literal["none", "piper", "elevenlabs", "edge-tts"], Field(alias="TTS_FALLBACK_ENGINE")
+        Literal["none", "piper", "elevenlabs", "edge-tts", "fish-audio"],
+        Field(alias="TTS_FALLBACK_ENGINE"),
     ] = "none"
     tts_model_path: Annotated[str, Field(alias="TTS_MODEL_PATH")] = ""
     tts_binary_path: Annotated[str, Field(alias="TTS_BINARY_PATH")] = "piper"
@@ -865,6 +895,15 @@ class Settings(BaseSettings):
         "pcm_22050"
     )
     edge_tts_voice: Annotated[str, Field(alias="EDGE_TTS_VOICE")] = "en-US-AriaNeural"
+    fish_audio_api_key: Annotated[SecretStr, Field(alias="FISH_AUDIO_API_KEY")] = SecretStr("")
+    fish_audio_base_url: Annotated[str, Field(alias="FISH_AUDIO_BASE_URL")] = "https://api.fish.audio"
+    fish_audio_voice_id: Annotated[str, Field(alias="FISH_AUDIO_VOICE_ID")] = ""
+    fish_audio_model: Annotated[str, Field(alias="FISH_AUDIO_MODEL")] = ""
+    fish_audio_output_format: Annotated[str, Field(alias="FISH_AUDIO_OUTPUT_FORMAT")] = "mp3"
+    fish_audio_tags: Annotated[str, Field(alias="FISH_AUDIO_TAGS")] = ""
+    fish_audio_tag_style: Annotated[
+        Literal["bracket", "paren"], Field(alias="FISH_AUDIO_TAG_STYLE")
+    ] = "bracket"
     voice_interruption_enabled: Annotated[bool, Field(alias="VOICE_INTERRUPTION_ENABLED")] = True
     voice_session_ttl: Annotated[int, Field(alias="VOICE_SESSION_TTL")] = 300
     wake_words: Annotated[str, Field(alias="WAKE_WORDS")] = "ultron,hey ultron"
@@ -1057,6 +1096,7 @@ class Settings(BaseSettings):
             "openai": providers.openai_configured,
             "gemini": providers.gemini_configured,
             "anthropic": providers.anthropic_configured,
+            "openrouter": providers.openrouter_configured,
         }
         if provider in credentialed and not credentialed[provider]:
             warnings.append(
@@ -1159,6 +1199,9 @@ class Settings(BaseSettings):
             anthropic_api_key=self.anthropic_api_key,
             anthropic_base_url=self.anthropic_base_url,
             anthropic_timeout=self.anthropic_timeout,
+            openrouter_api_key=self.openrouter_api_key,
+            openrouter_base_url=self.openrouter_base_url,
+            openrouter_timeout=self.openrouter_timeout,
         )
 
     @property
@@ -1343,6 +1386,13 @@ class Settings(BaseSettings):
             elevenlabs_model=self.elevenlabs_model,
             elevenlabs_output_format=self.elevenlabs_output_format,
             edge_tts_voice=self.edge_tts_voice,
+            fish_audio_api_key=self.fish_audio_api_key,
+            fish_audio_base_url=self.fish_audio_base_url,
+            fish_audio_voice_id=self.fish_audio_voice_id,
+            fish_audio_model=self.fish_audio_model,
+            fish_audio_output_format=self.fish_audio_output_format,
+            fish_audio_tags=self.fish_audio_tags,
+            fish_audio_tag_style=self.fish_audio_tag_style,
             interruption_enabled=self.voice_interruption_enabled,
             session_ttl=self.voice_session_ttl,
             wake_words=self.wake_words,

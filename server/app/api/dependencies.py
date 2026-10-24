@@ -52,11 +52,14 @@ if TYPE_CHECKING:
     from app.container import Container as _RealContainer
     from app.database.repositories import (
         AuditLogRepository,
+        ConversationRepository,
         DeviceRepository,
+        MessageRepository,
         SessionRepository,
         UserRepository,
     )
     from app.devices.manager import DeviceManager
+    from app.memory.manager import MemoryManager
     from app.models.router import ModelRouter
     from app.notifications.service import NotificationService
     from app.observability.health import HealthService
@@ -117,6 +120,34 @@ class ContainerProtocol(Protocol):
     def get_device_repository(self, session: AsyncSession) -> DeviceRepository: ...
 
     def get_audit_log_repository(self, session: AsyncSession) -> AuditLogRepository: ...
+
+    def get_conversation_repository(
+        self, session: AsyncSession
+    ) -> ConversationRepository:
+        """The conversation repository (T015), bound to this request's session.
+
+        Read by the ``/conversations`` routes and the chat turn persistence, so
+        the transcript surface reaches no global and a test can substitute a
+        repository over an in-memory session.
+        """
+        ...
+
+    def get_message_repository(self, session: AsyncSession) -> MessageRepository:
+        """The message repository (T015), bound to this request's session.
+
+        Read alongside the conversation repository: a conversation is a header
+        and its messages are the transcript, and the two are separate repos.
+        """
+        ...
+
+    def get_memory_manager(self, session: AsyncSession) -> MemoryManager:
+        """The memory facade (T126), bound to this request's session.
+
+        Read by the chat routes to bind the per-session memory manager into the
+        execution context, so ``memory.*`` tools reach the same unit of work the
+        turn is already using.
+        """
+        ...
 
     def get_task_manager(self, session: AsyncSession) -> TaskManager:
         """The task manager (T039), bound to this request's session.

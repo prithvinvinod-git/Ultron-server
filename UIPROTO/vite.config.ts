@@ -17,40 +17,41 @@ const BACKEND = "http://127.0.0.1:8000";
 
 // Every root-mounted ULTRON router / probe the UI talks to.
 const API_PREFIXES = [
-  "/auth",
-  "/chat",
-  "/events",
-  "/health",
-  "/ready",
-  "/metrics",
-  "/agents",
-  "/tasks",
-  "/tools",
-  "/nodes",
-  "/devices",
-  "/voice",
-  "/schedules",
-  "/notifications",
+    "/auth",
+    "/chat",
+    "/events",
+    "/health",
+    "/ready",
+    "/metrics",
+    "/agents",
+    "/tasks",
+    "/tools",
+    "/nodes",
+    "/devices",
+    "/voice",
+    "/schedules",
+    "/notifications",
+    "/conversations",
 ];
 
 export default defineConfig({
-  tanstackStart: {
-    // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
-    // nitro/vite builds from this
-    server: { entry: "server" },
-    // Client-only SPA: one HTML shell serves every path, no per-route SSR.
-    spa: { enabled: true },
-  },
-  // SPA mode has no server entry, so skip Nitro entirely and keep the static client build.
-  nitro: false,
-  vite: {
-    server: {
-      proxy: Object.fromEntries(
-        API_PREFIXES.map((prefix) => [
-          prefix,
-          { target: BACKEND, changeOrigin: true, ws: prefix === "/nodes" },
-        ]),
-      ),
+    tanstackStart: {
+        // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
+        // nitro/vite builds from this
+        server: { entry: "server" },
+        // Client-only SPA: one HTML shell serves every path, no per-route SSR.
+        spa: { enabled: true },
     },
-  },
+    // SPA mode has no server entry, so skip Nitro entirely and keep the static client build.
+    nitro: false,
+    vite: {
+        server: {
+            proxy: Object.fromEntries(
+                API_PREFIXES.map((prefix) => [
+                    prefix,
+                    { target: BACKEND, changeOrigin: true, ws: prefix === "/nodes" },
+                ]),
+            ),
+        },
+    },
 });

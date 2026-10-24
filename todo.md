@@ -1081,3 +1081,83 @@ re-run the auth-failure path; otherwise record it as a standing deviation.
 written from source, not from a running system. The API surface, health statuses
 and failure modes they describe are unit-test-backed but have never been observed
 on a live socket (B1/H). Re-read them against the server once it is deployed.
+
+---
+
+## L. Self-managing stack + online copy (opened 2026-10-21)
+
+Author directive: Docker must **not** run idle (VS Code + opencode already use
+~2 GB RAM). Docker should run **only while the app is in use**, and the packaged
+`ultron.exe` (Electron) must **start every service on launch — zero manual
+tasks**. Also: reconsider Firebase as an *online copy* of the database for when
+local PostgreSQL cannot run.
+
+### L1. Stop the stray backend before shipping any of this
+
+The dev uvicorn on port 8000 (pids resolved via `Get-CimInstance`) is running
+against a now-stopped Docker. `Stop-ScheduledTask` alone does **not** reap the
+child — kill the actual `python.exe` pid holding the port (the harness detaches
+scheduled-task children). Do this first so nothing is left throwing
+`WinError 1225` (connection refused) against a down Postgres/Redis.
+
+### L2. Electron supervises the whole stack (packaged app = zero manual steps)
+
+In `clients/electron` main process, add a **stack supervisor** on
+`app.whenReady()` that gates the UI window:
+
+1. Detect whether the Docker engine is up (named pipe / `docker info`); if not,
+   launch Docker Desktop and wait for the engine.
+2. Ensure containers `ultron-postgres` (5432) and `ultron-redis` (6380) are
+   running; **start only the missing ones** (idempotent — never double-start).
+3. Spawn the backend (`uvicorn app.main:app`) as a child with the right env
+   (`REDIS_URL=redis://127.0.0.1:6380/0`, root `.env`).
+4. Poll `GET /ready` until it reports `postgresql+redis` reachable, with a
+   timeout and a **visible splash/loading state** instead of an erroring window.
+5. Only then load the main window.
+
+On `before-quit` / `window-all-closed`: kill the backend child; stop the
+containers the supervisor started. **Do not quit Docker Desktop if the user had
+it running before launch** — track what *we* started and only undo that. Every
+step toggleable via env (`ULTRON_SUPERVISE_STACK=1/0`) and clearly logged.
+
+### L3. Dev vs packaged behaviour
+
+- **Dev (`npm run`)**: supervisor optional; defaults to *reusing* already-running
+  services (dev machine keeps Docker run-on-demand, not warm).
+- **Packaged**: supervisor always on; the UI never shows `WinError`/connection
+  errors — it waits on `/ready`.
+- Document both (Electron README / existing docs).
+
+### L4. Firebase as an ONLINE COPY — per-entity, Postgres authoritative
+
+Decision recorded: **do not mirror all tables.** Firestore has no relational
+joins/transactions and an automatic catch-all sync will drift. Replicate
+**per entity, opt-in**, with PostgreSQL as `source_of_truth`:
+
+- **Replicate (document-shaped, low-conflict)**: users/profiles, conversations/
+  chat history, agent/task metadata, settings, device registry.
+- **Local-only for now**: `model_usage`, vector/memory, anything transactional.
+- Direction: **Postgres → Firestore** (one writer). Conflict policy: Postgres wins.
+- Flags: `FIREBASE_MIRROR_ENABLED=false` (default), `FIREBASE_PROJECT_ID`, and an
+  explicit `source_of_truth` marker in code.
+- Write a short design note in `docs/` listing entities, direction, and conflict
+  policy. **No automatic catch-all sync.**
+
+Rationale for the author: Firestore-as-SQL-mirror = no; Firestore-as-online-copy-
+of-selected-document-data = yes. If the real goal is "app works in the cloud when
+the local box is off", a **hosted Postgres** (Neon/Supabase/Cloud SQL) with
+Firestore only for auth is the cleaner path — mirrors die, a single remote DB
+does not. (Supersedes F's `SKIP` for *this* narrowed scope only; the blanket
+mirror stays rejected, §60.3.)
+
+### L5. Verification owed for this pass
+
+- New `server/tests/unit/test_openrouter.py` is written but **not yet run**
+  (needs Docker up for the rest of the suite, or run it alone).
+- ruff + mypy on `app/models/openrouter.py`, `app/config/settings.py`,
+  `app/container.py` — mypy/ruff-check clean; the `ruff format --check` deviation
+  in `settings.py` is **pre-existing** (confirmed by stashing), not introduced.
+- Live proof already captured: `POST /chat/stream` streamed real tokens from
+  `gemini-3.6-flash` (default); router fell back to
+  `openrouter:nvidia/nemotron-3.5-lightning:free` when Gemini was excluded.
+- Still owed: update `tasks.md`/`todo.md` counts and commit (only if asked).

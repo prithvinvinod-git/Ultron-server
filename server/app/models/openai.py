@@ -43,6 +43,7 @@ import httpx
 from app.config import ProviderSettings, get_settings
 from app.core.errors import (
     LocalModelUnavailableError,
+    ModelContextOverflowError,
     ModelError,
     ModelNotSupportedError,
     ModelRateLimitedError,
@@ -175,6 +176,7 @@ class OpenAIProvider(ModelProvider):
                 model=model,
                 details={"status": status_code},
             )
+        # Check for context overflow in the response body (will be checked in _json)
         raise ModelError(
             _PROVIDER,
             f"OpenAI request failed (HTTP {status_code})",
@@ -193,6 +195,20 @@ class OpenAIProvider(ModelProvider):
             raise ModelResponseInvalidError(
                 _PROVIDER, "OpenAI returned a non-object JSON value", model=model
             )
+        # Check for context overflow errors in the response body
+        error = data.get("error")
+        if isinstance(error, dict):
+            error_message = error.get("message", "")
+            error_code = error.get("code", "")
+            if (
+                "context_length_exceeded" in error_code.lower()
+                or "maximum context length" in error_message.lower()
+                or "context window" in error_message.lower()
+                or "exceeds the maximum" in error_message.lower()
+            ):
+                raise ModelContextOverflowError(
+                    _PROVIDER, model, details={"error_code": error_code, "message": error_message}
+                )
         return data
 
     def _payload(self, request: CompletionRequest, *, stream: bool) -> dict[str, Any]:
@@ -337,7 +353,12 @@ class OpenAIProvider(ModelProvider):
     # Streaming assembly
     # ---------------------------------------------------------------------- #
     def _stream_chunks(
-        self, event: dict[str, Any], accumulator: _ToolCallAccumulator, requested_model: str
+        self,
+        event: dict[str, Any],
+        accumulator: _ToolCallAccumulator,
+        requested_model: str,
+        *,
+        flushed: list[bool],
     ) -> list[ModelStreamChunk]:
         resolved = event.get("model")
         model = resolved if isinstance(resolved, str) and resolved else requested_model
@@ -354,7 +375,13 @@ class OpenAIProvider(ModelProvider):
         if isinstance(fragments, list):
             accumulator.add(fragments)
         finish = choice.get("finish_reason")
-        if finish is not None:
+        # Emit the assembled tool calls and the terminal chunk at most once. Some
+        # gateways (OpenRouter in front of MiniMax, notably) repeat the finish
+        # event; flushing on each one re-emits the *same* tool calls with the same
+        # ids, which then land twice in the transcript and make the next request
+        # fail with "duplicate tool_call id" — the very error we are closing off.
+        if finish is not None and not flushed[0]:
+            flushed[0] = True
             for call in accumulator.result():
                 chunks.append(ModelStreamChunk(tool_call=call, model=model))
             chunks.append(
@@ -398,6 +425,7 @@ class OpenAIProvider(ModelProvider):
         model = _normalize_model(request.model)
         self._require_configured(model)
         accumulator = _ToolCallAccumulator()
+        flushed = [False]
         try:
             async with self._http().stream(
                 "POST",
@@ -415,11 +443,31 @@ class OpenAIProvider(ModelProvider):
                         continue
                     error = event.get("error")
                     if error:
+                        error_message = error.get("message", "") if isinstance(error, dict) else str(error)
+                        error_code = error.get("code", "") if isinstance(error, dict) else ""
+                        if (
+                            "context_length_exceeded" in error_code.lower()
+                            or "maximum context length" in error_message.lower()
+                            or "context window" in error_message.lower()
+                            or "exceeds the maximum" in error_message.lower()
+                        ):
+                            raise ModelContextOverflowError(
+                                _PROVIDER, model, details={"error_code": error_code, "message": error_message}
+                            )
                         raise ModelResponseInvalidError(
                             _PROVIDER, f"OpenAI reported an error mid-stream: {error}", model=model
                         )
-                    for chunk in self._stream_chunks(event, accumulator, model):
+                    for chunk in self._stream_chunks(
+                        event, accumulator, model, flushed=flushed
+                    ):
                         yield chunk
+            # A provider that never sets `finish_reason` (or ends the stream before
+            # it does) still gets its assembled tool calls and a terminal chunk, so
+            # the loop never sees a tool turn with no completion.
+            if not flushed[0]:
+                for call in accumulator.result():
+                    yield ModelStreamChunk(tool_call=call, model=model)
+                yield ModelStreamChunk(finish_reason=FinishReason.STOP, model=model)
         except httpx.TimeoutException as exc:
             raise ModelTimeoutError(
                 _PROVIDER,

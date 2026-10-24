@@ -80,6 +80,10 @@ _CORE_TOOLS = frozenset(
         "system.services",
         "system.ollama",
         "system.docker",
+        "memory.store",
+        "memory.recall",
+        "util.time",
+        "util.calculate",
     }
 )
 

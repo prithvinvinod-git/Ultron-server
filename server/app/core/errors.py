@@ -616,6 +616,22 @@ class ModelNotSupportedError(ModelError):
     http_status = 400
 
 
+class ModelContextOverflowError(ModelError):
+    """The request exceeded the model's context window.
+
+    Not retryable: the same request will hit the same limit on any attempt.
+    The caller should truncate or split the input before retrying.
+    """
+
+    code = ErrorCode.MODEL_UNSUPPORTED
+    retryable = False
+    http_status = 400
+
+    def __init__(self, provider: str, model: str, *, details: Mapping[str, Any] | None = None, cause: BaseException | None = None):
+        merged = {"provider": provider, "model": model, **(details or {})}
+        super().__init__("context length exceeded", details=merged, cause=cause)
+
+
 # ---------------------------------------------------------------------------
 # Tools, tasks, agents
 # ---------------------------------------------------------------------------

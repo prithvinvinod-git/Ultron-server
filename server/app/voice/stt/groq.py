@@ -39,7 +39,7 @@ from app.config import VoiceSettings
 from app.core.errors import DependencyUnavailableError, OperationTimeoutError
 from app.observability import get_logger
 from app.voice.stt.base import AudioChunk, STTEngine, TranscriptChunk
-from app.voice.stt.utterance import UtteranceBoundary
+from app.voice.stt.utterance import UtteranceBoundary, incremental_suffix
 
 __all__ = ["GroqWhisperSTT"]
 
@@ -159,7 +159,7 @@ class GroqWhisperSTT(STTEngine):
                 continue
             text = await self._recognise(bytes(buffer), lang)
             last_full = text
-            delta = _incremental(emitted, text)
+            delta = incremental_suffix(emitted, text)
             if delta:
                 emitted += delta
                 yield TranscriptChunk(

@@ -172,11 +172,29 @@ async def test_one_shot_transcribe_returns_final_text() -> None:
     assert text == "hello there"
 
 
+async def test_transport_frames_are_buffered_not_transcribed_individually() -> None:
+    # Regression: the microphone sounded deaf because each 20 ms transport frame
+    # was handed to Whisper on its own, which transcribes to nothing. The engine
+    # must accumulate the utterance and transcribe it as one clip.
+    model = FakeModel(["hello there"])
+    engine = FasterWhisperSTT(_settings(), model_factory=lambda: model)
+    frames = [_speech(b"\x00\x01" * 320) for _ in range(10)]  # 20 ms each @ 16 kHz
+    chunks = [*frames, AudioChunk(data=b"", is_speech=False, end_of_utterance=True)]
+    out = [c async for c in engine.transcribe_stream(_aiter(chunks))]
+
+    finals = [c for c in out if c.is_final]
+    assert [f.text for f in finals] == ["hello there"]
+    assert len(model.calls) == 1  # one clip, not ten frames
+    assert len(model.calls[0][0]) == 6400  # every byte of the utterance
+
+
 async def test_pause_does_not_retranscribe_the_utterance() -> None:
     # §59.17's defect: a mid-sentence pause must produce ONE utterance with no
     # duplicated text, not two overlapping ones.
-    model = FakeModel([" play some", " play some music"])
-    engine = FasterWhisperSTT(_settings(), model_factory=lambda: model, silence_chunks=3)
+    model = FakeModel(["play some", "play some music"])
+    engine = FasterWhisperSTT(
+        _settings(), model_factory=lambda: model, silence_chunks=3, partial_interval_seconds=0.0001
+    )
     chunks = [
         _speech(b"pcm1"),
         _speech(b"pcm2"),
@@ -188,15 +206,26 @@ async def test_pause_does_not_retranscribe_the_utterance() -> None:
 
     partials = [c for c in out if not c.is_final]
     finals = [c for c in out if c.is_final]
-    # The adapter strips each chunk, so the first partial has no leading space.
-    assert [p.text for p in partials] == ["play some", " music"]
+    # Partials are deltas of the growing buffer, so the transcript reads once.
+    assert [p.text for p in partials] == ["play some", "music"]
     assert len(finals) == 1
-    assert finals[0].text.strip() == "play some music"
+    assert finals[0].text == "play some music"
     assert finals[0].utterance_id == 0
+    # The final reuses the last partial instead of paying for the same audio twice.
+    assert len(model.calls) == 2
+
+
+async def test_partials_only_start_after_enough_audio() -> None:
+    model = FakeModel(["a whole sentence"])
+    engine = FasterWhisperSTT(_settings(), model_factory=lambda: model)
+    frames = [_speech(b"\x00\x01" * 320) for _ in range(10)]  # 0.2 s total
+    out = [c async for c in engine.transcribe_stream(_aiter(frames))]
+    assert [c for c in out if not c.is_final] == []
+    assert [c.text for c in out if c.is_final] == ["a whole sentence"]
 
 
 async def test_faster_whisper_end_of_utterance_closes_immediately() -> None:
-    model = FakeModel(["hello ", "world"])
+    model = FakeModel(["hello world"])
     engine = FasterWhisperSTT(_settings(), model_factory=lambda: model, silence_chunks=99)
     chunks = [
         _speech(b"pcm1"),
@@ -205,13 +234,12 @@ async def test_faster_whisper_end_of_utterance_closes_immediately() -> None:
     ]
     out = [c async for c in engine.transcribe_stream(_aiter(chunks))]
     finals = [c for c in out if c.is_final]
-    # The adapter strips each chunk, so "hello " + "world" joins without a space.
-    assert [f.text for f in finals] == ["helloworld"]
+    assert [f.text for f in finals] == ["hello world"]
     assert finals[0].utterance_id == 0
 
 
 async def test_two_utterances_get_distinct_ids() -> None:
-    model = FakeModel(["first phrase", " second phrase"])
+    model = FakeModel(["first phrase", "second phrase"])
     engine = FasterWhisperSTT(_settings(), model_factory=lambda: model, silence_chunks=3)
     chunks = [
         _speech(b"pcm1"),

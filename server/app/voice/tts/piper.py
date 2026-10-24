@@ -73,8 +73,18 @@ class PiperTTS(TTSEngine):
         return piper_unavailable_reason(self.settings.tts_binary_path)
 
     # -- synthesis -------------------------------------------------------- #
-    async def synthesize(self, text: str, *, voice: str | None = None) -> bytes:
-        """Synthesise one sentence and return raw PCM audio."""
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> bytes:
+        """Synthesise one sentence and return raw PCM audio.
+
+        ``tags`` are ignored: Piper has no inline emotion markers, so a cue it
+        cannot express is dropped rather than turned into a failure.
+        """
         self._require_available()
         if not text.strip():
             return b""

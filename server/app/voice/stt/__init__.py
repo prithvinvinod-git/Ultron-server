@@ -33,6 +33,7 @@ __all__ = [
     "STTEngine",
     "TranscriptChunk",
     "UtteranceBoundary",
+    "build_stt_engine",
     "create_stt_engine",
     "faster_whisper_available",
     "faster_whisper_unavailable_reason",
@@ -41,8 +42,14 @@ __all__ = [
 _LOGGER = get_logger(__name__)
 
 
-def _build_stt_engine(settings: VoiceSettings, name: str) -> STTEngine:
-    """Build one concrete STT engine by name (``none``/unknown -> null)."""
+def build_stt_engine(settings: VoiceSettings, name: str) -> STTEngine:
+    """Build one concrete STT engine by name (``none``/unknown -> null).
+
+    Unlike :func:`create_stt_engine` this never consults ``VOICE_ENABLED`` and
+    never chains a fallback: it is the *named* engine the user asked for, so a
+    voice session can honour a per-request transcription choice (§25.1). An
+    unknown name yields the honest null engine rather than a guess.
+    """
     if name == "faster-whisper":
         return FasterWhisperSTT(settings)
     if name == "groq":
@@ -50,6 +57,10 @@ def _build_stt_engine(settings: VoiceSettings, name: str) -> STTEngine:
     if name == "none":
         return NullSTTEngine(reason="no STT engine is configured")
     return NullSTTEngine(reason=f"unknown STT engine '{name}'")
+
+
+#: Internal alias kept for the module's own call sites.
+_build_stt_engine = build_stt_engine
 
 
 def create_stt_engine(settings: VoiceSettings) -> STTEngine:
@@ -77,7 +88,7 @@ def create_stt_engine(settings: VoiceSettings) -> STTEngine:
         )
         return NullSTTEngine(reason="no STT engine is configured")
 
-    primary = _build_stt_engine(settings, settings.stt_engine)
+    primary = build_stt_engine(settings, settings.stt_engine)
     fallback_name = settings.stt_fallback_engine
     if fallback_name in ("none", settings.stt_engine):
         engine = primary
@@ -86,7 +97,7 @@ def create_stt_engine(settings: VoiceSettings) -> STTEngine:
         # module-level import would cycle through the sibling ``tts`` package.
         from app.voice.fallback import FallbackSTTEngine
 
-        engine = FallbackSTTEngine(primary, _build_stt_engine(settings, fallback_name))
+        engine = FallbackSTTEngine(primary, build_stt_engine(settings, fallback_name))
 
     if not engine.available:
         _LOGGER.warning(

@@ -16,7 +16,7 @@ event bus, the socket plumbing -- is real.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -86,12 +86,30 @@ class ToneTTS(TTSEngine):
     sample_rate = 22050
     content_type = "audio/L16"
 
-    async def synthesize(self, text: str, *, voice: str | None = None) -> bytes:
+    def __init__(self) -> None:
+        self.tags_seen: list[tuple[str, ...]] = []
+        self.voices_seen: list[str | None] = []
+
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> bytes:
+        self.tags_seen.append(tuple(tags or ()))
+        self.voices_seen.append(voice)
         return b"\x01\x02\x03\x04"
 
     async def synthesize_stream(
-        self, text: str, *, voice: str | None = None
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
     ) -> AsyncIterator[bytes]:
+        self.tags_seen.append(tuple(tags or ()))
+        self.voices_seen.append(voice)
         yield b"\x01\x02"
         yield b"\x03\x04"
 
@@ -109,11 +127,18 @@ def _settings(**over: Any) -> VoiceSettings:
 class _StubContainer:
     """The container slice the voice routes reach for."""
 
-    def __init__(self, manager: VoiceManager, bus: EventBus, *, allow_anonymous: bool) -> None:
+    def __init__(
+        self,
+        manager: VoiceManager,
+        bus: EventBus,
+        *,
+        allow_anonymous: bool,
+        voice_settings: VoiceSettings | None = None,
+    ) -> None:
         self._manager = manager
         self._bus = bus
         self.settings = SimpleNamespace(
-            voice=SimpleNamespace(enabled=True),
+            voice=voice_settings or VoiceSettings(enabled=True),
             security=SimpleNamespace(allow_anonymous=allow_anonymous),
         )
 
@@ -149,6 +174,45 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
         StreamingSTT(), ToneTTS(), responder=_respond, bus=bus, settings=_settings()
     )
     container = _StubContainer(manager, bus, allow_anonymous=True)
+    app = _build_app(container)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        yield client
+
+
+class NamedTTS(ToneTTS):
+    """A TTS engine that reports the provider name it stands for."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.name = name
+
+
+@pytest.fixture
+def selectable_api(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """An API whose deployment runs Fish Audio and can build other providers."""
+    monkeypatch.setenv("ALLOWED_HOSTS", "testserver")
+    monkeypatch.setenv("METRICS_ENABLED", "false")
+    reload_settings()
+    bus = EventBus()
+    voice_settings = _settings(
+        tts_engine="fish-audio",
+        tts_fallback_engine="edge-tts",
+        stt_engine="faster-whisper",
+        stt_fallback_engine="groq",
+        fish_audio_api_key="sk-fish-test",
+        fish_audio_voice_id="ref-cloned-1",
+    )
+    manager = VoiceManager(
+        StreamingSTT(),
+        NamedTTS("fish-audio"),
+        responder=_respond,
+        bus=bus,
+        settings=voice_settings,
+        tts_factory=lambda name: NamedTTS(name),
+    )
+    container = _StubContainer(
+        manager, bus, allow_anonymous=True, voice_settings=voice_settings
+    )
     app = _build_app(container)
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
@@ -282,3 +346,185 @@ def test_ws_utterance_end_closes_the_turn(monkeypatch: pytest.MonkeyPatch) -> No
     assert final["text"] == "hello"
     answer = next(p for p in json_frames if p["type"] == "answer")
     assert answer["text"] == "you said hello"
+
+
+# --------------------------------------------------------------------------- #
+# Provider selection (§25.1): the client picks a provider the deployment does
+# not run as its default, and the server honours the pick.
+# --------------------------------------------------------------------------- #
+def test_options_lists_every_provider_with_its_availability(
+    selectable_api: TestClient,
+) -> None:
+    response = selectable_api.get("/voice/options")
+    assert response.status_code == 200
+    body = response.json()
+
+    engines = [provider["engine"] for provider in body["tts"]]
+    # The configured provider comes first, then the rest are still offered.
+    assert engines[0] == "fish-audio"
+    assert set(engines) >= {"fish-audio", "edge-tts", "elevenlabs", "piper"}
+
+    fish = next(p for p in body["tts"] if p["engine"] == "fish-audio")
+    assert fish["available"] is True
+    # The cloned voice is offered as that provider's voice, so it can be picked
+    # without retyping its id.
+    assert fish["default_voice"] == "ref-cloned-1"
+    assert [voice["id"] for voice in fish["voices"]] == ["ref-cloned-1"]
+
+    stt_engines = [provider["engine"] for provider in body["stt"]]
+    assert stt_engines[0] == "faster-whisper"
+    assert set(stt_engines) >= {"faster-whisper", "groq", "browser"}
+    browser = next(p for p in body["stt"] if p["engine"] == "browser")
+    assert browser["available"] is True
+
+
+def test_options_reports_a_provider_that_cannot_run(selectable_api: TestClient) -> None:
+    body = selectable_api.get("/voice/options").json()
+
+    eleven = next(p for p in body["tts"] if p["engine"] == "elevenlabs")
+    assert eleven["available"] is False
+    assert "ELEVENLABS_API_KEY" in (eleven["reason"] or "")
+
+    groq = next(p for p in body["stt"] if p["engine"] == "groq")
+    assert groq["available"] is False
+    assert groq["reason"]
+
+
+def test_tts_route_honours_the_named_provider(selectable_api: TestClient) -> None:
+    response = selectable_api.post("/voice/tts", json={"text": "hello", "engine": "edge-tts"})
+    assert response.status_code == 200
+    assert response.headers["X-TTS-Engine"].startswith("edge-tts")
+    assert response.content == b"\x01\x02\x03\x04"
+
+
+def test_tts_route_reports_a_provider_that_cannot_run(selectable_api: TestClient) -> None:
+    response = selectable_api.post("/voice/tts", json={"text": "hello", "engine": "elevenlabs"})
+    assert response.status_code == 503
+
+
+def test_ws_config_frame_switches_the_session_provider(
+    selectable_api: TestClient,
+) -> None:
+    """A ``config`` frame names the providers the client wants for this session."""
+    with selectable_api.websocket_connect("/voice/ws") as ws:
+        session = ws.receive_json()
+        assert session["type"] == "session"
+        assert session["tts"]["engine"] == "fish-audio"
+
+        ws.send_text(
+            json.dumps(
+                {"type": "config", "tts": {"engine": "edge-tts", "voice": "ref-cloned-1"}}
+            )
+        )
+        # The session is reported back, so the client picks up the new engine's
+        # rate and media type before its next turn.
+        frame = next(
+            payload
+            for kind, payload in _collect_until(ws, "session", limit=10)
+            if kind == "json" and payload.get("type") == "session"
+        )
+
+    assert frame["tts"]["engine"] == "edge-tts"
+    # The deployment's own engine stays behind it as the degraded path.
+    assert frame["tts"]["fallback"] == "fish-audio"
+
+
+def test_ws_text_turn_can_name_a_provider(selectable_api: TestClient) -> None:
+    """A browser-STT turn may name the provider to speak with."""
+    with selectable_api.websocket_connect("/voice/ws") as ws:
+        ws.receive_json()
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "text",
+                    "text": "hello there",
+                    "tts": {"engine": "edge-tts", "voice": "ref-cloned-1"},
+                }
+            )
+        )
+        frames = _collect_until(ws, "tts_completed")
+
+    json_frames = [payload for kind, payload in frames if kind == "json"]
+    answer = next(p for p in json_frames if p["type"] == "answer")
+    assert answer["text"] == "you said hello there"
+
+
+# --------------------------------------------------------------------------- #
+# Delivery cues: emotion tags travel with the request, not with the deployment.
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def recording_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[TestClient, ToneTTS]]:
+    """An API whose TTS engine records the cues and voices it was handed."""
+    monkeypatch.setenv("ALLOWED_HOSTS", "testserver")
+    monkeypatch.setenv("METRICS_ENABLED", "false")
+    reload_settings()
+    bus = EventBus()
+    tts = ToneTTS()
+    manager = VoiceManager(
+        StreamingSTT(), tts, responder=_respond, bus=bus, settings=_settings()
+    )
+    container = _StubContainer(manager, bus, allow_anonymous=True)
+    app = _build_app(container)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        yield client, tts
+
+
+def test_tts_route_passes_the_delivery_cues(
+    recording_api: tuple[TestClient, ToneTTS],
+) -> None:
+    client, tts = recording_api
+    response = client.post(
+        "/voice/tts", json={"text": "hello", "tags": ["calm", "friendly"]}
+    )
+
+    assert response.status_code == 200
+    assert tts.tags_seen[-1] == ("calm", "friendly")
+
+
+def test_tts_route_accepts_a_comma_separated_cue_string(
+    recording_api: tuple[TestClient, ToneTTS],
+) -> None:
+    client, tts = recording_api
+    client.post("/voice/tts", json={"text": "hello", "tags": "calm, excited"})
+
+    assert tts.tags_seen[-1] == ("calm", "excited")
+
+
+def test_ws_config_frame_records_the_delivery_cues(
+    recording_api: tuple[TestClient, ToneTTS],
+) -> None:
+    client, tts = recording_api
+    with client.websocket_connect("/voice/ws") as ws:
+        ws.receive_json()
+        ws.send_text(json.dumps({"type": "config", "tts": {"tags": ["calm"]}}))
+        frame = next(
+            payload
+            for kind, payload in _collect_until(ws, "session", limit=10)
+            if kind == "json" and payload.get("type") == "session"
+        )
+
+        # The cues are persisted for the session: a turn that names none still
+        # speaks with them.
+        ws.send_text(json.dumps({"type": "text", "text": "hello"}))
+        _collect_until(ws, "tts_completed")
+
+    assert frame["tts"]["tags"] == ["calm"]
+    assert tts.tags_seen[-1] == ("calm",)
+
+
+def test_ws_text_turn_can_name_the_delivery_cues(
+    recording_api: tuple[TestClient, ToneTTS],
+) -> None:
+    client, tts = recording_api
+    with client.websocket_connect("/voice/ws") as ws:
+        ws.receive_json()
+        ws.send_text(
+            json.dumps(
+                {"type": "text", "text": "hello", "tts": {"tags": ["angry"]}}
+            )
+        )
+        _collect_until(ws, "tts_completed")
+
+    assert tts.tags_seen[-1] == ("angry",)

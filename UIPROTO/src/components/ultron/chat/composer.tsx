@@ -21,7 +21,9 @@ export interface ComposerProps {
   value: string;
   onValueChange: (value: string) => void;
   onSend: (text: string) => void;
-  disabled?: boolean;
+  /** True while a response is streaming: input stays typeable, send becomes Stop. */
+  busy?: boolean;
+  onStop?: () => void;
   listening?: boolean;
   voiceEnabled?: boolean;
   onBeginVoice?: () => void;
@@ -33,7 +35,8 @@ export function Composer({
   value,
   onValueChange,
   onSend,
-  disabled = false,
+  busy = false,
+  onStop,
   listening = false,
   voiceEnabled = true,
   onBeginVoice,
@@ -103,7 +106,7 @@ export function Composer({
   const hasContent = value.trim() !== "";
 
   const submit = () => {
-    if (disabled || listening) return;
+    if (listening) return;
     if (value.trim()) onSend(value.trim());
   };
 
@@ -142,7 +145,7 @@ export function Composer({
       className={cn(
         "chat-composer relative rounded-3xl border bg-card p-2 transition-all duration-300",
         listening ? "border-primary/70" : "border-border",
-        disabled ? "border-primary/70" : "",
+        busy ? "border-primary/70" : "",
       )}
     >
       {listening ? (
@@ -190,8 +193,7 @@ export function Composer({
         onKeyDown={onKeyDown}
         rows={1}
         placeholder={placeholder}
-        disabled={disabled}
-        className="chat-composer-input min-h-[44px] w-full resize-none rounded-md bg-transparent px-3 py-2.5 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed"
+        className="chat-composer-input min-h-[44px] w-full resize-none rounded-md bg-transparent px-3 py-2.5 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-none"
       />
 
       <div className="flex items-center justify-between gap-2 pt-2">
@@ -211,22 +213,24 @@ export function Composer({
           <button
             type="button"
             onClick={() => {
-              if (listening) onEndVoice?.();
+              if (busy) onStop?.();
+              else if (listening) onEndVoice?.();
               else if (hasContent) submit();
               else onBeginVoice?.();
             }}
-            disabled={disabled && !hasContent}
-            aria-label={disabled ? "Stop generation" : listening ? "Stop recording" : hasContent ? "Send" : "Voice"}
+            aria-label={busy ? "Stop generation" : listening ? "Stop recording" : hasContent ? "Send" : "Voice"}
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 disabled:pointer-events-none disabled:opacity-50",
-              listening
-                ? "bg-transparent text-rose-500 hover:bg-secondary"
-                : hasContent
-                  ? "bg-primary text-primary-foreground hover:opacity-90"
-                  : "bg-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+              busy
+                ? "bg-primary/15 text-primary hover:bg-primary/25"
+                : listening
+                  ? "bg-transparent text-rose-500 hover:bg-secondary"
+                  : hasContent
+                    ? "bg-primary text-primary-foreground hover:opacity-90"
+                    : "bg-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
             )}
           >
-            {disabled ? (
+            {busy ? (
               <Square className="h-4 w-4 animate-pulse" />
             ) : hasContent ? (
               <ArrowUp className="h-4 w-4" />

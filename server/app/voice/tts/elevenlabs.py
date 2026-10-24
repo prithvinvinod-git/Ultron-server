@@ -27,7 +27,7 @@ unit-testable with no network and no key.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 import httpx
 
@@ -80,8 +80,19 @@ class ElevenLabsTTS(TTSEngine):
         )
 
     # -- synthesis -------------------------------------------------------- #
-    async def synthesize(self, text: str, *, voice: str | None = None) -> bytes:
-        """Synthesise one sentence and return audio (see :attr:`content_type`)."""
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> bytes:
+        """Synthesise one sentence and return audio (see :attr:`content_type`).
+
+        ``tags`` are ignored: ElevenLabs expresses character through the voice
+        and its own settings, not through inline markers, so a cue it cannot
+        render is dropped rather than turned into a failure.
+        """
         self._require_available()
         if not text.strip():
             return b""

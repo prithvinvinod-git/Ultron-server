@@ -27,14 +27,15 @@ unit-testable with no package installed and no network.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from app.config import VoiceSettings
-from app.core.errors import DependencyUnavailableError, UltronError
+from app.core.errors import DependencyUnavailableError
 from app.observability import get_logger
 from app.voice.tts.availability import edge_tts_available, edge_tts_unavailable_reason
 from app.voice.tts.base import TTSEngine
+from app.voice.tts.voices import EDGE_DEFAULT_VOICE, normalize_edge_voice
 
 __all__ = ["EdgeTTSTTS"]
 
@@ -72,35 +73,63 @@ class EdgeTTSTTS(TTSEngine):
         return edge_tts_unavailable_reason()
 
     # -- synthesis -------------------------------------------------------- #
-    async def synthesize(self, text: str, *, voice: str | None = None) -> bytes:
-        """Synthesise one sentence and return MP3 audio."""
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> bytes:
+        """Synthesise one sentence and return MP3 audio.
+
+        The voice is normalised first, so an unknown id can never reach the
+        endpoint and fail with its opaque "no audio was received". If synthesis
+        still yields nothing for a non-default voice, one retry with the default
+        voice keeps ULTRON audible instead of silent on a bad pick.
+
+        ``tags`` are ignored: Edge has no inline emotion markers. The voice
+        itself carries the character, so a cue that Edge cannot express is
+        dropped rather than turned into a failure.
+        """
         self._require_available()
         if not text.strip():
             return b""
+        selected = normalize_edge_voice(voice or self.settings.edge_tts_voice)
         synth = self._synthesizer or self._synthesize_package
-        audio = await synth(text, voice)
+        audio = await synth(text, selected)
+        if not audio and selected != EDGE_DEFAULT_VOICE:
+            _LOGGER.warning("edge-tts produced no audio for %r; retrying default", selected)
+            audio = await synth(text, EDGE_DEFAULT_VOICE)
         if not audio:
-            raise UltronError("edge-tts produced no audio")
+            raise DependencyUnavailableError(
+                "tts", reason="edge-tts returned no audio"
+            )
         return audio
 
     async def _synthesize_package(self, text: str, voice: str | None) -> bytes:
         import edge_tts  # lazy: optional dependency
 
-        selected = voice or self.settings.edge_tts_voice
+        selected = normalize_edge_voice(voice or self.settings.edge_tts_voice)
         communicate = edge_tts.Communicate(text, selected)
         collected = bytearray()
         try:
             async for chunk in communicate.stream():
                 if _is_audio(chunk):
                     collected.extend(chunk["data"])
-        except Exception as exc:  # reboxed as a typed 503
+        except Exception as exc:
+            # edge-tts raises the opaque "No audio was received. Please verify
+            # that your parameters are correct." for a bad voice id or text it
+            # cannot voice. That is a *retry-with-default* signal, not a network
+            # outage, so it returns empty and the caller retries; anything else
+            # is a real failure reboxed as a typed 503.
+            if "no audio was received" in str(exc).lower():
+                _LOGGER.warning("edge-tts rejected voice %r: %s", selected, exc)
+                return b""
             raise DependencyUnavailableError(
                 "tts", reason=f"edge-tts synthesis failed: {exc}", cause=exc
             ) from exc
         if not collected:
-            raise DependencyUnavailableError(
-                "tts", reason="edge-tts returned no audio"
-            )
+            return b""
         _LOGGER.debug("edge-tts synthesised %d bytes", len(collected))
         return bytes(collected)
 

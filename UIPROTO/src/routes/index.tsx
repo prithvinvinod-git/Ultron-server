@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Box, Code2, Layers, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { AgentsPanel } from '@/components/ultron/agents';
 import { CommandConsole } from '@/components/ultron/command-console';
 import { CoreDisplay, CoreMetrics } from '@/components/ultron/core-display';
@@ -10,10 +11,11 @@ import { AppShell } from '@/components/ultron/shell/app-shell';
 import { EventsPanel, HealthPanel, NetworkPanel, SessionPanel, TaskPanel, ToolsPanel } from '@/components/ultron/widgets';
 import { PanelGrid } from '@/components/ultron/shell/registry';
 import { SchedulesPanel } from '@/components/ultron/schedules';
+import { SettingsPanel } from '@/components/ultron/settings';
 import { useEventStream } from '@/lib/events';
 import { voiceApi } from '@/lib/api';
+import { getVoicePreferences } from '@/lib/voice-prefs';
 import { ChatPanel } from '@/components/ultron/chat/chat-panel';
-import { LiveMode } from '@/components/ultron/chat/live-mode';
 import { useLiveSession } from '@/components/ultron/chat/use-live-session';
 import { useAgents, useHealth, useLiveInvalidation, useTasks } from '@/lib/queries';
 import { useWorkspace } from '@/lib/workspace';
@@ -33,6 +35,14 @@ export const Route = createFileRoute('/')({
 
 const ACTIVE_AGENT_STATUSES = new Set(['created', 'initializing', 'ready', 'running', 'waiting', 'verifying']);
 const OPEN_TASK_STATUSES = new Set(['pending', 'queued', 'running', 'blocked', 'paused']);
+
+// Preset greetings played on voice mode entry
+const GREETINGS = [
+  'Hi sir, Ultron here.',
+  'Good morning sir, how is everything going?',
+  'Ultron online. How can I help you?',
+  'Welcome back. All systems nominal.',
+];
 
 function PlannedPanel({ title, task }: { title: string; task: string }) {
   return (
@@ -70,12 +80,25 @@ function Index() {
     if (live.active) { live.stop(); return; }
     setVoiceError(null);
     try {
-      const engines = await voiceApi.engines();
-      if (!engines.enabled || !engines.stt.available) {
-        setVoiceError(engines.stt.reason ?? (engines.enabled ? 'Speech-to-text is unavailable on the server.' : 'Voice is disabled on the server.'));
+      const prefs = getVoicePreferences();
+      if (!prefs.enabled) {
+        setVoiceError('Voice is turned off in Settings.');
         return;
       }
+      // The browser STT engine runs locally, so it does not need the server to
+      // have a speech engine configured.
+      if (prefs.stt !== 'browser') {
+        const engines = await voiceApi.engines();
+        if (!engines.enabled || !engines.stt.available) {
+          setVoiceError(engines.stt.reason ?? (engines.enabled ? 'Speech-to-text is unavailable on the server.' : 'Voice is disabled on the server.'));
+          return;
+        }
+      }
       await live.start();
+      // Speak a preset greeting directly through TTS so ULTRON greets instantly,
+      // without spending a model turn on "hello".
+      const greeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)] ?? GREETINGS[0]!;
+      void live.greet(greeting);
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : 'Could not start voice mode.');
     }
@@ -91,7 +114,7 @@ function Index() {
 
   const views: Record<TabId, ReactNode> = {
     command: <div className="workspace-grid"><aside className="widget-column" aria-label="Tasks and system access"><NetworkPanel /><TaskPanel /><AgentsPanel /></aside>
-      <section className="core-workspace" aria-label="Ultron orchestrator"><div className="core-headline">ORCHESTRATOR <span>/</span> <strong>CORE 01</strong> <span>/</span> {online ? 'ACTIVE' : 'STANDBY'}</div><CoreDisplay online={online} paused={paused} voice={voice} voiceState={voiceState} mode={mode} onToggleVoice={toggleVoice} /><CoreMetrics agentActive={activeAgents} agentTotal={agentList.length} taskOpen={openTasks} latencyMs={latencyMs} />
+      <section className={cn('core-workspace', live.active && 'has-voice')} aria-label="Ultron orchestrator"><div className="core-headline">ORCHESTRATOR <span>/</span> <strong>CORE 01</strong> <span>/</span> {online ? 'ACTIVE' : 'STANDBY'}</div><CoreDisplay online={online} paused={paused} voice={voice} voiceState={voiceState} mode={mode} onToggleVoice={toggleVoice} {...(live.active ? { voiceInline: { status: live.status, sttPartial: live.subtitle, captions: live.captions, level: live.level } } : {})} /><CoreMetrics agentActive={activeAgents} agentTotal={agentList.length} taskOpen={openTasks} latencyMs={latencyMs} />
         {voiceError && <div className="voice-hud-error core-voice-error" role="alert">{voiceError}</div>}
         <div className="mode-selector" aria-label="Core protocol">{[{name:'Focus',icon:Box},{name:'Code',icon:Code2},{name:'Creative',icon:Layers}].map(({name,icon:Icon}) => <Button key={name} variant="ghost" aria-pressed={mode === name} onClick={() => setMode(name)}><Icon />{name.toUpperCase()}</Button>)}</div><div className="core-footer-label"><ShieldCheck size={10} />PROTECTED BY ULTRON SENTINEL</div></section>
       <aside className="widget-column" aria-label="Session, capabilities and events"><SessionPanel /><ToolsPanel /><EventsPanel /><HealthPanel /></aside></div>,
@@ -101,9 +124,8 @@ function Index() {
     schedules: <div className="shell-panels"><SchedulesPanel /></div>,
     notifications: <div className="shell-panels"><PlannedPanel title="Notifications" task="T512" /></div>,
     system: <PanelGrid tab="system" />,
+    settings: <SettingsPanel />,
   };
 
-  return <AppShell>{views[tab]}<CommandConsole onChat={openChat} /><ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} onStartLive={() => { setChatOpen(false); void toggleVoice(); }} />
-    {voice && <div className="live-overlay"><LiveMode status={live.status} activity={live.activity} subtitle={live.subtitle} captions={live.captions} level={live.level} onStop={live.stop} /></div>}
-  </AppShell>;
+  return <AppShell>{views[tab]}{!live.active && <CommandConsole onChat={openChat} />}<ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} onStartLive={() => { setChatOpen(false); void toggleVoice(); }} /></AppShell>;
 }

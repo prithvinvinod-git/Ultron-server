@@ -280,6 +280,19 @@ class _StubContainer:
     def get_audit_log_repository(self, session: Any) -> Any:
         return self._audit
 
+    def get_memory_manager(self, session: Any) -> Any:
+        class _Memory:
+            async def recall(self, *args: Any, **kwargs: Any) -> list[Any]:
+                return []
+
+            async def build_context(self, *args: Any, **kwargs: Any) -> list[str]:
+                return []
+
+            async def remember(self, *args: Any, **kwargs: Any) -> Any:
+                raise AssertionError("memory.store is not used in this suite")
+
+        return _Memory()
+
 
 def _principal() -> Principal:
     return Principal(

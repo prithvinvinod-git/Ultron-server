@@ -445,6 +445,11 @@ class Container:
 
                 providers.append(AnthropicProvider(settings=self.settings.providers))
 
+            if self.settings.providers.openrouter_configured:
+                from app.models.openrouter import OpenRouterProvider
+
+                providers.append(OpenRouterProvider(settings=self.settings.providers))
+
             self._model_router = ModelRouter(
                 providers,
                 settings=router_settings,
@@ -477,8 +482,8 @@ class Container:
         if self._voice is None:
             from app.voice.manager import build_voice_manager
             from app.voice.responder import build_agent_responder
-            from app.voice.stt import create_stt_engine
-            from app.voice.tts import create_tts_engine
+            from app.voice.stt import build_stt_engine, create_stt_engine
+            from app.voice.tts import build_tts_engine, create_tts_engine
 
             settings = self.settings.voice
             stt = create_stt_engine(settings)
@@ -499,6 +504,10 @@ class Container:
                 stt=stt,
                 tts=tts,
                 responder=responder,
+                # A session may name the provider it wants, so the manager can
+                # build any engine ULTRON knows about on demand (§25.1).
+                stt_factory=lambda name: build_stt_engine(settings, name),
+                tts_factory=lambda name: build_tts_engine(settings, name),
             )
         return self._voice
 

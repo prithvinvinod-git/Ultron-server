@@ -25,7 +25,7 @@ on the first synthesis, where a missing binary or model can be reported.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 from app.core.errors import DependencyUnavailableError
 from app.observability import get_logger
@@ -67,20 +67,40 @@ class TTSEngine(ABC):
         return None
 
     @abstractmethod
-    async def synthesize(self, text: str, *, voice: str | None = None) -> bytes:
-        """Synthesise ``text`` and return the complete audio for it."""
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> bytes:
+        """Synthesise ``text`` and return the complete audio for it.
+
+        ``tags`` are delivery cues -- ``calm``, ``excited``, ``angry`` -- that a
+        provider understands as inline markers. An engine that has no notion of
+        them ignores the argument rather than failing: the caller asks for a
+        tone, and a provider without tones still speaks.
+        """
 
     async def synthesize_stream(
-        self, text: str, *, voice: str | None = None
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
     ) -> AsyncIterator[bytes]:
         """Yield audio one sentence at a time (§59.18, §59.19).
 
         Playback can start on the first yielded chunk, before the rest of the
         text is synthesised. Sentences that a streaming-aware adapter cannot
         merge are simply synthesised in order; an empty input yields nothing.
+
+        The delivery cues are handed to every sentence, because a provider that
+        reads them as a sentence-level marker (Fish Audio does) needs them at
+        the start of each sentence, not only at the start of the text.
         """
         for sentence in split_sentences(text):
-            yield await self.synthesize(sentence, voice=voice)
+            yield await self.synthesize(sentence, voice=voice, tags=tags)
 
     async def aclose(self) -> None:
         """Release any held process or connection. Safe to call more than once."""
@@ -108,5 +128,11 @@ class NullTTSEngine(TTSEngine):
     def unavailable_reason(self) -> str:
         return self._reason
 
-    async def synthesize(self, text: str, *, voice: str | None = None) -> bytes:
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> bytes:
         raise DependencyUnavailableError("tts", reason=self._reason)

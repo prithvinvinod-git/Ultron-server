@@ -1,10 +1,10 @@
 import { createContext, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Activity, Bell, Bot, CalendarClock, Grid2X2, ListChecks, Radio } from "lucide-react";
+import { Activity, Bell, Bot, CalendarClock, Grid2X2, ListChecks, Radio, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 /** Top-level workspace tabs rendered in the left rail. */
-export type TabId = "command" | "agents" | "tasks" | "fleet" | "schedules" | "notifications" | "system";
+export type TabId = "command" | "agents" | "tasks" | "fleet" | "schedules" | "notifications" | "system" | "settings";
 
 /** What the inspector sidebar can describe. */
 export type SelectionKind = "agent" | "task" | "tool" | "node" | "device" | "schedule";
@@ -28,6 +28,7 @@ export const TABS: TabDef[] = [
   { id: "schedules", label: "Schedules", icon: CalendarClock },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "system", label: "System", icon: Activity },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
 interface WorkspaceValue {

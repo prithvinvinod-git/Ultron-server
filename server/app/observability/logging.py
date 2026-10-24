@@ -84,6 +84,9 @@ _task_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _agent_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "ultron_agent_id", default=None
 )
+_memory_manager: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
+    "ultron_memory_manager", default=None
+)
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +112,11 @@ def get_task_id() -> str | None:
 def get_agent_id() -> str | None:
     """Return the current agent id, or None outside an agent."""
     return _agent_id.get()
+
+
+def get_memory_manager() -> Any | None:
+    """Return the current memory manager bound by the request, or None."""
+    return _memory_manager.get()
 
 
 def _context_value(field: str) -> str | None:
@@ -166,6 +174,20 @@ def agent_context(agent_id: str | None = None) -> Iterator[str]:
         yield value
     finally:
         _agent_id.reset(token)
+
+
+@contextmanager
+def memory_context(manager: Any | None) -> Iterator[Any | None]:
+    """Bind a memory manager for the duration of the block.
+
+    Used by request handlers to make the per-session :class:`MemoryManager`
+    available to memory tools without threading it through every call stack.
+    """
+    token = _memory_manager.set(manager)
+    try:
+        yield manager
+    finally:
+        _memory_manager.reset(token)
 
 
 @contextmanager

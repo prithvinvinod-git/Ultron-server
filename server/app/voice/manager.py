@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from time import monotonic
@@ -60,6 +60,61 @@ Responder = Callable[..., Any]  # (text, *, principal, session_id, history) -> s
 
 #: Receives each synthesized audio chunk as it is produced (streaming playback).
 AudioSink = Callable[[bytes], Any]
+
+#: How long after we stop speaking a transcript may still be treated as our own
+#: echo. Playback drains within a second or two, so anything later is the user.
+_ECHO_GRACE_SECONDS = 4.0
+
+
+def _append_partial(transcript: str, delta: str) -> str:
+    """Append a partial-transcript delta, keeping word boundaries readable.
+
+    Streaming engines emit only the *new* suffix of a growing transcript, and
+    that suffix is stripped, so consecutive deltas would otherwise read
+    ``"kitchenlights"``. A space is inserted only between two word characters,
+    which leaves CJK text and punctuation alone.
+    """
+    if not transcript:
+        return delta
+    if not delta:
+        return transcript
+    if transcript[-1].isalnum() and delta[0].isalnum():
+        return f"{transcript} {delta}"
+    return transcript + delta
+
+
+def _echo_words(text: str) -> list[str]:
+    """Comparable words: lowercased, letters/apostrophes only, length > 2."""
+    cleaned = "".join(char if (char.isalpha() or char == "'") else " " for char in text.lower())
+    return [word for word in cleaned.split() if len(word) > 2]
+
+
+def looks_like_echo(spoken: str, heard: str) -> bool:
+    """Whether ``heard`` is (probably) ULTRON hearing its own reply ``spoken``.
+
+    TTS plays through the speakers and bleeds back into the open microphone, so
+    speech-to-text can transcribe our own words as a new command and the session
+    answers itself forever. A transcript counts as an echo when it is contained
+    in what we said (either direction, catching partial re-hears) or when at
+    least half of its meaningful words already appeared in what we said. The
+    ratio is taken over the *transcript*, so a short genuine command never
+    overlaps a long spoken line enough to be swallowed.
+    """
+    spoken_clean = spoken.strip().lower()
+    heard_clean = heard.strip().lower()
+    if not spoken_clean or not heard_clean:
+        return False
+
+    heard_words = _echo_words(heard_clean)
+    if not heard_words:
+        return heard_clean in spoken_clean or spoken_clean in heard_clean
+
+    if heard_clean in spoken_clean or spoken_clean in heard_clean:
+        return True
+
+    spoken_words = set(_echo_words(spoken_clean))
+    overlap = sum(1 for word in heard_words if word in spoken_words)
+    return overlap / len(heard_words) >= 0.5
 
 
 class VoiceState(StrEnum):
@@ -111,6 +166,31 @@ class VoiceSession:
     transcript: str = ""
     history: list[VoiceTurn] = field(default_factory=list)
 
+    #: The text-to-speech engine the client picked for this session ("" = the
+    #: deployment default). The client offers the providers ULTRON can run and
+    #: the session names one, so switching provider is a per-session choice
+    #: rather than a restart (§25.1).
+    tts_engine: str = ""
+
+    #: The voice id the client picked (a provider voice name, or a Fish Audio
+    #: cloned-voice reference id). "" keeps the engine's configured default.
+    tts_voice: str = ""
+
+    #: The delivery cues the client picked for this session (``calm``,
+    #: ``excited``, ...). Only Fish Audio reads them; another provider ignores
+    #: them. Empty means the deployment's configured default.
+    tts_tags: tuple[str, ...] = ()
+
+    #: The speech-to-text engine the client picked ("" = the deployment
+    #: default). "browser" never reaches the server: the browser recognizes
+    #: locally and sends text.
+    stt_engine: str = ""
+
+    #: The assistant's most recent spoken line and when it finished being spoken,
+    #: used to recognise the microphone picking up our own voice (echo guard).
+    last_assistant_spoken: str = ""
+    spoken_at: float = 0.0
+
     #: The in-flight pipeline task, so a barge-in can cancel it (§59.19).
     task: asyncio.Task[Any] | None = None
 
@@ -133,6 +213,8 @@ class VoiceManager:
         responder: Responder | None = None,
         bus: EventBus | None = None,
         settings: VoiceSettings | None = None,
+        stt_factory: Callable[[str], STTEngine] | None = None,
+        tts_factory: Callable[[str], TTSEngine] | None = None,
     ) -> None:
         self.stt = stt
         self.tts = tts
@@ -141,6 +223,12 @@ class VoiceManager:
         self.settings = settings or VoiceSettings()
         self._sessions: dict[str, VoiceSession] = {}
         self._pending: set[asyncio.Task[Any]] = set()
+        #: Builds a *named* engine on demand, so a session can pick a provider
+        # the deployment did not configure as its default (§25.1).
+        self._stt_factory = stt_factory
+        self._tts_factory = tts_factory
+        self._stt_cache: dict[str, STTEngine] = {}
+        self._tts_cache: dict[str, TTSEngine] = {}
 
     # -- session lifecycle ------------------------------------------------ #
     def create_session(
@@ -190,6 +278,175 @@ class VoiceManager:
             self.end_session(sid, reason="idle timeout")
         return expired
 
+    # -- engine selection -------------------------------------------------- #
+    def select_engines(
+        self,
+        session_id: str,
+        *,
+        tts_engine: str | None = None,
+        tts_voice: str | None = None,
+        tts_tags: Sequence[str] | None = None,
+        stt_engine: str | None = None,
+    ) -> VoiceSession:
+        """Apply a client engine choice to a session and return it.
+
+        The client picks the speech-to-text and text-to-speech providers ULTRON
+        offers; naming one here switches the session over without a restart
+        (§25.1). An empty value leaves the current choice alone, and an engine
+        that cannot run is reported and ignored rather than silently swapping
+        in a different provider.
+
+        ``tts_tags`` are the delivery cues for the session. An empty list clears
+        them (the deployment default does not apply either), while ``None``
+        leaves the current cues alone.
+        """
+        session = self._require(session_id)
+        if tts_engine is not None:
+            requested = tts_engine.strip()
+            if requested:
+                session.tts_engine = requested
+        if tts_voice is not None:
+            session.tts_voice = tts_voice.strip()
+        if tts_tags is not None:
+            session.tts_tags = tuple(tag.strip() for tag in tts_tags if tag.strip())
+        if stt_engine is not None:
+            requested = stt_engine.strip()
+            if requested:
+                session.stt_engine = requested
+        _LOGGER.info(
+            "voice engines selected",
+            extra={
+                "event": "voice.engines_selected",
+                "session_id": session_id,
+                "stt": session.stt_engine or self.stt.name,
+                "tts": session.tts_engine or self.tts.name,
+                "voice": session.tts_voice,
+                "tags": list(session.tts_tags),
+            },
+        )
+        return session
+
+    def stt_for(self, session: VoiceSession) -> STTEngine:
+        """The speech-to-text engine that serves this session.
+
+        A session may name the engine it wants; the deployment default is used
+        when it does not, or when the named engine cannot run -- a stale client
+        preference must not leave the session unable to hear anything.
+        """
+        requested = session.stt_engine.strip()
+        if not requested or requested in (self.stt.name, self.settings.stt_engine):
+            return self.stt
+        engine = self._stt_cache.get(requested)
+        if engine is None:
+            engine = self._build_stt(requested)
+            self._stt_cache[requested] = engine
+        return engine
+
+    def tts_for(self, session: VoiceSession) -> TTSEngine:
+        """The text-to-speech engine that serves this session.
+
+        A session may name the engine it wants; the deployment default is used
+        when it does not, or when the named engine cannot run. A requested
+        engine that *can* run is chained to the deployment default, so a
+        provider that fails at call time (an exhausted credit balance, a
+        rejected key) still leaves the user with speech.
+        """
+        requested = session.tts_engine.strip()
+        if not requested or requested in (self.tts.name, self.settings.tts_engine):
+            return self.tts
+        return self.resolve_tts(requested)
+
+    def resolve_tts(self, name: str) -> TTSEngine:
+        """The named TTS engine, chained to the configured one as its fallback.
+
+        Used by the one-shot synthesis route, which names a provider without
+        owning a session. The engine is cached, so repeated requests reuse one
+        client (and one model download).
+        """
+        requested = name.strip()
+        if not requested or requested in (self.tts.name, self.settings.tts_engine):
+            return self.tts
+        engine = self._tts_cache.get(requested)
+        if engine is None:
+            engine = self._build_tts(requested)
+            self._tts_cache[requested] = engine
+        return engine
+
+    def _build_stt(self, name: str) -> STTEngine:
+        """Build a named STT engine, degrading to the configured one.
+
+        A requested engine is chained to the configured engine only when it is
+        genuinely a different, available provider. A configured engine that is
+        already a primary/fallback chain is never wrapped again -- naming its
+        primary returns that chain, naming its fallback returns the fallback --
+        so the reported name can never nest (``groq>faster-whisper>groq``).
+        """
+        if self._stt_factory is None:
+            return self.stt
+        engine = self._stt_factory(name)
+        if not engine.available:
+            _LOGGER.warning(
+                "requested stt engine unavailable; using the configured engine",
+                extra={
+                    "event": "voice.stt_engine_unavailable",
+                    "engine": name,
+                    "reason": engine.unavailable_reason,
+                },
+            )
+            return self.stt
+        chosen = self._without_nesting(engine, self.stt)
+        if chosen is not None:
+            return chosen
+        from app.voice.fallback import FallbackSTTEngine
+
+        chained = FallbackSTTEngine(engine, self.stt)
+        chained.name = f"{name}>{self.stt.name}"
+        return chained
+
+    def _build_tts(self, name: str) -> TTSEngine:
+        """Build a named TTS engine, degrading to the configured one.
+
+        See :meth:`_build_stt`: a chain is never nested, so selecting an engine
+        that the configured chain already uses reports that engine (or the
+        chain that starts with it) rather than a duplicated name.
+        """
+        if self._tts_factory is None:
+            return self.tts
+        engine = self._tts_factory(name)
+        if not engine.available:
+            _LOGGER.warning(
+                "requested tts engine unavailable; using the configured engine",
+                extra={
+                    "event": "voice.tts_engine_unavailable",
+                    "engine": name,
+                    "reason": engine.unavailable_reason,
+                },
+            )
+            return self.tts
+        chosen = self._without_nesting(engine, self.tts)
+        if chosen is not None:
+            return chosen
+        from app.voice.fallback import FallbackTTSEngine
+
+        chained = FallbackTTSEngine(engine, self.tts)
+        chained.name = f"{name}>{self.tts.name}"
+        return chained
+
+    @staticmethod
+    def _without_nesting(
+        engine: STTEngine | TTSEngine, default: STTEngine | TTSEngine
+    ) -> Any | None:
+        """The default (or its part) that already serves ``engine``, if any."""
+        primary = getattr(default, "primary", default)
+        fallback = getattr(default, "fallback", None)
+        if engine.name == default.name:
+            return default
+        if engine.name == primary.name:
+            return default
+        if fallback is not None and engine.name == fallback.name:
+            return fallback
+        return None
+
     # -- pipeline --------------------------------------------------------- #
     async def handle_audio(
         self,
@@ -215,9 +472,9 @@ class VoiceManager:
         session.transcript = ""
         self._set_state(session, VoiceState.LISTENING)
 
-        async for chunk in self.stt.transcribe_stream(chunks, language=language):
+        async for chunk in self.stt_for(session).transcribe_stream(chunks, language=language):
             if not chunk.is_final:
-                session.transcript += chunk.text
+                session.transcript = _append_partial(session.transcript, chunk.text)
                 # A new utterance while we are still talking is a barge-in.
                 if session.state is VoiceState.SPEAKING and self.settings.interruption_enabled:
                     await self.interrupt(session_id, reason="barge-in")
@@ -237,11 +494,41 @@ class VoiceManager:
             )
             if not text.strip():
                 continue
+            if self._is_echo(session, text):
+                # The microphone picked up our own reply. Do not run a turn on it:
+                # that is the self-answering loop. Stay listening.
+                _LOGGER.info(
+                    "voice echo dropped",
+                    extra={
+                        "event": "voice.echo_dropped",
+                        "session_id": session_id,
+                        "text": text[:200],
+                    },
+                )
+                continue
             replies.append(await self.run_turn(session_id, text, on_audio=on_audio))
         return replies
 
+    def _is_echo(self, session: VoiceSession, text: str) -> bool:
+        """True when ``text`` is likely ULTRON hearing its own last reply.
+
+        Only true inside ``_ECHO_GRACE_SECONDS`` of the last word we spoke, so a
+        genuine command given after the reply finishes is never suppressed.
+        """
+        if not session.last_assistant_spoken.strip() or not text.strip():
+            return False
+        if monotonic() - session.spoken_at > _ECHO_GRACE_SECONDS:
+            return False
+        return looks_like_echo(session.last_assistant_spoken, text)
+
     async def run_turn(
-        self, session_id: str, text: str, *, on_audio: AudioSink | None = None
+        self,
+        session_id: str,
+        text: str,
+        *,
+        on_audio: AudioSink | None = None,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
     ) -> VoiceReply:
         """Run one full turn: think, then speak, honouring barge-in (§59.19).
 
@@ -249,6 +536,12 @@ class VoiceManager:
         interrupts the turn, ``interrupted`` is ``True``, the audio is truncated
         at the point of interruption, and the assistant turn is *marked*
         interrupted rather than dropped, so history stays coherent.
+
+        ``voice`` is the caller's per-session TTS voice preference; ``None`` keeps
+        the engine's configured default. The session's own choice wins over the
+        caller's, so a client that names a provider and a voice gets both.
+        ``tags`` are the delivery cues for this turn; the session's own choice
+        wins here too, for the same reason.
         """
         session = self._require(session_id)
         session.interrupt.clear()
@@ -275,7 +568,10 @@ class VoiceManager:
 
         produced: list[bytes] = []
         interrupted = False
-        async for audio in self.tts.synthesize_stream(answer):
+        engine = self.tts_for(session)
+        spoken_voice = voice or session.tts_voice or None
+        spoken_tags = tuple(tags) if tags is not None else session.tts_tags
+        async for audio in engine.synthesize_stream(answer, voice=spoken_voice, tags=spoken_tags):
             if session.interrupt.is_set():
                 interrupted = True
                 break
@@ -286,6 +582,10 @@ class VoiceManager:
         if interrupted:
             # §59.19: mark the cut-off turn so the next turn has the right context.
             session.history[-1] = VoiceTurn("assistant", answer, interrupted=True)
+        # Remember what we just said so a transcript that repeats it can be
+        # recognised as our own echo rather than a new command.
+        session.last_assistant_spoken = answer
+        session.spoken_at = monotonic()
         self._publish(
             EventType.TTS_COMPLETED,
             {"interrupted": interrupted, "session_id": session_id},
@@ -297,6 +597,48 @@ class VoiceManager:
             audio=b"".join(produced),
             chunks=tuple(produced),
             interrupted=interrupted,
+        )
+
+    async def run_text_turn(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        on_audio: AudioSink | None = None,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> VoiceReply:
+        """Run one turn from a transcript the client already recognized.
+
+        The local-STT path (browser Web Speech API): the browser owns
+        recognition, so no audio is transcribed here. ``STT_FINAL`` is still
+        published so the transport and any observers see the same turn boundary
+        the audio path produces, then the turn runs exactly like any other.
+
+        A barge-in while this turn is speaking still works: ``interrupt()`` sets
+        the same flag ``run_turn`` checks, because both paths share one manager.
+        """
+        session = self._require(session_id)
+        self._publish(
+            EventType.STT_FINAL,
+            {"text": text, "session_id": session_id},
+            device_id=session.device_id,
+        )
+        if self._is_echo(session, text):
+            # Browser STT can also transcribe our reply bleeding into the mic;
+            # drop it rather than running the turn.
+            _LOGGER.info(
+                "voice echo dropped",
+                extra={
+                    "event": "voice.echo_dropped",
+                    "session_id": session_id,
+                    "text": text[:200],
+                },
+            )
+            self._set_state(session, VoiceState.LISTENING)
+            return VoiceReply(text="", audio=b"", chunks=(), interrupted=False)
+        return await self.run_turn(
+            session_id, text, on_audio=on_audio, voice=voice, tags=tags
         )
 
     async def interrupt(self, session_id: str, *, reason: str = "barge-in") -> bool:
@@ -421,6 +763,20 @@ def build_voice_manager(
     stt: STTEngine,
     tts: TTSEngine,
     responder: Responder | None = None,
+    stt_factory: Callable[[str], STTEngine] | None = None,
+    tts_factory: Callable[[str], TTSEngine] | None = None,
 ) -> VoiceManager:
-    """Wire a manager from settings, the event bus and the chosen engines."""
-    return VoiceManager(stt, tts, responder=responder, bus=bus, settings=settings)
+    """Wire a manager from settings, the event bus and the chosen engines.
+
+    ``stt_factory``/``tts_factory`` build a *named* engine on demand, which is
+    what lets a session switch provider without a restart (§25.1).
+    """
+    return VoiceManager(
+        stt,
+        tts,
+        responder=responder,
+        bus=bus,
+        settings=settings,
+        stt_factory=stt_factory,
+        tts_factory=tts_factory,
+    )

@@ -12,12 +12,16 @@ builds the model lazily inside a worker thread, and reports an honest
 :class:`~app.core.errors.DependencyUnavailableError` if the package is missing or
 the load fails -- rather than crashing at import (§59.17, §64.11).
 
-**Streaming applies the §59.17 policy.** :meth:`transcribe_stream` composes the
-two pure helpers from :mod:`app.voice.stt.utterance`: an
-:class:`~app.voice.stt.utterance.OverlapDeduper` strips the duplicated head that
-a sliding-window transcriber produces, and an
-:class:`~app.voice.stt.utterance.UtteranceBoundary` keeps a mid-sentence pause
-from closing the utterance. Only the boundary closing emits a final chunk.
+**Streaming applies the §59.17 policy.** :meth:`transcribe_stream` buffers the
+audio of the current utterance, because Whisper transcribes *complete clips*: a
+20 ms transport frame carries no words on its own (transcribing each frame would
+return nothing, which made the microphone look deaf). While the utterance is
+open a partial is re-transcribed every
+:attr:`_PARTIAL_INTERVAL_SECONDS` of audio and only the new suffix is emitted
+(the manager appends partials), and the boundary closes the turn by
+transcribing the whole buffered utterance once. :class:`UtteranceBoundary`
+still decides when a turn ends, so a mid-sentence pause does not start a second
+utterance.
 
 The transcriber itself is *injectable* (:attr:`model_factory`), so the streaming
 policy and the adapter wiring are unit-testable with no whisper install and no
@@ -38,7 +42,7 @@ from app.voice.stt.availability import (
     faster_whisper_unavailable_reason,
 )
 from app.voice.stt.base import AudioChunk, STTEngine, TranscriptChunk
-from app.voice.stt.utterance import OverlapDeduper, UtteranceBoundary
+from app.voice.stt.utterance import UtteranceBoundary, incremental_suffix
 
 __all__ = ["FasterWhisperSTT"]
 
@@ -47,6 +51,14 @@ _LOGGER = get_logger(__name__)
 #: How many consecutive silent chunks close a turn by default. Callers that know
 #: their chunk duration can convert a wall-clock silence to this count.
 _DEFAULT_SILENCE_CHUNKS = 3
+
+#: How much new audio (in seconds) to accumulate before re-transcribing the
+#: utterance for a partial. Whisper needs roughly a second of speech to produce
+#: anything useful, and re-running it per transport frame would be pointless.
+_PARTIAL_INTERVAL_SECONDS = 1.0
+
+#: Bytes per second of the engine's audio contract: mono, 16-bit PCM.
+_BYTES_PER_SECOND = 2
 
 
 class FasterWhisperSTT(STTEngine):
@@ -60,6 +72,7 @@ class FasterWhisperSTT(STTEngine):
         *,
         model_factory: Callable[[], Any] | None = None,
         silence_chunks: int = _DEFAULT_SILENCE_CHUNKS,
+        partial_interval_seconds: float = _PARTIAL_INTERVAL_SECONDS,
     ) -> None:
         self.settings = settings
         self.sample_rate = 16000  # faster-whisper's native rate.
@@ -67,6 +80,9 @@ class FasterWhisperSTT(STTEngine):
         self._model: Any | None = None
         self._load_lock = asyncio.Lock()
         self._silence_chunks = silence_chunks
+        self._partial_interval_bytes = max(
+            1, int(partial_interval_seconds * self.sample_rate * _BYTES_PER_SECOND)
+        )
 
     # -- availability ----------------------------------------------------- #
     @property
@@ -114,51 +130,80 @@ class FasterWhisperSTT(STTEngine):
         self._require_available()
         model = await self._get_model()
         lang = language or self.settings.stt_language
-        deduper = OverlapDeduper()
         boundary = UtteranceBoundary(silence_threshold=self._silence_chunks)
+        partials = self.settings.stt_partial_results
         utterance_id = 0
-        accumulated = ""
+        buffer = bytearray()
+        emitted = ""
+        last_full: str | None = None
+        last_full_bytes = 0
+        next_partial_at = self._partial_interval_bytes
+
+        async def _final() -> TranscriptChunk:
+            nonlocal last_full, last_full_bytes
+            text = await self._final_text(model, buffer, last_full, last_full_bytes, lang)
+            last_full = None
+            last_full_bytes = 0
+            return TranscriptChunk(
+                text=text, is_final=True, utterance_id=utterance_id, language=lang
+            )
 
         async for chunk in chunks:
             if chunk.end_of_utterance:
                 # The transport saw the end of a turn (client VAD / push-to-talk):
                 # close it now instead of waiting for a run of silent chunks.
-                if boundary.open or accumulated:
-                    yield TranscriptChunk(
-                        text=accumulated, is_final=True, utterance_id=utterance_id, language=lang
-                    )
+                if boundary.open or buffer:
+                    yield await _final()
                     utterance_id += 1
-                    accumulated = ""
-                    deduper.reset()
+                    buffer.clear()
+                    emitted = ""
+                    next_partial_at = self._partial_interval_bytes
                 boundary.reset()
                 continue
 
             if not chunk.is_speech or not chunk.data:
                 if boundary.feed(is_speech=False):
-                    yield TranscriptChunk(
-                        text=accumulated, is_final=True, utterance_id=utterance_id, language=lang
-                    )
+                    yield await _final()
                     utterance_id += 1
-                    accumulated = ""
-                    deduper.reset()
+                    buffer.clear()
+                    emitted = ""
+                    next_partial_at = self._partial_interval_bytes
                 continue
 
-            raw = await self._transcribe_bytes(model, chunk.data, language=lang)
-            new_text = deduper.feed(raw)
+            buffer.extend(chunk.data)
             boundary.feed(is_speech=True)
-            if new_text:
-                accumulated += new_text
+            if not partials or len(buffer) < next_partial_at:
+                continue
+            next_partial_at = len(buffer) + self._partial_interval_bytes
+            text = await self._transcribe_bytes(model, bytes(buffer), language=lang)
+            last_full = text
+            last_full_bytes = len(buffer)
+            delta = incremental_suffix(emitted, text)
+            if delta:
+                emitted += delta
                 yield TranscriptChunk(
-                    text=new_text, is_final=False, utterance_id=utterance_id, language=lang
+                    text=delta, is_final=False, utterance_id=utterance_id, language=lang
                 )
 
         # Flush an utterance the stream ended before silencing.
-        if boundary.open:
-            yield TranscriptChunk(
-                text=accumulated, is_final=True, utterance_id=utterance_id, language=lang
-            )
+        if boundary.open or buffer:
+            yield await _final()
 
     # -- internals -------------------------------------------------------- #
+    async def _final_text(
+        self,
+        model: Any,
+        buffer: bytearray,
+        cached: str | None,
+        cached_bytes: int,
+        language: str | None,
+    ) -> str:
+        """Transcribe the whole buffered utterance, reusing an exact partial."""
+        if not buffer:
+            return cached or ""
+        if cached is not None and cached_bytes == len(buffer):
+            return cached
+        return await self._transcribe_bytes(model, bytes(buffer), language=language)
     async def _transcribe_bytes(
         self, model: Any, audio: bytes, *, language: str | None
     ) -> str:

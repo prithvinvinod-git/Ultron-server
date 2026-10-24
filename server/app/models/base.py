@@ -222,7 +222,9 @@ class ModelResponse:
 
     ``provider`` and ``request_id`` are carried so the usage record (T067) and
     the ``MODEL_RESPONSE`` event (§19) can name where the answer came from
-    without the caller tracking it separately.
+    without the caller tracking it separately. ``selection_reason`` records
+    whether the provider was selected as the capability's primary model or
+    reached via a fallback hop — surfaced to the user (§59.9, T224).
     """
 
     model: str
@@ -232,6 +234,8 @@ class ModelResponse:
     usage: TokenUsage | None = None
     provider: str = ""
     request_id: str | None = None
+    selection_reason: str = ""
+    """Why this provider/model was chosen: ``"capability"`` or ``"fallback"``."""
 
     @property
     def has_tool_calls(self) -> bool:

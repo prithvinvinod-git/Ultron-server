@@ -48,12 +48,13 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, NoReturn, Protocol
 
 from app.config import ModelRouterSettings, get_settings
 from app.core.errors import (
     LocalModelUnavailableError,
+    ModelContextOverflowError,
     ModelNotSupportedError,
     ModelTimeoutError,
     UltronError,
@@ -68,6 +69,7 @@ from app.models.base import (
     ModelStreamChunk,
     ProviderHealth,
 )
+from app.models.registry import ModelRegistry
 
 __all__ = ["EventPublisher", "ModelRouter", "ModelSelection", "Speed"]
 
@@ -278,6 +280,7 @@ class ModelRouter:
         preferred: Sequence[str] = (),
         prefer_local: bool | None = None,
         exclude: Sequence[str] = (),
+        requested: str = "",
     ) -> ModelSelection:
         """Choose the first available configured model for a capability.
 
@@ -293,6 +296,7 @@ class ModelRouter:
             exclude=exclude,
             tools=tools,
             streaming=streaming,
+            requested=requested,
         )
         for candidate in candidates:
             if await candidate.provider.is_available(candidate.model):
@@ -315,6 +319,7 @@ class ModelRouter:
         preferred: Sequence[str] = (),
         prefer_local: bool | None = None,
         exclude: Sequence[str] = (),
+        requested: str = "",
     ) -> ModelResponse:
         """Select a model and run ``chat`` with fallback and bounded retries."""
         candidates = self._ordered_candidates(
@@ -324,11 +329,12 @@ class ModelRouter:
             prefer_local=prefer_local,
             exclude=exclude,
             tools=bool(request.tools),
+            requested=requested,
         )
         if not candidates:
             raise self._no_candidates_error(capability)
         last_error: UltronError | None = None
-        for candidate in candidates:
+        for i, candidate in enumerate(candidates):
             if not await candidate.provider.is_available(candidate.model):
                 continue
             provider_request = self._for_provider(request, candidate.model)
@@ -336,6 +342,7 @@ class ModelRouter:
             result, error = await self._attempt(candidate, provider_request)
             latency_ms = int((self._mono() - started) * 1000)
             if result is not None:
+                result = replace(result, selection_reason=candidate.reason)
                 await self._publish_selected(candidate, capability, streaming=False)
                 if self._should_record_usage():
                     await self._record_usage(
@@ -346,6 +353,9 @@ class ModelRouter:
                         latency_ms=latency_ms,
                     )
                 return result
+            # Publish fallback event if there's a next candidate
+            if i + 1 < len(candidates):
+                await self._publish_fallback(candidate, candidates[i + 1], error)
             last_error = error
         if self._should_record_usage() and last_error is not None:
             await self._record_usage(
@@ -365,6 +375,7 @@ class ModelRouter:
         preferred: Sequence[str] = (),
         prefer_local: bool | None = None,
         exclude: Sequence[str] = (),
+        requested: str = "",
     ) -> AsyncIterator[ModelStreamChunk]:
         """Stream from the first usable candidate, falling back before output."""
         candidates = self._ordered_candidates(
@@ -375,11 +386,12 @@ class ModelRouter:
             exclude=exclude,
             tools=bool(request.tools),
             streaming=True,
+            requested=requested,
         )
         if not candidates:
             raise self._no_candidates_error(capability)
         last_error: UltronError | None = None
-        for candidate in candidates:
+        for i, candidate in enumerate(candidates):
             if not await candidate.provider.is_available(candidate.model):
                 continue
             provider_request = self._for_provider(request, candidate.model)
@@ -397,6 +409,9 @@ class ModelRouter:
                 await self._publish_failed(candidate, exc)
                 if started:
                     raise
+                # Publish fallback event if there's a next candidate
+                if i + 1 < len(candidates):
+                    await self._publish_fallback(candidate, candidates[i + 1], exc)
                 last_error = exc
                 continue
             else:
@@ -405,14 +420,16 @@ class ModelRouter:
                 if self._should_record_usage():
                     latency_ms = int((self._mono() - started_at) * 1000)
                     usage = last_chunk.usage if last_chunk else None
+                    response = ModelResponse(
+                        model=candidate.model,
+                        usage=usage,
+                        provider=candidate.provider.name,
+                        selection_reason=candidate.reason,
+                    )
                     await self._record_usage(
                         candidate=candidate,
                         capability=capability,
-                        response=ModelResponse(
-                            model=candidate.model,
-                            usage=usage,
-                            provider=candidate.provider.name,
-                        ),
+                        response=response,
                         error=None,
                         latency_ms=latency_ms,
                     )
@@ -441,6 +458,9 @@ class ModelRouter:
                 response = await candidate.provider.chat(request)
             except UltronError as exc:
                 last_error = exc
+                # Context overflow is never retryable (§59.9)
+                if isinstance(exc, ModelContextOverflowError):
+                    break
                 if exc.retryable:
                     self.record_failure(name, exc)
                     if attempt < self._settings.max_retries:
@@ -463,8 +483,17 @@ class ModelRouter:
         exclude: Sequence[str],
         tools: bool = False,
         streaming: bool = False,
+        requested: str = "",
     ) -> list[_Candidate]:
-        models = self._order(self.candidate_models(capability), speed, preferred, prefer_local)
+        models = self.candidate_models(capability)
+        # An explicit per-request model is *prepended*, not merged: the operator
+        # picked it in Settings, so it must win over the capability default. A
+        # request for a model whose provider is unconfigured is ignored here and
+        # silently falls back to normal selection (§33: an absent provider is
+        # unavailable, not an error), so a stale pick never 500s a chat turn.
+        if requested and _provider_of(requested) in self._providers:
+            models = [requested, *models]
+        models = self._order(models, speed, preferred, prefer_local)
         return self._filter(models, capability, exclude, tools=tools, streaming=streaming)
 
     def _order(
@@ -530,6 +559,10 @@ class ModelRouter:
                 self._max_in_flight is not None
                 and self._in_flight.get(provider_name, 0) >= self._max_in_flight
             ):
+                continue
+            # Check registry availability (T222)
+            record = ModelRegistry.get(model_id)
+            if record is not None and not record.available:
                 continue
             reason = "capability" if model_id == primary else "fallback"
             candidates.append(_Candidate(provider, model_id, _bare_model(model_id), reason))
@@ -620,6 +653,8 @@ class ModelRouter:
 
         provider_name = candidate.provider.name
         model_name = candidate.model
+        model_id = candidate.model_id
+        reason = candidate.reason
         request_id = response.request_id if response else None
 
         # Determine status and error details
@@ -629,6 +664,9 @@ class ModelRouter:
         elif isinstance(error, ModelTimeoutError):
             status = ModelUsageStatus.TIMEOUT
             error_detail = str(error)
+        elif isinstance(error, ModelContextOverflowError):
+            status = ModelUsageStatus.ERROR
+            error_detail = f"context_overflow: {error}"
         else:
             status = ModelUsageStatus.ERROR
             error_detail = str(error)
@@ -646,7 +684,7 @@ class ModelRouter:
         async with self._session_factory() as session:
             repo = ModelUsageRepository(session)
             await repo.record(
-                model=model_name,
+                model=model_id,  # Record the full provider:model identifier
                 provider=provider_name,
                 status=status,
                 prompt_tokens=prompt_tokens,
@@ -685,7 +723,28 @@ class ModelRouter:
             {
                 "provider": candidate.provider.name,
                 "model": candidate.model,
+                "model_id": candidate.model_id,
+                "reason": candidate.reason,
                 "error": getattr(error, "code", None),
+                "retryable": getattr(error, "retryable", False),
+            },
+        )
+
+    async def _publish_fallback(self, from_candidate: _Candidate, to_candidate: _Candidate, error: UltronError) -> None:
+        """Publish a MODEL_FALLBACK event when falling back to another model."""
+        await self._publish(
+            "MODEL_FALLBACK",
+            {
+                "from_provider": from_candidate.provider.name,
+                "from_model": from_candidate.model,
+                "from_model_id": from_candidate.model_id,
+                "from_reason": from_candidate.reason,
+                "to_provider": to_candidate.provider.name,
+                "to_model": to_candidate.model,
+                "to_model_id": to_candidate.model_id,
+                "to_reason": to_candidate.reason,
+                "error": getattr(error, "code", None),
+                "retryable": getattr(error, "retryable", False),
             },
         )
 

@@ -9,7 +9,8 @@ dropped. Every engine is faked, so no model, network or audio is involved.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from time import monotonic
 from typing import Any
 
 import pytest
@@ -18,7 +19,8 @@ from app.config import VoiceSettings
 from app.core.errors import NotFoundError
 from app.events.bus import EventBus, Subscription
 from app.events.types import EventType
-from app.voice.manager import VoiceManager, VoiceReply, VoiceState
+from app.voice.fallback import FallbackSTTEngine, FallbackTTSEngine
+from app.voice.manager import VoiceManager, VoiceReply, VoiceState, looks_like_echo
 from app.voice.stt.base import STTEngine, TranscriptChunk
 from app.voice.tts.base import TTSEngine
 
@@ -45,14 +47,28 @@ class FakeTTS(TTSEngine):
     def __init__(self, chunks: tuple[bytes, ...] = (b"aa", b"bb", b"cc")) -> None:
         self._chunks = chunks
         self.streamed: list[str] = []
+        self.streamed_tags: list[tuple[str, ...]] = []
+        self.streamed_voices: list[str | None] = []
 
-    async def synthesize(self, text: str, *, voice: str | None = None) -> bytes:
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> bytes:
         return b"".join(self._chunks)
 
     async def synthesize_stream(
-        self, text: str, *, voice: str | None = None
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        tags: Sequence[str] | None = None,
     ) -> AsyncIterator[bytes]:
         self.streamed.append(text)
+        self.streamed_tags.append(tuple(tags or ()))
+        self.streamed_voices.append(voice)
         for chunk in self._chunks:
             yield chunk
 
@@ -198,6 +214,33 @@ async def test_handle_audio_runs_a_turn_per_final() -> None:
     assert EventType.STT_FINAL.value in events
 
 
+async def test_streamed_partials_keep_word_boundaries() -> None:
+    # Streaming engines emit stripped deltas; appending them must not weld
+    # words together ("kitchen" + "lights" -> "kitchenlights").
+    bus = EventBus()
+    stt = FakeSTT([("Turn on the kitchen", False), ("lights", False), ("all of them", True)])
+    manager = _manager(stt, FakeTTS(), bus)
+    session = manager.create_session()
+    await manager.flush()
+    sub = bus.subscribe()
+
+    async def _chunks() -> AsyncIterator[Any]:
+        yield b"audio"
+
+    try:
+        await manager.handle_audio(session.session_id, _chunks())
+        await manager.flush()
+        events = await _drain(sub)
+    finally:
+        sub.close()
+        bus.close()
+
+    partials = [e.payload["text"] for e in events if e.event_type is EventType.STT_PARTIAL]
+    finals = [e.payload["text"] for e in events if e.event_type is EventType.STT_FINAL]
+    assert partials == ["Turn on the kitchen", "Turn on the kitchen lights"]
+    assert finals == ["all of them"]
+
+
 # --------------------------------------------------------------------------- #
 # Barge-in (§59.19).
 # --------------------------------------------------------------------------- #
@@ -296,4 +339,285 @@ async def test_barge_in_ends_the_turn_but_handle_audio_continues() -> None:
     assert replies[1].interrupted is False
     assert session.state is VoiceState.LISTENING
     bus.close()
+
+
+# --------------------------------------------------------------------------- #
+# Echo guard: ULTRON must not answer its own voice (§59.19 loopback).
+# --------------------------------------------------------------------------- #
+def test_looks_like_echo_matches_containment_and_overlap() -> None:
+    spoken = "The quick brown fox jumps over the lazy dog"
+    # Whole transcript contained in, or containing, what we said.
+    assert looks_like_echo(spoken, "the quick brown fox") is True
+    assert looks_like_echo("brown fox jumps over the lazy dog", spoken) is True
+    # Half or more of the transcript's meaningful words already appeared.
+    assert looks_like_echo(spoken, "quick brown fox leaping") is True
+    # A genuine short command shares too little to be swallowed.
+    assert looks_like_echo(spoken, "remind me tomorrow") is False
+    assert looks_like_echo(spoken, "stop") is False
+    assert looks_like_echo("", "anything") is False
+    assert looks_like_echo(spoken, "") is False
+
+
+async def test_handle_audio_drops_echo_of_our_own_reply() -> None:
+    """A final that repeats what we just said must not run another turn."""
+    # First final runs a turn (assistant says "echo:hello"); the second final is
+    # the microphone hearing that reply bleed back.
+    stt = FakeSTT([("hello", True), ("echo hello", True)])
+    manager = _manager(stt, FakeTTS())
+    session = manager.create_session()
+
+    async def _chunks() -> AsyncIterator[Any]:
+        yield b"audio"
+
+    replies = await manager.handle_audio(session.session_id, _chunks())
+
+    # Only the genuine turn ran; the echoed one was dropped.
+    assert [r.text for r in replies] == ["echo:hello"]
+    assert [(t.role, t.text) for t in session.history] == [
+        ("user", "hello"),
+        ("assistant", "echo:hello"),
+    ]
+    assert session.state is VoiceState.LISTENING
+
+
+async def test_run_text_turn_drops_browser_stt_echo() -> None:
+    """The browser-STT path drops an echo too, without running a turn."""
+    manager = _manager(FakeSTT([]), FakeTTS())
+    session = manager.create_session()
+    session.last_assistant_spoken = "all systems are nominal today"
+    session.spoken_at = monotonic()
+
+    reply = await manager.run_text_turn(
+        session.session_id, "all systems are nominal"
+    )
+
+    assert reply.text == ""
+    assert session.history == []
+    assert session.state is VoiceState.LISTENING
+
+
+# --------------------------------------------------------------------------- #
+# Engine selection (§25.1): the client picks the provider per session.
+# --------------------------------------------------------------------------- #
+class SelectableTTS(FakeTTS):
+    """A TTS engine that reports its own name."""
+
+    def __init__(self, name: str, chunks: tuple[bytes, ...] = (b"aa",)) -> None:
+        super().__init__(chunks)
+        self.name = name
+
+
+class UnavailableTTS(SelectableTTS):
+    """A named engine that cannot run (no key, no credit, ...)."""
+
+    @property
+    def available(self) -> bool:
+        return False
+
+    @property
+    def unavailable_reason(self) -> str:
+        return "no api credit"
+
+
+def _selecting_manager(**over: Any) -> VoiceManager:
+    """A manager that can build any named engine on request."""
+    settings = _settings(**over)
+
+    def tts_factory(name: str) -> TTSEngine:
+        if name == "broken":
+            return UnavailableTTS(name)
+        return SelectableTTS(name)
+
+    def stt_factory(name: str) -> STTEngine:
+        engine = FakeSTT([])
+        engine.name = name
+        return engine
+
+    return VoiceManager(
+        FakeSTT([]),
+        SelectableTTS("fake-tts"),
+        responder=echo,
+        settings=settings,
+        tts_factory=tts_factory,
+        stt_factory=stt_factory,
+    )
+
+
+def test_select_engines_records_the_client_choice() -> None:
+    manager = _selecting_manager()
+    session = manager.create_session()
+
+    updated = manager.select_engines(
+        session.session_id, tts_engine="fish-audio", tts_voice="ref-1", stt_engine="groq"
+    )
+
+    assert updated.tts_engine == "fish-audio"
+    assert updated.tts_voice == "ref-1"
+    assert updated.stt_engine == "groq"
+
+
+def test_select_engines_ignores_an_empty_choice() -> None:
+    """An empty value leaves the current choice alone."""
+    manager = _selecting_manager()
+    session = manager.create_session()
+    manager.select_engines(session.session_id, tts_engine="fish-audio")
+
+    updated = manager.select_engines(session.session_id, tts_engine="   ")
+
+    assert updated.tts_engine == "fish-audio"
+
+
+def test_tts_for_serves_the_requested_engine() -> None:
+    manager = _selecting_manager()
+    session = manager.create_session()
+    manager.select_engines(session.session_id, tts_engine="fish-audio")
+
+    engine = manager.tts_for(session)
+
+    assert engine.name == "fish-audio>fake-tts"
+    assert manager.resolve_tts("fish-audio").name == "fish-audio>fake-tts"
+
+
+def test_tts_for_falls_back_to_the_configured_engine() -> None:
+    """A provider that cannot run must not leave the session mute."""
+    manager = _selecting_manager()
+    session = manager.create_session()
+    manager.select_engines(session.session_id, tts_engine="broken")
+
+    assert manager.tts_for(session).name == "fake-tts"
+
+
+def test_stt_for_serves_the_requested_engine() -> None:
+    manager = _selecting_manager()
+    session = manager.create_session()
+    manager.select_engines(session.session_id, stt_engine="groq")
+
+    assert manager.stt_for(session).name == "groq>fake-stt"
+
+
+def test_stt_for_uses_the_configured_engine_when_none_is_named() -> None:
+    manager = _selecting_manager()
+    session = manager.create_session()
+
+    assert manager.stt_for(session).name == "fake-stt"
+
+
+# --------------------------------------------------------------------------- #
+# A configured primary/fallback chain must not be wrapped again (the reported
+# name is what the UI shows, and a nested chain is a lie about what will run).
+# --------------------------------------------------------------------------- #
+def _chained_manager() -> VoiceManager:
+    """A manager whose configured TTS is ``fish-audio>edge-tts``."""
+    manager = _selecting_manager()
+    manager.tts = FallbackTTSEngine(SelectableTTS("fish-audio"), SelectableTTS("edge-tts"))
+    return manager
+
+
+def _named_stt(name: str) -> FakeSTT:
+    engine = FakeSTT([])
+    engine.name = name
+    return engine
+
+
+def test_selecting_the_chain_primary_serves_the_chain() -> None:
+    manager = _chained_manager()
+
+    assert manager.resolve_tts("fish-audio").name == "fish-audio>edge-tts"
+
+
+def test_selecting_the_chain_fallback_serves_that_engine() -> None:
+    manager = _chained_manager()
+
+    engine = manager.resolve_tts("edge-tts")
+
+    assert engine.name == "edge-tts"
+
+
+def test_selecting_a_third_engine_chains_once() -> None:
+    manager = _chained_manager()
+
+    assert manager.resolve_tts("elevenlabs").name == "elevenlabs>fish-audio>edge-tts"
+
+
+def test_a_configured_stt_chain_is_not_nested() -> None:
+    manager = _selecting_manager()
+    manager.stt = FallbackSTTEngine(_named_stt("faster-whisper"), _named_stt("groq"))
+    session = manager.create_session()
+    manager.select_engines(session.session_id, stt_engine="groq")
+
+    # "groq" is the chain's fallback, so it serves as itself -- not
+    # "groq>faster-whisper>groq".
+    assert manager.stt_for(session).name == "groq"
+
+
+# --------------------------------------------------------------------------- #
+# Delivery cues: the client's emotion tags reach the TTS engine.
+# --------------------------------------------------------------------------- #
+def test_select_engines_records_the_delivery_cues() -> None:
+    manager = _selecting_manager()
+    session = manager.create_session()
+
+    updated = manager.select_engines(
+        session.session_id, tts_tags=["calm", "  friendly ", ""]
+    )
+
+    assert updated.tts_tags == ("calm", "friendly")
+
+
+def test_select_engines_leaves_the_cues_alone_when_the_frame_names_none() -> None:
+    manager = _selecting_manager()
+    session = manager.create_session()
+    manager.select_engines(session.session_id, tts_tags=["calm"])
+
+    updated = manager.select_engines(session.session_id, tts_engine="fish-audio")
+
+    assert updated.tts_tags == ("calm",)
+
+
+def test_select_engines_clears_the_cues_on_an_empty_list() -> None:
+    manager = _selecting_manager()
+    session = manager.create_session()
+    manager.select_engines(session.session_id, tts_tags=["calm"])
+
+    updated = manager.select_engines(session.session_id, tts_tags=[])
+
+    assert updated.tts_tags == ()
+
+
+async def test_run_turn_passes_the_session_cues_to_the_engine() -> None:
+    tts = FakeTTS()
+    manager = VoiceManager(
+        FakeSTT([]), tts, responder=echo, settings=_settings()
+    )
+    session = manager.create_session()
+    manager.select_engines(session.session_id, tts_tags=["calm", "friendly"])
+
+    await manager.run_turn(session.session_id, "hello")
+
+    assert tts.streamed_tags == [("calm", "friendly")]
+
+
+async def test_run_turn_lets_the_caller_override_the_cues_for_one_turn() -> None:
+    tts = FakeTTS()
+    manager = VoiceManager(
+        FakeSTT([]), tts, responder=echo, settings=_settings()
+    )
+    session = manager.create_session()
+    manager.select_engines(session.session_id, tts_tags=["calm"])
+
+    await manager.run_turn(session.session_id, "hello", tags=["angry"])
+
+    assert tts.streamed_tags == [("angry",)]
+
+
+async def test_run_turn_sends_no_cues_when_nobody_named_any() -> None:
+    tts = FakeTTS()
+    manager = VoiceManager(
+        FakeSTT([]), tts, responder=echo, settings=_settings()
+    )
+    session = manager.create_session()
+
+    await manager.run_turn(session.session_id, "hello")
+
+    assert tts.streamed_tags == [()]
 

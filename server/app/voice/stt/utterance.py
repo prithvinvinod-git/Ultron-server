@@ -28,7 +28,20 @@ whisper install.
 
 from __future__ import annotations
 
-__all__ = ["OverlapDeduper", "UtteranceBoundary"]
+__all__ = ["OverlapDeduper", "UtteranceBoundary", "incremental_suffix"]
+
+
+def incremental_suffix(emitted: str, full: str) -> str:
+    """Return the new suffix of ``full`` beyond what was already emitted.
+
+    A growing-buffer transcriber returns a stable prefix plus new text, so the
+    delta is a plain substring. When the transcript is *corrected* instead of
+    extended the prefix no longer matches and nothing is streamed; the final
+    chunk still carries the authoritative text.
+    """
+    if full.startswith(emitted):
+        return full[len(emitted) :].strip()
+    return ""
 
 
 class OverlapDeduper:

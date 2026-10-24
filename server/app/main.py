@@ -187,9 +187,11 @@ def _include_routers(app: FastAPI) -> None:
     from app.api.routes import (
         agents,
         chat,
+        conversations,
         devices,
         events,
         health,
+        models,
         nodes,
         notifications,
         schedules,
@@ -208,6 +210,8 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(tasks.router)
     app.include_router(tools.router)
     app.include_router(chat.router)
+    app.include_router(conversations.router)
+    app.include_router(models.router)
     app.include_router(nodes.router)
     app.include_router(devices.router)
     app.include_router(voice.router)

@@ -120,6 +120,11 @@ class ToolLoopResult:
         """True only when the model stopped on its own (``COMPLETED``)."""
         return self.stop_reason is StopReason.COMPLETED
 
+    @property
+    def selection_reason(self) -> str:
+        """Why this model was chosen: ``"capability"`` or ``"fallback"``."""
+        return self.response.selection_reason
+
 
 class LoopChunkKind(StrEnum):
     """The kind of one incremental event a streaming loop run emits.
@@ -200,6 +205,7 @@ class ToolCallingLoop:
         max_iterations: int = 10,
         max_tool_calls: int = 32,
         system_prompt: str | None = None,
+        model: str = "",
     ) -> None:
         """Bind the loop to its router, executor and advertised tools.
 
@@ -208,7 +214,8 @@ class ToolCallingLoop:
         ceilings: a model turn may request several calls, so the two limits are
         independent — five iterations of ten calls each is still bounded by
         ``max_tool_calls``. ``system_prompt`` is prepended once, when the
-        incoming transcript has no system turn of its own.
+        incoming transcript has no system turn of its own. ``model`` is an
+        optional operator-chosen ``provider:model`` that the router tries first.
         """
         self._router = router
         self._executor = executor
@@ -217,6 +224,7 @@ class ToolCallingLoop:
         self._max_iterations = _positive_int("max_iterations", max_iterations)
         self._max_tool_calls = _positive_int("max_tool_calls", max_tool_calls)
         self._system_prompt = system_prompt
+        self._model = model
 
     async def run(
         self,
@@ -434,6 +442,7 @@ class ToolCallingLoop:
         async for chunk in self._router.stream(
             self._request(transcript),
             capability=self._capability,
+            requested=self._model,
         ):
             if chunk.model:
                 model = chunk.model
@@ -467,6 +476,7 @@ class ToolCallingLoop:
         return await self._router.complete(
             self._request(transcript),
             capability=self._capability,
+            requested=self._model,
         )
 
     async def _dispatch(self, call: ToolCall, caller: _Caller) -> str:
