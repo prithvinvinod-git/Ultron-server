@@ -1,10 +1,13 @@
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Activity, Bot, Cpu, Gauge, Radio, ShieldCheck, Terminal, Wrench } from "lucide-react";
+import { Activity, Bell, Bot, CalendarClock, Cpu, Database, Gauge, ListChecks, Radio, ShieldCheck, Terminal, Wrench } from "lucide-react";
 
 import { AgentsPanel } from "@/components/ultron/agents";
+import { ConversationsPanel } from "@/components/ultron/conversations";
 import { DevicesPanel, FleetPanel } from "@/components/ultron/fleet";
+import { ModelsPanel } from "@/components/ultron/models";
 import { MetricsPanel } from "@/components/ultron/metrics";
+import { NotificationsPanel } from "@/components/ultron/notifications";
 import { SchedulesPanel } from "@/components/ultron/schedules";
 import {
   EventsPanel,
@@ -15,7 +18,6 @@ import {
   ToolsPanel,
 } from "@/components/ultron/widgets";
 import type { TabId } from "@/lib/workspace";
-import { CalendarClock } from "lucide-react";
 
 /**
  * A panel is the unit of capability in the command center. Adding a new
@@ -33,6 +35,7 @@ export interface PanelDef {
   render: () => ReactNode;
 }
 
+/** Panels registered for each tab. */
 export const PANELS: PanelDef[] = [
   { id: "tasks", title: "Mission queue", icon: Activity, tab: "tasks", order: 10, render: () => <TaskPanel /> },
   { id: "agents", title: "Agents", icon: Bot, tab: "agents", order: 10, render: () => <AgentsPanel /> },
@@ -40,6 +43,9 @@ export const PANELS: PanelDef[] = [
   { id: "nodes", title: "Node fleet", icon: Radio, tab: "fleet", order: 10, render: () => <FleetPanel /> },
   { id: "devices", title: "Devices", icon: Cpu, tab: "fleet", order: 20, render: () => <DevicesPanel /> },
   { id: "schedules-reg", title: "Schedules", icon: CalendarClock, tab: "schedules", order: 10, render: () => <SchedulesPanel /> },
+  { id: "notifications", title: "Notifications", icon: Bell, tab: "notifications", order: 10, render: () => <NotificationsPanel /> },
+  { id: "conversations", title: "Conversations", icon: ListChecks, tab: "conversations", order: 20, render: () => <ConversationsPanel /> },
+  { id: "models", title: "Models", icon: Database, tab: "models", order: 10, render: () => <ModelsPanel /> },
   { id: "network", title: "Connection", icon: Radio, tab: "system", order: 10, render: () => <NetworkPanel /> },
   { id: "health", title: "System health", icon: ShieldCheck, tab: "system", order: 20, render: () => <HealthPanel /> },
   { id: "session", title: "Session", icon: Terminal, tab: "system", order: 30, render: () => <SessionPanel /> },

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ULTRON Orb</title>
+    <link rel="stylesheet" href="./orb.css" />
+  </head>
+  <body>
+    <!--
+      The whole document is transparent: the only visible pixels are the orb and
+      its caption, so the window reads as a widget rather than a small app.
+    -->
+    <main id="orb-root" class="orb-root" data-state="idle">
+      <!--
+        This is the console orb, element-for-element: `orb-states.tsx` renders
+        `ThinkingOrb` (size 64, theme dark), which mounts a canvas with this
+        class, role, label and inline size. `renderer.ts` paints it with the
+        same engine + host loop as the package component; the widget-only hover
+        ring lives on the overlay canvas so this element stays untouched.
+      -->
+      <canvas
+        class="orb"
+        role="img"
+        aria-label="Working…"
+        style="width: 64px; height: 64px; display: block;"
+      ></canvas>
+      <canvas id="orb-affordances" class="orb-affordances" aria-hidden="true"></canvas>
+      <div
+        id="orb-hit"
+        class="orb-hit"
+        role="button"
+        tabindex="0"
+        aria-label="ULTRON orb. Idle. Click to open ULTRON, hold to talk, right-click for options."
+        aria-describedby="orb-caption"
+      ></div>
+      <p id="orb-caption" class="orb-caption" role="status" aria-live="polite"></p>
+    </main>
+    <!--
+      The orb body is the *same* `thinking-orbs` engine the console's header orb
+      renders (orb-states.tsx) — not a lookalike. `build.mjs` copies the
+      package's ESM dist into `vendor/`; this map resolves the bare specifier
+      TypeScript emitted.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "thinking-orbs/engine": "./vendor/thinking-orbs/engine.es.js"
+        }
+      }
+    </script>
+    <script type="module" src="./renderer.js"></script>
+  </body>
+</html>

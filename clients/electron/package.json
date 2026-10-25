@@ -4,9 +4,12 @@
   "private": true,
   "description": "ULTRON Windows desktop shell — wraps the existing UIPROTO console (spec 69.4)",
   "main": "dist/main.js",
+  "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "npm run build:main && npm run build:orb",
+    "build:main": "tsc -p tsconfig.json",
+    "build:orb": "tsc -p orb/tsconfig.json && node orb/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p orb/tsconfig.json",
     "start": "npm run build && electron .",
     "start:dev": "ULTRON_DEV_SERVER_URL=http://localhost:8080 npm run build && electron .",
     "dev:app": "node dev-app.mjs",
@@ -16,8 +19,14 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
     "electron": "^44.9.0",
     "electron-builder": "^26.15.3",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "thinking-orbs": "^0.3.2",
+    "uuid": "^14.0.3",
+    "ws": "^8.22.0"
   }
 }

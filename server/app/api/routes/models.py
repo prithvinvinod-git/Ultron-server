@@ -116,6 +116,28 @@ async def models(container: Container) -> ModelCatalog:
             )
         )
 
+    # The free-LLM router exposes hundreds of upstream slots whose availability
+    # changes per provider quota. Showing all of them would make the picker
+    # unusable and mostly dead, so only the ids the operator named (or the
+    # built-in shortlist) are offered. A slot that is rate-limited at call time
+    # is handled by the fallback chain, not hidden here.
+    provider_settings = container.settings.providers
+    if "freellmapi" in configured_names:
+        for model_name in provider_settings.freellmapi_models:
+            model_id = f"freellmapi:{model_name}"
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            options.append(
+                ModelOption(
+                    id=model_id,
+                    provider="freellmapi",
+                    model=model_name,
+                    label=f"freellmapi · {model_name}",
+                    reason="available",
+                )
+            )
+
     return ModelCatalog(
         default=settings.default,
         providers=provider_infos,

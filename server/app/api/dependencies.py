@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from app.models.router import ModelRouter
     from app.notifications.service import NotificationService
     from app.observability.health import HealthService
+    from app.orb.presenter import OrbPresenter
     from app.scheduler.manager import ScheduleManager
     from app.tasks.manager import TaskManager
     from app.tools.registry import ToolRegistry
@@ -233,6 +234,16 @@ class ContainerProtocol(Protocol):
         Declared here for the same reason as ``events``: the routes need the
         manager without importing the composition root, so a test can supply one
         wired with fake STT/TTS engines and its own event bus.
+        """
+        ...
+
+    @property
+    def orb(self) -> OrbPresenter:
+        """The orb state presenter (spec §27), read by ``/orb``.
+
+        Declared here for the same reason as ``events``: the routes read the
+        projected state without importing the composition root, so a test can
+        supply a presenter over its own bus.
         """
         ...
 

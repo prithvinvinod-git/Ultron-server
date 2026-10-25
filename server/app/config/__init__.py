@@ -1,6 +1,7 @@
 """Configuration. All settings come from the environment; nothing is hard-coded."""
 
 from app.config.settings import (
+    DEFAULT_FREELLMAPI_MODELS,
     AgentSettings,
     AppSettings,
     BrowserSettings,
@@ -32,6 +33,7 @@ from app.config.settings import (
 )
 
 __all__ = [
+    "DEFAULT_FREELLMAPI_MODELS",
     "AgentSettings",
     "AppSettings",
     "BrowserSettings",

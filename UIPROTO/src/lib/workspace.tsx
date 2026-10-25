@@ -1,10 +1,10 @@
 import { createContext, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Activity, Bell, Bot, CalendarClock, Grid2X2, ListChecks, Radio, Settings } from "lucide-react";
+import { Activity, Bell, Bot, CalendarClock, Database, Grid2X2, ListChecks, MessageSquare, Radio, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 /** Top-level workspace tabs rendered in the left rail. */
-export type TabId = "command" | "agents" | "tasks" | "fleet" | "schedules" | "notifications" | "system" | "settings";
+export type TabId = "command" | "chat" | "agents" | "tasks" | "fleet" | "schedules" | "notifications" | "conversations" | "models" | "system" | "settings";
 
 /** What the inspector sidebar can describe. */
 export type SelectionKind = "agent" | "task" | "tool" | "node" | "device" | "schedule";
@@ -22,11 +22,14 @@ export interface TabDef {
 
 export const TABS: TabDef[] = [
   { id: "command", label: "Command center", icon: Grid2X2 },
+  { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "agents", label: "Agents", icon: Bot },
   { id: "tasks", label: "Tasks", icon: ListChecks },
   { id: "fleet", label: "Fleet", icon: Radio },
   { id: "schedules", label: "Schedules", icon: CalendarClock },
   { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "conversations", label: "Conversations", icon: ListChecks },
+  { id: "models", label: "Models", icon: Database },
   { id: "system", label: "System", icon: Activity },
   { id: "settings", label: "Settings", icon: Settings },
 ];

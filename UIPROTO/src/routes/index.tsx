@@ -16,6 +16,7 @@ import { useEventStream } from '@/lib/events';
 import { voiceApi } from '@/lib/api';
 import { getVoicePreferences } from '@/lib/voice-prefs';
 import { ChatPanel } from '@/components/ultron/chat/chat-panel';
+import { ChatWorkspace } from '@/components/ultron/chat/chat-workspace';
 import { useLiveSession } from '@/components/ultron/chat/use-live-session';
 import { useAgents, useHealth, useLiveInvalidation, useTasks } from '@/lib/queries';
 import { useWorkspace } from '@/lib/workspace';
@@ -76,6 +77,31 @@ function Index() {
   const voice = live.active || live.status !== 'idle';
   const voiceState = live.status;
 
+  // Orb → console voice gestures. The orb's start/stop buttons reach the main
+  // process, which forwards `voice:request` to this renderer through the narrow
+  // `window.ultron.onVoiceRequest` bridge. The orb does not own a voice
+  // pipeline — this listener drives the same `useLiveSession` the console uses.
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const toggleVoiceRef = useRef(toggleVoice);
+  toggleVoiceRef.current = toggleVoice;
+  useEffect(() => {
+    type VoiceRequestBridge = {
+      onVoiceRequest?: (
+        listener: (request: { action?: string; source?: string }) => void,
+      ) => () => void;
+    };
+    const bridge = (window as unknown as { ultron?: VoiceRequestBridge }).ultron;
+    const off = bridge?.onVoiceRequest?.((request) => {
+      if (request.action === 'start') {
+        if (!liveRef.current.active) void toggleVoiceRef.current();
+      } else if (request.action === 'stop' || request.action === 'cancel') {
+        if (liveRef.current.active) liveRef.current.stop();
+      }
+    });
+    return () => off?.();
+  }, []);
+
   async function toggleVoice() {
     if (live.active) { live.stop(); return; }
     setVoiceError(null);
@@ -118,11 +144,14 @@ function Index() {
         {voiceError && <div className="voice-hud-error core-voice-error" role="alert">{voiceError}</div>}
         <div className="mode-selector" aria-label="Core protocol">{[{name:'Focus',icon:Box},{name:'Code',icon:Code2},{name:'Creative',icon:Layers}].map(({name,icon:Icon}) => <Button key={name} variant="ghost" aria-pressed={mode === name} onClick={() => setMode(name)}><Icon />{name.toUpperCase()}</Button>)}</div><div className="core-footer-label"><ShieldCheck size={10} />PROTECTED BY ULTRON SENTINEL</div></section>
       <aside className="widget-column" aria-label="Session, capabilities and events"><SessionPanel /><ToolsPanel /><EventsPanel /><HealthPanel /></aside></div>,
+    chat: <ChatWorkspace onStartLive={() => { void toggleVoice(); }} liveActive={live.active} />,
     agents: <PanelGrid tab="agents" />,
     tasks: <PanelGrid tab="tasks" />,
     fleet: <PanelGrid tab="fleet" />,
     schedules: <div className="shell-panels"><SchedulesPanel /></div>,
-    notifications: <div className="shell-panels"><PlannedPanel title="Notifications" task="T512" /></div>,
+    notifications: <PanelGrid tab="notifications" />,
+    conversations: <PanelGrid tab="conversations" />,
+    models: <PanelGrid tab="models" />,
     system: <PanelGrid tab="system" />,
     settings: <SettingsPanel />,
   };

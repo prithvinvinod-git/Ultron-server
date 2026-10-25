@@ -54,6 +54,7 @@ const API_PREFIXES = [
   "/schedules",
   "/notifications",
   "/conversations",
+  "/orb",
 ];
 
 /** Prefixes that carry WebSocket upgrades (node protocol T162, voice WS). */
@@ -61,6 +62,13 @@ const WS_PREFIXES = ["/nodes", "/voice"];
 
 export interface StaticServerOptions {
   backendUrl?: string;
+  /**
+   * Directory served under `/__orb` — the floating orb renderer (spec §1).
+   * Serving it from this origin keeps it same-origin with `/events` and
+   * `/voice`, so the orb reuses the existing SSE/WS proxy instead of opening a
+   * second backend client with its own credentials.
+   */
+  orbRoot?: string;
 }
 
 export interface StaticServerHandle {
@@ -149,6 +157,44 @@ export function startStaticServer(
   const rootAbs = resolve(root);
   const indexFile = resolve(rootAbs, "index.html");
   const backendUrl = options.backendUrl;
+  const orbAbs = options.orbRoot ? resolve(options.orbRoot) : null;
+
+  /** Write one file with the desktop CSP. Returns false when it is missing. */
+  function sendFile(
+    target: string,
+    req: import("node:http").IncomingMessage,
+    res: import("node:http").ServerResponse,
+  ): boolean {
+    let size: number;
+    try {
+      const st = statSync(target);
+      if (!st.isFile()) return false;
+      size = st.size;
+    } catch {
+      return false;
+    }
+    const type = MIME[extname(target).toLowerCase()] ?? "application/octet-stream";
+    res.writeHead(200, {
+      "Content-Type": type,
+      "Content-Length": size,
+      "Content-Security-Policy": [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' blob:",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data: blob:",
+        "media-src 'self' blob: data:",
+        "worker-src 'self' blob:",
+        "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
+      ].join("; "),
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return true;
+    }
+    createReadStream(target).pipe(res);
+    return true;
+  }
 
   function isApiPrefix(pathname: string): boolean {
     return API_PREFIXES.some(
@@ -182,6 +228,28 @@ export function startStaticServer(
       return;
     }
 
+    // Floating orb renderer (spec §1): same origin as `/events`, so it uses the
+    // existing SSE proxy. Mounted before the SPA fallback, otherwise `/__orb/…`
+    // would be served the console shell.
+    if (orbAbs !== null && (pathname === "/__orb" || pathname.startsWith("/__orb/"))) {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.writeHead(405, { Allow: "GET, HEAD" }).end();
+        return;
+      }
+      const relative = pathname === "/__orb" || pathname === "/__orb/"
+        ? "index.html"
+        : pathname.slice("/__orb/".length);
+      const target = resolve(orbAbs, relative);
+      if (target !== orbAbs && !target.startsWith(orbAbs + sep)) {
+        res.writeHead(403).end();
+        return;
+      }
+      if (!sendFile(target, req, res)) {
+        res.writeHead(404, { "Content-Type": "text/plain" }).end("not found");
+      }
+      return;
+    }
+
     // Static assets are read-only: anything but GET/HEAD is a client error.
     if (req.method !== "GET" && req.method !== "HEAD") {
       res.writeHead(405, { Allow: "GET, HEAD" }).end();
@@ -210,29 +278,7 @@ export function startStaticServer(
       }
     }
 
-    const type = MIME[extname(target).toLowerCase()] ?? "application/octet-stream";
-    try {
-      const st = statSync(target);
-      res.writeHead(200, {
-        "Content-Type": type,
-        "Content-Length": st.size,
-        "Content-Security-Policy": [
-          "default-src 'self'",
-          "script-src 'self' 'unsafe-inline' blob:",
-          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-          "font-src 'self' https://fonts.gstatic.com",
-          "img-src 'self' data: blob:",
-          "media-src 'self' blob: data:",
-          "worker-src 'self' blob:",
-          "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
-        ].join("; "),
-      });
-      if (req.method === "HEAD") {
-        res.end();
-        return;
-      }
-      createReadStream(target).pipe(res);
-    } catch {
+    if (!sendFile(target, req, res)) {
       res.writeHead(404, { "Content-Type": "text/plain" }).end("not found");
     }
   });

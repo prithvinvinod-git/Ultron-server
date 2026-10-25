@@ -34,8 +34,11 @@ from Ollama's non-fragmented NDJSON.
 
 from __future__ import annotations
 
+import hashlib
 import json
-from collections.abc import AsyncIterator
+import re
+from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -81,14 +84,83 @@ _FINISH_REASONS: dict[str, FinishReason] = {
 }
 
 
-def _normalize_model(model: str) -> str:
-    """Drop a ``provider:`` prefix (the router passes ``<provider>:<model>``)."""
-    prefix = f"{_PROVIDER}:"
-    return model[len(prefix) :] if model.startswith(prefix) else model
-
-
 def _base_name(model: str) -> str:
     return model.split(":", 1)[0]
+
+
+#: The characters an OpenAI-compatible gateway accepts in a function name
+#: (OpenAI's own rule: ``a-z``, ``A-Z``, ``0-9``, ``_`` and ``-``).
+_WIRE_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+#: Gateways cap a function name at 64 characters; a longer one is rejected.
+_WIRE_NAME_MAX = 64
+
+
+def _wire_base(name: str) -> str:
+    """The provider-safe form of a registry name, ignoring uniqueness."""
+    return _WIRE_NAME_UNSAFE.sub("_", name)[:_WIRE_NAME_MAX]
+
+
+def _hashed_wire_name(name: str, base: str, taken: Mapping[str, str]) -> str:
+    """A collision-free wire name: the readable stem plus a digest of the name.
+
+    Only used when ``base`` is already taken (or the name did not fit), so the
+    common case keeps the plain underscored name. The digest is what makes the
+    mapping stable and collision-safe rather than depending on tool order.
+    """
+    length = 8
+    while True:
+        digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:length]
+        prefix = base[: _WIRE_NAME_MAX - length - 1]
+        wire = f"{prefix}_{digest}"
+        if wire not in taken:
+            return wire
+        length += 4
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolNames:
+    """Bidirectional map between ULTRON tool names and provider-safe names.
+
+    The tool registry namespaces with dots (``filesystem.delete``), but every
+    OpenAI-compatible gateway — OpenRouter and the providers behind it included
+    — accepts only ``[A-Za-z0-9_-]`` in a function name and rejects the whole
+    request with HTTP 400 otherwise. That is not cosmetic: a voice turn
+    advertises all registered tools, so the fallback chain could never answer.
+    The wire name is derived per request and decoded on every response, keeping
+    the registry vocabulary out of the transport while the loop and the tools
+    keep seeing their own names.
+    """
+
+    to_wire: Mapping[str, str]
+    from_wire: Mapping[str, str]
+
+    def encode(self, name: str) -> str:
+        return self.to_wire.get(name, name)
+
+    def decode(self, name: str) -> str:
+        return self.from_wire.get(name, name)
+
+    @classmethod
+    def for_tools(cls, tools: Sequence[ToolDefinition]) -> _ToolNames | None:
+        """Build the map for one request, or ``None`` when it is the identity.
+
+        ``None`` is the no-op case (every name already wire-safe, short and
+        unique) so callers can skip the lookup entirely and the adapter behaves
+        exactly as it did before the mapping existed.
+        """
+        to_wire: dict[str, str] = {}
+        from_wire: dict[str, str] = {}
+        for name in (tool.name for tool in tools):
+            if name in to_wire:
+                continue
+            base = _wire_base(name)
+            wire = base if base not in from_wire else _hashed_wire_name(name, base, from_wire)
+            to_wire[name] = wire
+            from_wire[wire] = name
+        if all(name == wire for name, wire in to_wire.items()):
+            return None
+        return cls(to_wire=to_wire, from_wire=from_wire)
 
 
 class OpenAIProvider(ModelProvider):
@@ -148,6 +220,16 @@ class OpenAIProvider(ModelProvider):
                 "OPENAI_API_KEY is not set",
                 model=model,
             )
+
+    def _model_id(self, model: str) -> str:
+        """The bare model id for this provider (``<provider>:<model>`` stripped).
+
+        A method rather than the module helper so an OpenAI-compatible subclass
+        (``OpenRouterProvider``) resolves its *own* prefix without overriding
+        :meth:`_payload` just to fix the ``model`` field.
+        """
+        prefix = f"{self.name}:"
+        return model[len(prefix) :] if model.startswith(prefix) else model
 
     # ---------------------------------------------------------------------- #
     # Errors and parsing
@@ -211,10 +293,16 @@ class OpenAIProvider(ModelProvider):
                 )
         return data
 
-    def _payload(self, request: CompletionRequest, *, stream: bool) -> dict[str, Any]:
+    def _payload(
+        self,
+        request: CompletionRequest,
+        *,
+        stream: bool,
+        names: _ToolNames | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "model": _normalize_model(request.model),
-            "messages": [self._message(message) for message in request.messages],
+            "model": self._model_id(request.model),
+            "messages": [self._message(message, names) for message in request.messages],
             "stream": stream,
         }
         if request.temperature is not None:
@@ -224,18 +312,18 @@ class OpenAIProvider(ModelProvider):
         if request.stop:
             payload["stop"] = list(request.stop)
         if request.tools:
-            payload["tools"] = [self._tool(tool) for tool in request.tools]
+            payload["tools"] = [self._tool(tool, names) for tool in request.tools]
         if stream:
             payload["stream_options"] = {"include_usage": True}
         return payload
 
-    def _message(self, message: ModelMessage) -> dict[str, Any]:
+    def _message(self, message: ModelMessage, names: _ToolNames | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {
             "role": MessageRole(message.role).value,
             "content": message.content,
         }
         if message.name is not None:
-            body["name"] = message.name
+            body["name"] = names.encode(message.name) if names else message.name
         if message.tool_call_id is not None:
             body["tool_call_id"] = message.tool_call_id
         if message.tool_calls:
@@ -243,17 +331,20 @@ class OpenAIProvider(ModelProvider):
                 {
                     "id": call.id,
                     "type": "function",
-                    "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                    "function": {
+                        "name": names.encode(call.name) if names else call.name,
+                        "arguments": json.dumps(call.arguments),
+                    },
                 }
                 for call in message.tool_calls
             ]
         return body
 
-    def _tool(self, tool: ToolDefinition) -> dict[str, Any]:
+    def _tool(self, tool: ToolDefinition, names: _ToolNames | None = None) -> dict[str, Any]:
         return {
             "type": "function",
             "function": {
-                "name": tool.name,
+                "name": names.encode(tool.name) if names else tool.name,
                 "description": tool.description,
                 "parameters": tool.parameters,
             },
@@ -274,7 +365,7 @@ class OpenAIProvider(ModelProvider):
             completion_tokens=completion if isinstance(completion, int) else 0,
         )
 
-    def _tool_calls(self, raw: Any) -> tuple[ToolCall, ...]:
+    def _tool_calls(self, raw: Any, names: _ToolNames | None = None) -> tuple[ToolCall, ...]:
         if not isinstance(raw, list):
             return ()
         calls: list[ToolCall] = []
@@ -293,7 +384,7 @@ class OpenAIProvider(ModelProvider):
             calls.append(
                 ToolCall(
                     id=call_id,
-                    name=name,
+                    name=names.decode(name) if names else name,
                     arguments=self._arguments(function.get("arguments")),
                 )
             )
@@ -323,7 +414,12 @@ class OpenAIProvider(ModelProvider):
             details={"arguments": value[:200]},
         )
 
-    def _response(self, data: dict[str, Any], requested_model: str) -> ModelResponse:
+    def _response(
+        self,
+        data: dict[str, Any],
+        requested_model: str,
+        names: _ToolNames | None = None,
+    ) -> ModelResponse:
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
             raise ModelResponseInvalidError(
@@ -337,7 +433,7 @@ class OpenAIProvider(ModelProvider):
         message = choice.get("message")
         message = message if isinstance(message, dict) else {}
         content = message.get("content")
-        tool_calls = self._tool_calls(message.get("tool_calls"))
+        tool_calls = self._tool_calls(message.get("tool_calls"), names)
         resolved = data.get("model")
         model = resolved if isinstance(resolved, str) and resolved else requested_model
         return ModelResponse(
@@ -397,12 +493,13 @@ class OpenAIProvider(ModelProvider):
     # ModelProvider contract
     # ---------------------------------------------------------------------- #
     async def chat(self, request: CompletionRequest) -> ModelResponse:
-        model = _normalize_model(request.model)
+        model = self._model_id(request.model)
         self._require_configured(model)
+        names = _ToolNames.for_tools(request.tools)
         try:
             response = await self._http().post(
                 self._endpoint("/chat/completions"),
-                json=self._payload(request, stream=False),
+                json=self._payload(request, stream=False, names=names),
                 headers=self._headers(),
                 timeout=self._timeout,
             )
@@ -419,18 +516,19 @@ class OpenAIProvider(ModelProvider):
                 _PROVIDER, f"OpenAI is unreachable: {exc}", model=model, cause=exc
             ) from exc
         self._raise_for_status(response.status_code, model)
-        return self._response(self._json(response, model), model)
+        return self._response(self._json(response, model), model, names)
 
     async def stream(self, request: CompletionRequest) -> AsyncIterator[ModelStreamChunk]:
-        model = _normalize_model(request.model)
+        model = self._model_id(request.model)
         self._require_configured(model)
-        accumulator = _ToolCallAccumulator()
+        names = _ToolNames.for_tools(request.tools)
+        accumulator = _ToolCallAccumulator(names)
         flushed = [False]
         try:
             async with self._http().stream(
                 "POST",
                 self._endpoint("/chat/completions"),
-                json=self._payload(request, stream=True),
+                json=self._payload(request, stream=True, names=names),
                 headers=self._headers(),
                 timeout=self._timeout,
             ) as response:
@@ -493,7 +591,7 @@ class OpenAIProvider(ModelProvider):
     async def is_available(self, model: str) -> bool:
         if not self.is_configured:
             return False
-        target = _normalize_model(model)
+        target = self._model_id(model)
         try:
             available = await self.list_models()
         except UltronError:
@@ -558,8 +656,9 @@ class _ToolCallAccumulator:
     one complete :class:`ToolCall` exactly as the non-streaming path produces.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, names: _ToolNames | None = None) -> None:
         self._parts: dict[int, dict[str, str]] = {}
+        self._names = names
 
     def add(self, fragments: list[Any]) -> None:
         for fragment in fragments:
@@ -603,7 +702,7 @@ class _ToolCallAccumulator:
             calls.append(
                 ToolCall(
                     id=part["id"] or f"{_PROVIDER}-call-{index}",
-                    name=part["name"],
+                    name=self._names.decode(part["name"]) if self._names else part["name"],
                     arguments=arguments,
                 )
             )

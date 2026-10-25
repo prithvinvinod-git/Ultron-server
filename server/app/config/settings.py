@@ -218,6 +218,26 @@ class OllamaSettings(BaseModel):
         return headers
 
 
+#: Models the settings picker offers for the local free-LLM router by default.
+#: ``auto`` lets the gateway choose a healthy upstream; the rest are concrete
+#: slots verified to answer Chat Completions (including tool calls) here. This
+#: is only a *picker* list — anything else can still be named in ``MODEL_*`` or
+#: passed per request, and the router falls back when a slot is rate-limited.
+DEFAULT_FREELLMAPI_MODELS: tuple[str, ...] = (
+    "auto",
+    "fusion",
+    "qwen3.8-27b",
+    "gemini-3.8-flash",
+    "glm-5.3-flash",
+    "deepseek-v4-flash",
+    "nemotron-3.5-lightning",
+    "minimax-m2.7",
+    "gemma-4-31b-it",
+    "command-a",
+    "mistral-small-4",
+)
+
+
 class ProviderSettings(BaseModel):
     """Optional cloud provider credentials (spec section 3).
 
@@ -241,6 +261,17 @@ class ProviderSettings(BaseModel):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_timeout: int = Field(default=60, ge=1)
 
+    # Local free-LLM router (OpenAI-compatible gateway on loopback). It is a
+    # *gateway*, not a credential store: ULTRON talks to it exactly like any
+    # other OpenAI-compatible provider, and the router owns the upstream keys.
+    freellmapi_api_key: SecretStr = SecretStr("")
+    freellmapi_base_url: str = "http://127.0.0.1:31415/v1"
+    freellmapi_timeout: int = Field(default=60, ge=1)
+    #: Model ids the router advertises, in picker order. Empty means "whatever
+    #: the gateway lists"; the catalog only ever reports ids named here or in
+    #: the router settings, so the picker cannot invent a model.
+    freellmapi_models: tuple[str, ...] = ()
+
     @property
     def openai_configured(self) -> bool:
         return bool(self.openai_api_key.get_secret_value().strip())
@@ -256,6 +287,10 @@ class ProviderSettings(BaseModel):
     @property
     def openrouter_configured(self) -> bool:
         return bool(self.openrouter_api_key.get_secret_value().strip())
+
+    @property
+    def freellmapi_configured(self) -> bool:
+        return bool(self.freellmapi_api_key.get_secret_value().strip())
 
 
 class ModelRouterSettings(BaseModel):
@@ -510,7 +545,7 @@ class VoiceSettings(BaseModel):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_stt_model: str = "whisper-large-v3-turbo"
 
-    tts_engine: Literal["none", "piper", "elevenlabs", "edge-tts", "fish-audio"] = "none"
+    tts_engine: Literal["none", "piper", "elevenlabs", "edge-tts", "fish-audio"] = "edge-tts"
     tts_fallback_engine: Literal["none", "piper", "elevenlabs", "edge-tts", "fish-audio"] = "none"
     tts_model_path: str = ""
     tts_binary_path: str = "piper"
@@ -523,7 +558,7 @@ class VoiceSettings(BaseModel):
     #: ElevenLabs output format. ``pcm_*`` yields raw PCM (matching Piper);
     #: any other value (``mp3_*``) yields a compressed container.
     elevenlabs_output_format: str = "pcm_22050"
-    edge_tts_voice: str = "en-US-AriaNeural"
+    edge_tts_voice: str = "en-US-AndrewNeural"
     fish_audio_api_key: SecretStr = SecretStr("")
     fish_audio_base_url: str = "https://api.fish.audio"
     fish_audio_voice_id: str = ""
@@ -732,6 +767,15 @@ class Settings(BaseSettings):
         "https://openrouter.ai/api/v1"
     )
     openrouter_timeout: Annotated[int, Field(alias="OPENROUTER_TIMEOUT")] = 60
+
+    # Local free-LLM router (OpenAI-compatible). The key authenticates ULTRON to
+    # the gateway on this machine; upstream provider keys stay in the router.
+    freellmapi_api_key: Annotated[SecretStr, Field(alias="FREELLMAPI_API_KEY")] = SecretStr("")
+    freellmapi_base_url: Annotated[str, Field(alias="FREELLMAPI_BASE_URL")] = (
+        "http://127.0.0.1:31415/v1"
+    )
+    freellmapi_timeout: Annotated[int, Field(alias="FREELLMAPI_TIMEOUT")] = 60
+    freellmapi_models: Annotated[str, Field(alias="FREELLMAPI_MODELS")] = ""
 
     model_default: Annotated[str, Field(alias="MODEL_DEFAULT")] = "ollama:qwen2.5:7b-instruct"
     model_coding: Annotated[str, Field(alias="MODEL_CODING")] = ""
@@ -1109,6 +1153,7 @@ class Settings(BaseSettings):
             "gemini": providers.gemini_configured,
             "anthropic": providers.anthropic_configured,
             "openrouter": providers.openrouter_configured,
+            "freellmapi": providers.freellmapi_configured,
         }
         if provider in credentialed and not credentialed[provider]:
             warnings.append(
@@ -1214,6 +1259,13 @@ class Settings(BaseSettings):
             openrouter_api_key=self.openrouter_api_key,
             openrouter_base_url=self.openrouter_base_url,
             openrouter_timeout=self.openrouter_timeout,
+            freellmapi_api_key=self.freellmapi_api_key,
+            freellmapi_base_url=self.freellmapi_base_url,
+            freellmapi_timeout=self.freellmapi_timeout,
+            freellmapi_models=(
+                tuple(item.strip() for item in self.freellmapi_models.split(",") if item.strip())
+                or DEFAULT_FREELLMAPI_MODELS
+            ),
         )
 
     @property

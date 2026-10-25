@@ -79,9 +79,34 @@
 .notification-indicator {position:absolute;width:4px;height:4px;background:var(--primary);right:9px;top:8px;border-radius:50%;}
 .user-avatar {width:30px;height:30px;border:1px solid var(--border);background:var(--secondary);display:grid;place-items:center;font-size:10px;border-radius:4px;}
 .command-header {display:flex;justify-content:space-between;align-items:center;padding:25px 32px 22px;gap:16px;}
+
+.orb-container {
+  margin-right: 16px;
+  flex-shrink: 0;
+}
+
+/* Responsive adjustments */
+@media(max-width:1150px) {
+  .command-header {padding-inline:22px;}
+  .orb-container {margin-right: 16px;}
+}
+@media(max-width:900px) {
+  .command-header {padding-top:20px;}
+  .orb-container {margin-right: 12px;}
+}
+@media(max-width:520px) {
+  .command-header {padding:21px 16px 18px;}
+  .orb-container {margin-right: 12px;}
+}
 .command-title {display:flex;align-items:center;gap:12px;}
 .command-title h2 {font:600 14px var(--font-display);}
 .command-title>span {font-size:8px;border-left:1px solid var(--border);padding-left:12px;color:var(--muted-foreground);}
+/* Electron-only control that brings the floating orb back after it hid itself
+   from its own context menu. The browser console has no orb window. */
+.orb-toggle {display:inline-flex;align-items:center;gap:5px;height:22px;margin-left:4px;padding:0 9px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--muted-foreground);font-size:7px;letter-spacing:.12em;text-transform:uppercase;}
+.orb-toggle svg {width:11px;height:11px;}
+.orb-toggle:hover {color:var(--primary);border-color:color-mix(in oklch,var(--primary) 45%,var(--border));background:var(--accent);}
+.orb-toggle[data-visible="false"] {color:var(--primary);border-color:color-mix(in oklch,var(--primary) 55%,var(--border));box-shadow:0 0 12px color-mix(in srgb,var(--primary) 22%,transparent);}
 .session-status {display:flex;gap:9px;align-items:center;color:var(--muted-foreground);font-size:9px;}
 .status-dot {display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--success);box-shadow:0 0 7px color-mix(in oklch,var(--success) 30%,transparent);flex-shrink:0;}
 .status-dot.inactive {background:var(--warm);}
@@ -253,6 +278,7 @@
   .command-title {display:block;}
   .command-title h2 {white-space:nowrap;}
   .command-title>span {display:block;border:0;padding:0;margin-top:4px;}
+  .orb-toggle {margin-top:6px;margin-left:0;}
   .session-status {padding-top:2px;gap:4px;white-space:nowrap;}
   .session-status>span:nth-child(2) {display:none;}
   .session-status {font-size:5px;}
@@ -533,6 +559,26 @@
 .chat-panel-transcript{flex:1;min-height:0;overflow-y:auto;padding:18px 16px;}
 .chat-transcript-inner{display:flex;flex-direction:column;gap:16px;min-height:100%;}
 .chat-panel-composer{padding:12px 14px 14px;border-top:1px solid color-mix(in oklch,var(--border) 70%,transparent);background:color-mix(in oklch,var(--background) 35%,transparent);}
+
+/* --- dedicated chat workspace (§69) -------------------------------------- */
+.chat-workspace{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;margin:0 28px 16px;border:1px solid color-mix(in oklch,var(--border) 80%,transparent);border-radius:14px;overflow:hidden;background:color-mix(in oklch,var(--card) 55%,transparent);backdrop-filter:blur(14px) saturate(115%);box-shadow:0 10px 26px oklch(0 0 0 / .28);}
+.chat-workspace-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid color-mix(in oklch,var(--border) 70%,transparent);background:color-mix(in oklch,var(--background) 30%,transparent);}
+.chat-workspace-title{display:flex;align-items:center;gap:9px;font:600 10px var(--font-display);letter-spacing:1.6px;text-transform:uppercase;color:var(--muted-foreground);}
+.chat-workspace-title strong{color:var(--foreground);font-weight:600;}
+.chat-workspace-sub{font:500 9px var(--font-mono,monospace);letter-spacing:.6px;text-transform:none;color:var(--muted-foreground);opacity:.8;}
+.chat-workspace-actions{display:flex;align-items:center;gap:4px;}
+.chat-workspace-actions button{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border:0;background:transparent;border-radius:6px;color:var(--muted-foreground);transition:background .2s,color .2s;}
+.chat-workspace-actions button:hover:not(:disabled){background:var(--accent);color:var(--foreground);}
+.chat-workspace-actions button[aria-pressed="true"]{background:var(--accent);color:var(--primary);}
+.chat-workspace-actions button:disabled{opacity:.4;cursor:not-allowed;}
+.chat-workspace-transcript{flex:1 1 auto;min-height:0;overflow-y:auto;padding:20px 22px;scrollbar-width:thin;}
+.chat-workspace-transcript::-webkit-scrollbar{width:6px;}
+.chat-workspace-transcript::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+.chat-workspace-composer{padding:12px 16px 10px;border-top:1px solid color-mix(in oklch,var(--border) 70%,transparent);background:color-mix(in oklch,var(--background) 35%,transparent);}
+.chat-workspace-foot{display:flex;justify-content:space-between;gap:12px;margin-top:8px;font:500 8px var(--font-mono,monospace);letter-spacing:.6px;text-transform:uppercase;color:var(--muted-foreground);opacity:.7;}
+.chat-workspace-error{border:1px solid color-mix(in oklch,var(--destructive) 45%,transparent);background:color-mix(in oklch,var(--destructive) 12%,transparent);color:var(--destructive,#ff5b5b);border-radius:12px;padding:8px 12px;font-size:12px;}
+@media(max-width:900px){.chat-workspace{margin:0 14px 14px;}.chat-workspace-transcript{padding:16px;}}
+@media(max-width:520px){.chat-workspace{margin:0 10px 10px;border-radius:10px;}.chat-workspace-header{padding:10px 12px;}.chat-workspace-transcript{padding:12px;}.chat-workspace-composer{padding:10px 10px 8px;}.chat-workspace-foot{display:none;}}
 
 /* --- chat history rail (slide-from-left, Â§69) ----------------------------- */
 .chat-history{

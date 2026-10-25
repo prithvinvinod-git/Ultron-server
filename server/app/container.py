@@ -49,6 +49,7 @@ from app.database.repositories import (
     MemoryRepository,
     MessageRepository,
     ModelUsageRepository,
+    NodeRepository,
     ProjectRepository,
     Repository,
     ScheduleRepository,
@@ -102,6 +103,7 @@ from app.observability.load_shed import LoadShedder
 from app.observability.logging import get_logger
 from app.observability.monitoring import MetricsSubscriber
 from app.observability.resources import ResourceMonitor
+from app.orb.presenter import OrbPresenter
 from app.scheduler.automation import EventAutomation
 from app.scheduler.manager import ScheduleManager
 from app.scheduler.planning import build_task_factory
@@ -169,6 +171,7 @@ class Container:
         self._event_automation: EventAutomation | None = None
         self._notification_dispatch: NotificationDispatch | None = None
         self._metrics_subscriber: MetricsSubscriber | None = None
+        self._orb: OrbPresenter | None = None
         self._resource_monitor: ResourceMonitor | None = None
         self._load_shedder: LoadShedder | None = None
         self._register_default_checks()
@@ -285,6 +288,19 @@ class Container:
         return self._notification_dispatch
 
     @property
+    def orb(self) -> OrbPresenter:
+        """Return the orb state presenter (spec §27/§59.13).
+
+        Cheap to build: it holds no I/O until :meth:`OrbPresenter.start`
+        subscribes to the bus, so a deployment with no orb renderer pays one
+        subscriber and no extra work. Always started, because the console's
+        in-page orb exists even when the desktop shell is not running.
+        """
+        if self._orb is None:
+            self._orb = OrbPresenter(self.events)
+        return self._orb
+
+    @property
     def metrics_subscriber(self) -> MetricsSubscriber:
         """Return the bus→metrics bridge (T181/T183, spec A§32).
 
@@ -347,6 +363,7 @@ class Container:
             self._node_gateway = NodeGateway(
                 settings=self.settings.computer_nodes,
                 bus=self.events,
+                require_auth=False,  # Allow node registration without pre-issued credentials (dev mode)
             )
         return self._node_gateway
 
@@ -465,6 +482,13 @@ class Container:
 
                 providers.append(OpenRouterProvider(settings=self.settings.providers))
 
+            # Local free-LLM router: loopback transport, OpenAI wire format. Its
+            # upstream keys stay in the router; ULTRON only holds the gateway key.
+            if self.settings.providers.freellmapi_configured:
+                from app.models.freellmapi import FreeLLMProvider
+
+                providers.append(FreeLLMProvider(settings=self.settings.providers))
+
             self._model_router = ModelRouter(
                 providers,
                 settings=router_settings,
@@ -582,6 +606,7 @@ class Container:
         await self._start_device_manager()
         await self._start_scheduler()
         await self._start_observability()
+        await self.orb.start()
 
     async def _start_observability(self) -> None:
         """Start the metrics subscriber, resource monitor and load shedder (T181/T182/T183/T271).
@@ -738,6 +763,9 @@ class Container:
         if self._metrics_subscriber is not None:
             await self._metrics_subscriber.stop()
             self._metrics_subscriber = None
+        if self._orb is not None:
+            await self._orb.stop()
+            self._orb = None
         if self._events is not None:
             self._events.close()
         if self._browser_sessions is not None:
@@ -892,6 +920,9 @@ class Container:
 
     def get_uuid_repository(self, session: AsyncSession) -> UuidRepository:
         return UuidRepository(session)
+
+    def get_node_repository(self, session: AsyncSession) -> NodeRepository:
+        return NodeRepository(session)
 
     # --------------------------------------------------------------------- #
     # Service factories (session-bound, like the repositories above)

@@ -43,6 +43,7 @@ from app.database.models.enums import (
 )
 from app.database.models.events import Event
 from app.database.models.memories import Memory, namespace_scope
+from app.database.models.nodes import Node
 from app.database.models.projects import Project
 from app.database.models.schedules import Schedule
 from app.database.models.sessions import Session
@@ -71,6 +72,7 @@ __all__ = [
     "MessageRole",
     "ModelUsage",
     "ModelUsageStatus",
+    "Node",
     "PermissionLevel",
     "Project",
     "Schedule",

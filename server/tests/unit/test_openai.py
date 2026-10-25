@@ -36,6 +36,7 @@ from app.models.base import (
     CompletionRequest,
     FinishReason,
     ModelMessage,
+    ToolCall,
     ToolDefinition,
 )
 from app.models.openai import OpenAIProvider
@@ -173,7 +174,8 @@ async def test_chat_builds_the_request_body() -> None:
     assert body["stop"] == ["END"]
     assert body["messages"] == [{"role": "user", "content": "hello"}]
     assert body["tools"][0]["type"] == "function"
-    assert body["tools"][0]["function"]["name"] == "mock.echo"
+    # Dotted registry names cannot go on the wire (§ provider-safe names below).
+    assert body["tools"][0]["function"]["name"] == "mock_echo"
 
 
 @respx.mock
@@ -494,3 +496,145 @@ async def test_the_adapter_leaves_an_injected_client_open() -> None:
 
     assert injected.is_closed is False
     await injected.aclose()
+
+
+# --------------------------------------------------------------------------- #
+# provider-safe tool names
+# --------------------------------------------------------------------------- #
+#: OpenAI-compatible gateways accept only ``[A-Za-z0-9_-]`` in a function name,
+#: while the registry namespaces with dots. A mismatch rejects the *whole*
+#: request with HTTP 400 — which is why a voice turn (41 tools) could not fall
+#: back to OpenRouter. These tests pin both directions of the mapping.
+def _tool(name: str) -> ToolDefinition:
+    return ToolDefinition(name=name, description=f"{name} tool", parameters={"type": "object"})
+
+
+def _call(name: str, call_id: str = "call_1") -> dict[str, Any]:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": '{"path": "x"}'},
+    }
+
+
+@respx.mock
+async def test_chat_sends_wire_safe_tool_names_and_decodes_the_answer() -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json=_completion(content="", tools=[_call("filesystem_delete")])
+        )
+    )
+    provider = OpenAIProvider(_settings())
+
+    response = await provider.chat(_request(tools=(_tool("filesystem.delete"),)))
+
+    sent = _json_body(route)["tools"]
+    assert [tool["function"]["name"] for tool in sent] == ["filesystem_delete"]
+    assert response.tool_calls[0].name == "filesystem.delete"
+
+
+@respx.mock
+async def test_chat_round_trips_assistant_tool_calls_in_the_history() -> None:
+    """A follow-up turn replays the model's call, so it must use the wire name."""
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion())
+    )
+    provider = OpenAIProvider(_settings())
+    history = (
+        ModelMessage(role=MessageRole.USER, content="delete it"),
+        ModelMessage(
+            role=MessageRole.ASSISTANT,
+            tool_calls=(ToolCall(id="call_1", name="filesystem.delete", arguments={}),),
+        ),
+    )
+
+    await provider.chat(_request(messages=history, tools=(_tool("filesystem.delete"),)))
+
+    replayed = _json_body(route)["messages"][1]["tool_calls"][0]["function"]["name"]
+    assert replayed == "filesystem_delete"
+
+
+@respx.mock
+async def test_chat_keeps_already_safe_tool_names_unchanged() -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion(content="", tools=[_call("mock_echo")]))
+    )
+    provider = OpenAIProvider(_settings())
+
+    response = await provider.chat(_request(tools=(_tool("mock_echo"),)))
+
+    assert _json_body(route)["tools"][0]["function"]["name"] == "mock_echo"
+    assert response.tool_calls[0].name == "mock_echo"
+
+
+@respx.mock
+async def test_chat_keeps_colliding_wire_names_distinct() -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion(content="", tools=[_call("x_y")]))
+    )
+    provider = OpenAIProvider(_settings())
+
+    response = await provider.chat(_request(tools=(_tool("x.y"), _tool("x_y"))))
+
+    wire = [tool["function"]["name"] for tool in _json_body(route)["tools"]]
+    assert len(set(wire)) == 2
+    # ``x.y`` got the plain underscored name first; the already-safe ``x_y``
+    # had to move aside so the two stay distinguishable.
+    assert wire[0] == "x_y"
+    assert wire[1] != "x_y"
+    assert response.tool_calls[0].name == "x.y"
+
+
+@respx.mock
+async def test_chat_fits_long_tool_names_inside_the_wire_limit() -> None:
+    long_name = "filesystem." + "very_long_directory_name_" * 4
+    sent: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        wire = sent["tools"][0]["function"]["name"]
+        return httpx.Response(200, json=_completion(content="", tools=[_call(wire)]))
+
+    respx.post(f"{BASE}/chat/completions").mock(side_effect=_capture)
+    provider = OpenAIProvider(_settings())
+
+    response = await provider.chat(_request(tools=(_tool(long_name),)))
+
+    assert len(sent["tools"][0]["function"]["name"]) <= 64
+    assert response.tool_calls[0].name == long_name
+
+
+@respx.mock
+async def test_stream_decodes_wire_tool_names() -> None:
+    body = _sse(
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {
+                                    "name": "filesystem_delete",
+                                    "arguments": '{"path": "x"}',
+                                },
+                            }
+                        ]
+                    },
+                }
+            ]
+        },
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+    )
+    respx.post(f"{BASE}/chat/completions").mock(return_value=httpx.Response(200, text=body))
+    provider = OpenAIProvider(_settings())
+
+    chunks = [
+        chunk
+        async for chunk in provider.stream(_request(tools=(_tool("filesystem.delete"),)))
+    ]
+
+    call = next(chunk.tool_call for chunk in chunks if chunk.tool_call)
+    assert call.name == "filesystem.delete"

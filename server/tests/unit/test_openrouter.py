@@ -16,11 +16,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 import respx
 
 from app.config import ProviderSettings
 from app.core.errors import ProviderNotConfiguredError
-from app.models.base import CompletionRequest, ModelMessage
+from app.models.base import CompletionRequest, ModelMessage, ToolDefinition
 from app.models.openrouter import OpenRouterProvider
 
 import pytest
@@ -105,3 +106,89 @@ async def test_chat_without_key_raises_provider_not_configured() -> None:
     )
     with pytest.raises(ProviderNotConfiguredError):
         await provider.chat(request)
+
+
+# --------------------------------------------------------------------------- #
+# streaming
+# --------------------------------------------------------------------------- #
+def _sse(*events: dict[str, Any]) -> str:
+    lines = [f"data: {json.dumps(event)}" for event in events]
+    lines.append("data: [DONE]")
+    return "\n\n".join(lines) + "\n\n"
+
+
+@respx.mock
+async def test_stream_is_an_async_iterator() -> None:
+    """Regression: the override used to return a coroutine, so ``async for`` failed.
+
+    ``OpenAIProvider.stream`` is an async generator; a plain ``async def``
+    wrapper is not iterable. Every streamed turn that fell back to OpenRouter
+    died with "requires an object with __aiter__ method, got coroutine".
+    """
+    body = _sse(
+        {
+            "model": "nvidia/nemotron-3.5-lightning:free",
+            "choices": [{"index": 0, "delta": {"content": "Hi"}}],
+        },
+        {
+            "model": "nvidia/nemotron-3.5-lightning:free",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        },
+    )
+    respx.post(f"{BASE}/chat/completions").mock(return_value=httpx.Response(200, text=body))
+    provider = OpenRouterProvider(settings=_settings())
+    request = CompletionRequest(
+        messages=(ModelMessage(role="user", content="hi"),),
+        model="openrouter:nvidia/nemotron-3.5-lightning:free",
+    )
+
+    chunks = [chunk async for chunk in provider.stream(request)]
+
+    assert "".join(chunk.delta for chunk in chunks) == "Hi"
+    assert chunks[-1].is_final
+
+
+@respx.mock
+async def test_chat_maps_dotted_tool_names_onto_the_openrouter_wire() -> None:
+    """OpenRouter rejects dotted function names with HTTP 400, so they are mapped."""
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=respx.MockResponse(
+            200,
+            json={
+                "model": "nvidia/nemotron-3.5-lightning:free",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "filesystem_delete",
+                                        "arguments": '{"path": "notes.txt"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+            },
+        )
+    )
+    provider = OpenRouterProvider(settings=_settings())
+    request = CompletionRequest(
+        messages=(ModelMessage(role="user", content="delete it"),),
+        model="openrouter:nvidia/nemotron-3.5-lightning:free",
+        tools=(ToolDefinition(name="filesystem.delete", description="delete"),),
+    )
+
+    response = await provider.chat(request)
+
+    payload = json.loads(route.calls.last.request.content)
+    assert payload["tools"][0]["function"]["name"] == "filesystem_delete"
+    assert response.tool_calls[0].name == "filesystem.delete"
+    assert response.tool_calls[0].arguments == {"path": "notes.txt"}

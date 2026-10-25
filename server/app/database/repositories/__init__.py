@@ -62,6 +62,7 @@ from app.database.repositories.identity import (
     UserRepository,
 )
 from app.database.repositories.memories import MemoryRepository
+from app.database.repositories.nodes import NodeRepository
 from app.database.repositories.projects import ProjectRepository
 from app.database.repositories.schedules import ScheduleRepository
 from app.database.repositories.tasks import (
@@ -86,6 +87,7 @@ __all__ = [
     "EventRepository",
     "MemoryRepository",
     "MessageRepository",
+    "NodeRepository",
     "ModelUsageRepository",
     "ProjectRepository",
     "Repository",

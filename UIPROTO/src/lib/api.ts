@@ -547,8 +547,29 @@ export const schedulesApi = {
     remove: (id: string) => api.del<void>(`/schedules/${id}`),
 };
 
+export interface NotificationProviders {
+    enabled: boolean;
+    active: string;
+    providers: ProviderRead[];
+}
+
+export interface TestNotificationRequest {
+    title?: string;
+    message?: string;
+    level: NotificationLevel;
+}
+
+export interface TestNotificationResult {
+    provider: string;
+    delivered: boolean;
+    detail: string | null;
+}
+
 export const notificationsApi = {
     list: () => api.get<NotificationItem[]>("/notifications"),
+    providers: () => api.get<NotificationProviders>("/notifications/providers"),
+    test: (body: TestNotificationRequest) =>
+        api.post<TestNotificationResult>("/notifications/test", body),
 };
 
 export const conversationsApi = {

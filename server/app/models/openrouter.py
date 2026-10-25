@@ -145,11 +145,6 @@ class OpenRouterProvider(OpenAIProvider):
         pass
 
     # Override methods that use _normalize_model to use OpenRouter's prefix
-    def _payload(self, request, *, stream: bool) -> dict:
-        payload = super()._payload(request, stream=stream)
-        payload["model"] = _normalize_model(request.model)
-        return payload
-
     async def chat(self, request):
         model = _normalize_model(request.model)
         self._require_configured(model)
@@ -157,9 +152,15 @@ class OpenRouterProvider(OpenAIProvider):
         return await super().chat(request)
 
     async def stream(self, request):
+        # ``OpenAIProvider.stream`` is an async *generator*: it must be iterated,
+        # not awaited. Wrapping it in a plain ``async def`` returned a coroutine
+        # and the router's ``async for`` failed with "requires an object with
+        # __aiter__ method", which broke every streamed turn that fell back to
+        # OpenRouter.
         model = _normalize_model(request.model)
         self._require_configured(model)
-        return await super().stream(request)
+        async for chunk in super().stream(request):
+            yield chunk
 
     async def is_available(self, model: str) -> bool:
         if not self.is_configured:

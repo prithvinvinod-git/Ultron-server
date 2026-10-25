@@ -201,8 +201,14 @@ function Start-UltronDocker {
         Write-Ok "Docker engine running"
         return $true
     }
-    $desktop = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
-    if (-not (Test-Path -LiteralPath $desktop)) {
+    # Docker Desktop installs per-machine (Program Files) or per-user
+    # (%LOCALAPPDATA%). Checking only Program Files made the launcher refuse to
+    # start on a per-user install even though the engine was installed.
+    $desktop = @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe")
+        (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\Docker Desktop.exe")
+    ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $desktop) {
         Write-Fail "Docker engine is not running and Docker Desktop is not installed"
         return $false
     }
@@ -515,7 +521,19 @@ if ($Status) {
     exit $(if ($script:Failures -gt 0) { 1 } else { 0 })
 }
 
-if (-not (Start-UltronDocker)) { exit 1 }
+if (-not (Start-UltronDocker)) {
+    # Docker is only one way to provide PostgreSQL. If something is already
+    # listening on the configured port (for example the native Windows service),
+    # continuing is correct: Start-UltronPostgres reuses it instead of creating
+    # a container that could not bind the same port anyway.
+    $dbParts = Get-UltronDatabaseParts -Url (Get-UltronDatabaseUrl)
+    if ($dbParts -and (Test-TcpPort -TcpPort $dbParts.Port)) {
+        Write-Warn "Docker unavailable; reusing the PostgreSQL already listening on 127.0.0.1:$($dbParts.Port)"
+    }
+    else {
+        exit 1
+    }
+}
 Start-UltronPostgres
 Start-UltronRedis
 Invoke-UltronMigrations

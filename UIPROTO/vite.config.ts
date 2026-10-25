@@ -32,6 +32,7 @@ const API_PREFIXES = [
     "/schedules",
     "/notifications",
     "/conversations",
+    "/orb",
 ];
 
 export default defineConfig({

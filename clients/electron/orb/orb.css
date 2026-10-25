@@ -1,0 +1,139 @@
+/* Floating orb window — transparent, no chrome, no scrollbars. */
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+  font-family: "Segoe UI", "Inter", system-ui, sans-serif;
+}
+
+.orb-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* The console orb (`thinking-orbs`): 64×64 CSS px, sized by the component's
+   own inline style. Only its position inside this window is widget-specific —
+   no filter, scaling or opacity is applied, so it renders exactly as it does
+   in the app's header.
+
+   `will-change: transform` is load-bearing, not a perf hint: on Windows a
+   GPU-accelerated 2D canvas inside a *transparent* BrowserWindow is not
+   composited unless it gets its own layer (the window shows the caption but no
+   orb). Promoting the canvas makes it paint. */
+.orb {
+  position: absolute;
+  left: 50%;
+  top: 108px;
+  transform: translate(-50%, -50%);
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* Widget chrome (hover / hold / drag rings) lives on its own transparent
+   layer so it can sit outside the orb without touching the orb's canvas. */
+.orb-affordances {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* The hit region is the orb only: the transparent corners of the window stay
+   click-through (the main process toggles that with setIgnoreMouseEvents). */
+.orb-hit {
+  position: absolute;
+  left: 50%;
+  top: 108px;
+  width: 110px;
+  height: 110px;
+  margin-left: -55px;
+  margin-top: -55px;
+  border-radius: 50%;
+  cursor: grab;
+  outline: none;
+}
+
+.orb-hit:active {
+  cursor: grabbing;
+}
+
+.orb-hit:focus-visible {
+  box-shadow: 0 0 0 2px rgba(56, 232, 255, 0.55);
+}
+
+.orb-root[data-state="idle"] .orb-hit,
+.orb-root[data-state="hidden"] .orb-hit {
+  cursor: pointer;
+}
+
+.orb-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Sits just under the 64px orb (centre 108 → bottom 140). */
+  top: 152px;
+  margin: 0;
+  padding: 0 14px;
+  min-height: 30px;
+  max-height: 52px;
+  overflow: hidden;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: #c7f4ff;
+  text-shadow: 0 0 8px rgba(18, 92, 120, 0.9), 0 1px 2px rgba(0, 0, 0, 0.85);
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  pointer-events: none;
+}
+
+.orb-caption[data-visible="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.orb-caption[data-kind="partial"] {
+  color: #9fe9ff;
+  font-style: italic;
+}
+
+.orb-caption[data-kind="final"] {
+  color: #e8fbff;
+}
+
+.orb-caption[data-kind="error"] {
+  color: #ffc2cc;
+  text-shadow: 0 0 10px rgba(160, 20, 45, 0.9);
+}
+
+.orb-caption[data-kind="notice"] {
+  color: #ffe7b0;
+  text-shadow: 0 0 10px rgba(150, 100, 10, 0.9);
+}
+
+.orb-caption[data-kind="disconnected"] {
+  color: #b9c7d4;
+  text-shadow: 0 0 8px rgba(20, 40, 60, 0.9);
+}

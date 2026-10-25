@@ -30,6 +30,7 @@ export const queryKeys = {
   device: (id: string) => ["devices", id] as const,
   schedules: ["schedules"] as const,
   notifications: ["notifications"] as const,
+  conversations: ["conversations"] as const,
   metrics: ["metrics"] as const,
   steps: (taskId: string) => ["tasks", taskId, "steps"] as const,
 };
