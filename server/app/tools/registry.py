@@ -137,6 +137,10 @@ class ToolRegistry:
             "timeout": resolved.timeout,
             "reversibility": resolved.reversibility.value,
             "node_scope": resolved.node_scope,
+            # §64.11 / T331: whether this tool is routed to a node.
+            # Non-targeted tools execute on the cloud server directly;
+            # targeted tools are dispatched over the node transport.
+            "targeted": resolved.targeted,
             "audit": resolved.audit,
             # §59.6 category, derived from the name prefix rather than
             # declared twice: "filesystem.read" -> "filesystem".

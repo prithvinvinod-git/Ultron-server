@@ -129,6 +129,8 @@ def test_describe_carries_the_full_registry_record(registry: ToolRegistry) -> No
         "timeout": 2.0,
         "reversibility": "reversible",
         "node_scope": "windows",
+        # §64.11 / T331: targeted defaults to False for non-node tools
+        "targeted": False,
         "audit": False,
         "category": "mock",
     }
@@ -224,6 +226,36 @@ def test_a_tool_whose_schema_is_broken_fails_at_registration() -> None:
     with pytest.raises(ToolSchemaInvalidError) as excinfo:
         registry.register(BrokenSchema())
     assert "not a valid JSON Schema" in excinfo.value.message
+
+
+def test_targeted_flag_in_describe(registry: ToolRegistry) -> None:
+    """T331: targeted flag defaults to False, shown in describe output."""
+    record = registry.describe("mock.echo")
+    assert record["targeted"] is False
+
+
+def test_targeted_flag_reflected_when_set() -> None:
+    """Tools with node_scope can set targeted=True, reflected in describe."""
+    registry = ToolRegistry()
+
+    class NodeTool(Tool):
+        name = "mock.node"
+        description = "Node tool."
+        input_schema: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {},
+        }
+        permission_level = PermissionLevel.MODIFY_PROJECT
+        timeout = 10.0
+        reversibility = Reversibility.REVERSIBLE
+        targeted = True
+        async def execute(self, arguments: Mapping[str, Any]) -> Any:
+            return {}
+
+    registry.register(NodeTool())
+    record = registry.describe("mock.node")
+    assert record["targeted"] is True
+    assert record["node_scope"] is None  # targeted without node_scope is valid
 
 
 def test_a_non_object_schema_is_refused_before_jsonschema_sees_it() -> None:

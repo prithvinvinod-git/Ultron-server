@@ -119,6 +119,50 @@ def test_capability_strings_match_schema(schema: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# T331: nodes.schema.json — shared /nodes payload definition
+# --------------------------------------------------------------------------- #
+_NODES_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[3] / "clients" / "protocol" / "nodes.schema.json"
+)
+
+
+def test_nodes_schema_required_fields() -> None:
+    """nodes.schema.json required set matches NodeCapabilities's truly-required fields."""
+    nodes_schema = json.loads(_NODES_SCHEMA_PATH.read_text(encoding="utf-8"))
+    declared = set(nodes_schema["required"])
+    required = {name for name, field in NodeCapabilities.model_fields.items() if field.is_required()}
+    assert declared == required, f"schema={declared} != required={required}"
+
+
+def test_nodes_schema_properties_match_node_capabilities() -> None:
+    """Every property in nodes.schema.json must match NodeCapabilities fields."""
+    nodes_schema = json.loads(_NODES_SCHEMA_PATH.read_text(encoding="utf-8"))
+    declared = set(nodes_schema["properties"].keys())
+    model_fields = set(NodeCapabilities.model_fields.keys())
+    assert declared == model_fields, f"schema={declared} != model={model_fields}"
+
+
+def test_nodes_schema_forbids_extra_properties() -> None:
+    """nodes.schema.json must use additionalProperties: false."""
+    nodes_schema = json.loads(_NODES_SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert nodes_schema.get("additionalProperties") is False
+
+
+def test_nodes_schema_validates_node_capabilities_instance() -> None:
+    """A real NodeCapabilities instance must validate against nodes.schema.json."""
+    nodes_schema = json.loads(_NODES_SCHEMA_PATH.read_text(encoding="utf-8"))
+    caps = NodeCapabilities(
+        node_id="windows-1",
+        node_type=NodeType.WINDOWS,
+        name="Laptop",
+        capabilities=["windows_ui", "screenshots"],
+        status=NodeStatus.ONLINE,
+        last_seen=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+    )
+    _validate(nodes_schema, caps.model_dump(mode="json"))
+
+
+# --------------------------------------------------------------------------- #
 # Server output validates against the normative schema
 # --------------------------------------------------------------------------- #
 

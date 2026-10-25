@@ -92,6 +92,11 @@ class Tool(ABC):
     """§64.11: which node executes this tool. ``None`` means the cloud server —
     the target-selection stage (§16 amendment) dispatches node-targeted tools,
     and tools that do not declare a node run where they always ran."""
+    targeted: ClassVar[bool] = False
+    """§64.11 / T331: whether this tool is meant to be dispatched to a node
+    rather than executing on the cloud server directly. A targeted tool
+    cannot run without a resolved node target; unconfigured node-targeted
+    execution is a non-retryable routing failure, not a degraded answer."""
     audit: ClassVar[bool] = False
     """§59.6: whether the call is an audited *sensitive* operation beyond the
     permission check §15 already logs for every execution."""
