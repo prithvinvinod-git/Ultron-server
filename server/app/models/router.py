@@ -749,6 +749,7 @@ class ModelRouter:
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
                     "total_tokens": response.usage.total_tokens,
+                    "response_text": response.content or "",
                 },
             )
 
