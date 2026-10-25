@@ -1268,8 +1268,8 @@ started before its dependency in §59.28.
 
 ### Cross-cutting
 
-- [ ] **T270** Observability additions (§59.24) — `authorization_level` (evaluated and granted; denials record the level refused at) and `token_usage` where reported, **absent rather than estimated**; correlatable with §15 audit rows and the request correlation id; never log §30 tokens. Dependency: T032.
-- [ ] **T271** Load-shedding order (§59.25) — unload local model -> drop LiveKit -> stop background agents/schedules -> reduce agent fan-out -> report degradation; observable; **correctness is never shedding material**, so pressure must never reduce a permission evaluation. Dependency: T031, T044.
+- [x] **T270** Observability additions (§59.24) — `authorization_level` (evaluated and granted; denials record the level refused at) and `token_usage` where reported, **absent rather than estimated**; correlatable with §15 audit rows and the request correlation id; never log §30 tokens. Dependency: T032.
+- [x] **T271** Load-shedding order (§59.25) — unload local model -> drop LiveKit -> stop background agents/schedules -> reduce agent fan-out -> report degradation; observable; **correctness is never shedding material**, so pressure must never reduce a permission evaluation. Dependency: T031, T044.
 
 ### Not yet decomposed
 
