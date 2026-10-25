@@ -228,6 +228,13 @@ class SubsystemMetrics:
             buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 300),
             registry=registry,
         )
+        # §59.24: tool authorization events, correlated with §15 audit rows.
+        self.tool_authorization = Counter(
+            "ultron_tool_authorization",
+            "Tool authorization evaluations by level and decision.",
+            ("tool", "level", "decision"),
+            registry=registry,
+        )
 
         # -- Models ---------------------------------------------------------
         self.model_requests = Counter(

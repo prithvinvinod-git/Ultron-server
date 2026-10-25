@@ -343,7 +343,9 @@ class ModelRouter:
             latency_ms = int((self._mono() - started) * 1000)
             if result is not None:
                 result = replace(result, selection_reason=candidate.reason)
-                await self._publish_selected(candidate, capability, streaming=False)
+                await self._publish_selected(
+                    candidate, capability, streaming=False, response=result
+                )
                 if self._should_record_usage():
                     await self._record_usage(
                         candidate=candidate,
@@ -416,7 +418,6 @@ class ModelRouter:
                 continue
             else:
                 self.record_success(candidate.provider.name)
-                await self._publish_selected(candidate, capability, streaming=True)
                 if self._should_record_usage():
                     latency_ms = int((self._mono() - started_at) * 1000)
                     usage = last_chunk.usage if last_chunk else None
@@ -433,6 +434,18 @@ class ModelRouter:
                         error=None,
                         latency_ms=latency_ms,
                     )
+                else:
+                    # Build response for _publish_selected even without usage recording
+                    usage = last_chunk.usage if last_chunk else None
+                    response = ModelResponse(
+                        model=candidate.model,
+                        usage=usage,
+                        provider=candidate.provider.name,
+                        selection_reason=candidate.reason,
+                    )
+                await self._publish_selected(
+                    candidate, capability, streaming=True, response=response
+                )
                 return
             finally:
                 self._leave(candidate.provider.name)
@@ -652,9 +665,7 @@ class ModelRouter:
             return
 
         provider_name = candidate.provider.name
-        model_name = candidate.model
         model_id = candidate.model_id
-        reason = candidate.reason
         request_id = response.request_id if response else None
 
         # Determine status and error details
@@ -704,7 +715,12 @@ class ModelRouter:
     # Events (§19)
     # ---------------------------------------------------------------------- #
     async def _publish_selected(
-        self, candidate: _Candidate, capability: str, *, streaming: bool
+        self,
+        candidate: _Candidate,
+        capability: str,
+        *,
+        streaming: bool,
+        response: ModelResponse | None = None,
     ) -> None:
         await self._publish(
             "MODEL_SELECTED",
@@ -714,8 +730,27 @@ class ModelRouter:
                 "capability": capability,
                 "reason": candidate.reason,
                 "streaming": streaming,
+                # §59.24: token_usage where reported, absent rather than estimated.
+                "prompt_tokens": (
+                    response.usage.prompt_tokens if response and response.usage else None
+                ),
+                "completion_tokens": (
+                    response.usage.completion_tokens if response and response.usage else None
+                ),
             },
         )
+        # MODEL_RESPONSE: emit when a full response arrives with usage data.
+        if response and response.usage and response.usage.total_tokens > 0:
+            await self._publish(
+                "MODEL_RESPONSE",
+                {
+                    "provider": candidate.provider.name,
+                    "model": candidate.model,
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                },
+            )
 
     async def _publish_failed(self, candidate: _Candidate, error: UltronError | None) -> None:
         await self._publish(
@@ -730,7 +765,12 @@ class ModelRouter:
             },
         )
 
-    async def _publish_fallback(self, from_candidate: _Candidate, to_candidate: _Candidate, error: UltronError) -> None:
+    async def _publish_fallback(
+        self,
+        from_candidate: _Candidate,
+        to_candidate: _Candidate,
+        error: UltronError,
+    ) -> None:
         """Publish a MODEL_FALLBACK event when falling back to another model."""
         await self._publish(
             "MODEL_FALLBACK",

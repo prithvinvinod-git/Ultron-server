@@ -42,6 +42,7 @@ def test_subsystem_metrics_are_registered_and_render() -> None:
         "ultron_tasks_created_total",
         "ultron_task_duration_seconds",
         "ultron_tool_executions_total",
+        "ultron_tool_authorization_total",
         "ultron_model_requests_total",
         "ultron_model_tokens_total",
         "ultron_event_bus_published_total",
@@ -104,6 +105,18 @@ def test_tool_and_model_metrics_from_events() -> None:
     text = exporter.render().decode()
     assert 'ultron_tool_executions_total{outcome="completed",tool="read_file"} 1.0' in text
     assert 'ultron_model_requests_total{model="llama3",provider="ollama"} 1.0' in text
+
+
+def test_tool_authorization_metric_from_events() -> None:
+    """§59.24: PERMISSION_GRANTED/DENIED events update authorization metrics."""
+    exporter, sub = _subscriber()
+    sub.handle(_env(
+        EventType.PERMISSION_GRANTED.value,
+        {"tool": "fs.write", "level": "MODIFY_PROJECT"},
+    ))
+    text = exporter.render().decode()
+    # Prometheus sorts labels alphabetically
+    assert 'ultron_tool_authorization_total{decision="granted",level="MODIFY_PROJECT",tool="fs.write"} 1.0' in text
 
 
 def test_subscriber_survives_a_malformed_payload() -> None:

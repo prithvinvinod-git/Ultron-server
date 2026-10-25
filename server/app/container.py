@@ -98,6 +98,7 @@ from app.observability.health import (
     check_postgresql,
     check_redis,
 )
+from app.observability.load_shed import LoadShedder
 from app.observability.logging import get_logger
 from app.observability.monitoring import MetricsSubscriber
 from app.observability.resources import ResourceMonitor
@@ -169,6 +170,7 @@ class Container:
         self._notification_dispatch: NotificationDispatch | None = None
         self._metrics_subscriber: MetricsSubscriber | None = None
         self._resource_monitor: ResourceMonitor | None = None
+        self._load_shedder: LoadShedder | None = None
         self._register_default_checks()
 
     # --------------------------------------------------------------------- #
@@ -306,6 +308,19 @@ class Container:
                 bus=self.events,
             )
         return self._resource_monitor
+
+    @property
+    def load_shedder(self) -> LoadShedder:
+        """Return the load-shedding coordinator (§59.25, T271)."""
+        if self._load_shedder is None:
+            self._load_shedder = LoadShedder(
+                bus=self.events,
+                settings=self.settings.observability,
+                model_provider=self.model_router.get("ollama"),
+                schedule_manager=self.schedule_manager,
+                max_concurrent_override=self.settings.agents.max_concurrency,
+            )
+        return self._load_shedder
 
     @property
     def browser_sessions(self) -> BrowserSessionManager:
@@ -569,16 +584,19 @@ class Container:
         await self._start_observability()
 
     async def _start_observability(self) -> None:
-        """Start the metrics subscriber and resource monitor (T181/T182/T183).
+        """Start the metrics subscriber, resource monitor and load shedder (T181/T182/T183/T271).
 
         The metrics subscriber is always started: it only reads the bus and
         writes in-process counters, so it costs one task and no I/O. The
         resource monitor is started only when enabled and only when the host can
         actually be sampled; both conditions are enforced inside
         :meth:`ResourceMonitor.start`, which is a no-op otherwise.
+        The load shedder is started only when ``load_shed_enabled`` is true.
         """
         await self.metrics_subscriber.start()
         await self.resource_monitor.start()
+        if self.settings.observability.load_shed_enabled:
+            await self.load_shedder.start()
 
     async def _start_scheduler(self) -> None:
         """Start the §44 scheduler, event automation and §45 dispatch (T170-T173).
@@ -714,6 +732,9 @@ class Container:
         if self._resource_monitor is not None:
             await self._resource_monitor.stop()
             self._resource_monitor = None
+        if self._load_shedder is not None:
+            await self._load_shedder.stop()
+            self._load_shedder = None
         if self._metrics_subscriber is not None:
             await self._metrics_subscriber.stop()
             self._metrics_subscriber = None

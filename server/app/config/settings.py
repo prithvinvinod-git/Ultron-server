@@ -610,6 +610,12 @@ class ObservabilitySettings(BaseModel):
     audit_log_retention_days: int = Field(default=180, ge=1)
     healthcheck_cache_ttl: int = Field(default=5, ge=0)
 
+    # Load-shedding (§59.25, T271)
+    load_shed_enabled: bool = False
+    load_shed_cpu_high: float = Field(default=90.0, ge=0.0, le=100.0)
+    load_shed_ram_high: float = Field(default=95.0, ge=0.0, le=100.0)
+    load_shed_gpu_high: float = Field(default=95.0, ge=0.0, le=100.0)
+
 
 class EventsSettings(BaseModel):
     """Event bus and client stream settings (spec §19, T023).
@@ -950,6 +956,12 @@ class Settings(BaseSettings):
     event_retention_days: Annotated[int, Field(alias="EVENT_RETENTION_DAYS")] = 30
     audit_log_retention_days: Annotated[int, Field(alias="AUDIT_LOG_RETENTION_DAYS")] = 180
     healthcheck_cache_ttl: Annotated[int, Field(alias="HEALTHCHECK_CACHE_TTL")] = 5
+
+    # Load-shedding (§59.25, T271)
+    load_shed_enabled: Annotated[bool, Field(alias="LOAD_SHED_ENABLED")] = False
+    load_shed_cpu_high: Annotated[float, Field(alias="LOAD_SHED_CPU_HIGH")] = 90.0
+    load_shed_ram_high: Annotated[float, Field(alias="LOAD_SHED_RAM_HIGH")] = 95.0
+    load_shed_gpu_high: Annotated[float, Field(alias="LOAD_SHED_GPU_HIGH")] = 95.0
 
     # Event stream (T023). Flat fields here, assembled into EventsSettings by the
     # `events` property below -- see the note on `security` about model_copy and
@@ -1447,6 +1459,10 @@ class Settings(BaseSettings):
             event_retention_days=self.event_retention_days,
             audit_log_retention_days=self.audit_log_retention_days,
             healthcheck_cache_ttl=self.healthcheck_cache_ttl,
+            load_shed_enabled=self.load_shed_enabled,
+            load_shed_cpu_high=self.load_shed_cpu_high,
+            load_shed_ram_high=self.load_shed_ram_high,
+            load_shed_gpu_high=self.load_shed_gpu_high,
         )
 
     @property

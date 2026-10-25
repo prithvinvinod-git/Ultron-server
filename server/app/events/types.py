@@ -131,6 +131,13 @@ class EventType(StrEnum):
     PERMISSION_DENIED = "PERMISSION_DENIED"
     SYSTEM_ERROR = "SYSTEM_ERROR"
 
+    # -- spec §59.25, load-shedding (5) -------------------------------------
+    LOAD_SHED_STARTED = "LOAD_SHED_STARTED"
+    LOAD_SHED_COMPLETE = "LOAD_SHED_COMPLETE"
+    LOAD_SHED_FAILED = "LOAD_SHED_FAILED"
+    LOAD_SHED_RESTORED = "LOAD_SHED_RESTORED"
+    DEGRADATION_REPORTED = "DEGRADATION_REPORTED"
+
 
 #: The whole catalog as plain strings, for membership checks against values
 #: that never went through the enum (env config, wire payloads, log fields).

@@ -40,10 +40,12 @@ whenever somebody remembered.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.core.errors import ConfirmationRequiredError, PermissionDeniedError
 from app.database.models import PermissionLevel
+from app.events.types import EventType
+from app.observability.logging import get_logger
 from app.security.audit import (
     PERMISSION_ALLOWED,
     PERMISSION_CONFIRM_REQUIRED,
@@ -83,11 +85,13 @@ class PermissionManager:
         audit: AuditLogger,
         grants: GrantStore | None = None,
         default_level: PermissionLevel | None = None,
+        bus: Any = None,
     ) -> None:
         """``audit`` is required — see the module docstring's third point."""
         self._audit = audit
         self._grants = grants
         self._default_level = default_level
+        self._bus = bus
 
     async def resolve(self, request: PermissionRequest) -> PermissionLevel | None:
         """The principal's level for this request's scope, or ``None``.
@@ -204,3 +208,23 @@ class PermissionManager:
             await self._audit.denied(**fields)
         else:
             await self._audit.confirm_required(**fields)
+
+        # §59.24: publish authorization events for correlatable observability.
+        if self._bus is not None:
+            try:
+                await self._bus.publish(
+                    EventType.PERMISSION_GRANTED.value
+                    if decision is PermissionDecision.ALLOWED
+                    else EventType.PERMISSION_DENIED.value,
+                    {
+                        "tool": request.tool,
+                        "level": request.required_level.name,
+                        "granted": granted.name if granted is not None else None,
+                        "principal": request.principal,
+                        "node": request.node,
+                        "decision": decision.value,
+                    },
+                    persist=True,
+                )
+            except Exception:
+                get_logger(__name__).exception("failed to publish auth event")

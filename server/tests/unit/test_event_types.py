@@ -125,8 +125,17 @@ SECTION_66_8 = [
     "SYSTEM_ERROR",
 ]
 
+# -- spec §59.25, load-shedding (5) -----------------------------------------
+SECTION_59_25 = [
+    "LOAD_SHED_STARTED",
+    "LOAD_SHED_COMPLETE",
+    "LOAD_SHED_FAILED",
+    "LOAD_SHED_RESTORED",
+    "DEGRADATION_REPORTED",
+]
+
 ALL_SPEC_NAMES = (
-    SECTION_19 + SECTION_27 + SECTION_64_9 + SECTION_64_15 + SECTION_65_15 + SECTION_66_8
+    SECTION_19 + SECTION_27 + SECTION_64_9 + SECTION_64_15 + SECTION_65_15 + SECTION_66_8 + SECTION_59_25
 )
 
 
@@ -146,7 +155,8 @@ class TestCatalogCompleteness:
         assert len(SECTION_64_15) == 2
         assert len(SECTION_65_15) == 8
         assert len(SECTION_66_8) == 15
-        assert len(EventType) == 71
+        assert len(SECTION_59_25) == 5
+        assert len(EventType) == 76
 
     def test_transport_signals_are_not_domain_events(self) -> None:
         """``stream.*`` describes the pipe; a domain subscriber must not see it."""

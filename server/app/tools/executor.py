@@ -87,7 +87,7 @@ from app.core.permissions import PermissionManager
 from app.database.models import VerificationOutcome
 from app.events.bus import EventBus
 from app.events.types import EventType
-from app.observability.logging import correlation, get_logger
+from app.observability.logging import correlation, get_logger, get_request_id
 from app.security.audit import ACTOR_USER
 from app.security.permissions import PermissionRequest
 from app.tools.base import Reversibility, Tool
@@ -204,6 +204,11 @@ class ToolExecutor:
             "principal": principal,
             "client": client,
             "node": request.node,
+            # §59.24: authorization_level records the evaluated/required level
+            # so every tool event is correlatable with §15 audit rows.
+            "authorization_level": request.required_level.name,
+            # §59.24: request_id for cross-event correlation within a turn.
+            "request_id": get_request_id(),
         }
         await self._publish(
             EventType.TOOL_STARTED,

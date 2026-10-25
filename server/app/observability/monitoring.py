@@ -152,6 +152,11 @@ class MetricsSubscriber:
             self._on_agent_terminal(event_type, envelope)
         elif event_type in {EventType.TOOL_COMPLETED.value, EventType.TOOL_FAILED.value}:
             self._on_tool_outcome(event_type, payload)
+        elif event_type in {
+            EventType.PERMISSION_GRANTED.value,
+            EventType.PERMISSION_DENIED.value,
+        }:
+            self._on_permission_outcome(event_type, payload)
         elif event_type in {"MODEL_SELECTED", "MODEL_REQUEST"}:
             self._on_model_request(payload)
         elif event_type in {"MODEL_FAILED", "MODEL_RESPONSE"}:
@@ -237,6 +242,14 @@ class MetricsSubscriber:
         duration_ms = payload.get("duration_ms")
         if isinstance(duration_ms, int | float):
             self._metrics.tool_duration.labels(tool).observe(max(0.0, float(duration_ms) / 1000.0))
+
+    # -- Permissions (§59.24) ------------------------------------------- #
+
+    def _on_permission_outcome(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        tool = str(payload.get("tool") or "unknown")
+        level = str(payload.get("level") or "unknown")
+        decision = "granted" if event_type == EventType.PERMISSION_GRANTED.value else "denied"
+        self._metrics.tool_authorization.labels(tool, level, decision).inc()
 
     # -- Models ---------------------------------------------------------- #
 

@@ -417,7 +417,14 @@ async def test_events_pair_strictly_and_payloads_carry_no_arguments(
     assert completed.event_type == EventType.TOOL_COMPLETED
     assert started.persist is False  # the start is not the durable record
     assert completed.persist is True  # the outcome is (§66.16 history)
-    assert set(started.payload) == {"tool", "principal", "client", "node"}
+    assert set(started.payload) == {
+        "tool",
+        "principal",
+        "client",
+        "node",
+        "authorization_level",
+        "request_id",
+    }
     assert set(completed.payload) == {
         "tool",
         "principal",
@@ -425,7 +432,13 @@ async def test_events_pair_strictly_and_payloads_carry_no_arguments(
         "node",
         "duration_ms",
         "verification",
+        "authorization_level",
+        "request_id",
     }
+    assert started.payload["authorization_level"] == "READ_ONLY"
+    # request_id is None when no ambient request context is active;
+    # the field is always present, but the value may be null.
+    assert "request_id" in started.payload
     assert completed.payload["verification"] == VerificationOutcome.UNVERIFIED
     assert await drain(subscription) == []
 

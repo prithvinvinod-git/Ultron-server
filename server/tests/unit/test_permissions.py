@@ -75,11 +75,13 @@ def make_manager(
     default_level: PermissionLevel | None = None,
     *,
     durable: Any = None,
+    bus: Any = None,
 ) -> PermissionManager:
     return PermissionManager(
         audit=AuditLogger(audit_sink, durable=durable),
         grants=grants,
         default_level=default_level,
+        bus=bus,
     )
 
 
