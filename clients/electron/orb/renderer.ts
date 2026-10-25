@@ -356,6 +356,13 @@ function hideCaption(): void {
   publishHitRegion();
 }
 
+/**
+ * Sets the caption text for both the bottom orb caption and the top caption.
+ * When called from transcript events, both captions show the same STT text.
+ * @param text - The text to display
+ * @param kind - The caption kind (partial/final/error/notice/disconnected)
+ * @param holdMs - How long to keep the caption visible (ms), 0 = until next caption
+ */
 function setCaption(text: string, kind: string, holdMs = 0): void {
   const trimmed = text.trim();
   if (trimmed.length === 0) return;
@@ -366,6 +373,7 @@ function setCaption(text: string, kind: string, holdMs = 0): void {
   if (captionEl.textContent !== trimmed) captionEl.textContent = trimmed;
   captionEl.dataset.kind = kind;
   captionEl.dataset.visible = "true";
+  // Mirror to top caption so both show the same text (STT or AI response)
   if (captionTopEl.textContent !== trimmed) captionTopEl.textContent = trimmed;
   captionTopEl.dataset.kind = kind;
   captionTopEl.dataset.visible = "true";
@@ -375,6 +383,33 @@ function setCaption(text: string, kind: string, holdMs = 0): void {
     captionTimer = window.setTimeout(() => {
       captionTimer = null;
       hideCaption();
+    }, holdMs);
+  }
+}
+
+/**
+ * Sets only the top caption text. Use this for AI response text while the
+ * bottom caption continues showing STT recognized text.
+ * @param text - The response text to display
+ * @param kind - The caption kind (partial/final/error/notice/disconnected)
+ * @param holdMs - How long to keep the caption visible (ms), 0 = until next caption
+ */
+function setResponseText(text: string, kind: string, holdMs = 0): void {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return;
+  if (captionTopEl.textContent !== trimmed) captionTopEl.textContent = trimmed;
+  captionTopEl.dataset.kind = kind;
+  captionTopEl.dataset.visible = "true";
+  // Do NOT update the bottom caption - it keeps its own text
+  publishHitRegion();
+  if (holdMs > 0) {
+    captionLockUntil = performance.now() + holdMs;
+    captionTimer = window.setTimeout(() => {
+      captionTimer = null;
+      // Only hide the top caption, leave bottom intact
+      captionTopEl.dataset.visible = "false";
+      captionTopEl.dataset.kind = "";
+      publishHitRegion();
     }, holdMs);
   }
 }
