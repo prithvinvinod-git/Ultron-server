@@ -137,3 +137,58 @@ body {
   color: #b9c7d4;
   text-shadow: 0 0 8px rgba(20, 40, 60, 0.9);
 }
+
+/* Caption above the orb - mirrors STT/response text permanently. */
+.orb-caption-top {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 60px; /* Above the orb (orb centre at 108px, radius 32px → top at ~76px) */
+  margin: 0;
+  padding: 0 14px;
+  min-height: 30px;
+  max-height: 52px;
+  overflow: hidden;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: #c7f4ff;
+  text-shadow: 0 0 8px rgba(18, 92, 120, 0.9), 0 1px 2px rgba(0, 0, 0, 0.85);
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  pointer-events: none;
+}
+
+.orb-caption-top[data-visible="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.orb-caption-top[data-kind="partial"] {
+  color: #9fe9ff;
+  font-style: italic;
+}
+
+.orb-caption-top[data-kind="final"] {
+  color: #e8fbff;
+}
+
+.orb-caption-top[data-kind="error"] {
+  color: #ffc2cc;
+  text-shadow: 0 0 10px rgba(160, 20, 45, 0.9);
+}
+
+.orb-caption-top[data-kind="notice"] {
+  color: #ffe7b0;
+  text-shadow: 0 0 10px rgba(150, 100, 10, 0.9);
+}
+
+.orb-caption-top[data-kind="disconnected"] {
+  color: #b9c7d4;
+  text-shadow: 0 0 8px rgba(20, 40, 60, 0.9);
+}

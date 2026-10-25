@@ -241,6 +241,7 @@ const canvas = requireOrbCanvas();
 const overlay = element<HTMLCanvasElement>("orb-affordances");
 const hit = element<HTMLDivElement>("orb-hit");
 const captionEl = element<HTMLParagraphElement>("orb-caption");
+const captionTopEl = element<HTMLParagraphElement>("orb-caption-top");
 const context = canvas.getContext("2d");
 const overlayContext = overlay.getContext("2d");
 
@@ -351,6 +352,7 @@ function draw(now: number): void {
 // ------------------------------------------------------------------------- //
 function hideCaption(): void {
   captionEl.dataset.visible = "false";
+  captionTopEl.dataset.visible = "false";
   publishHitRegion();
 }
 
@@ -364,6 +366,9 @@ function setCaption(text: string, kind: string, holdMs = 0): void {
   if (captionEl.textContent !== trimmed) captionEl.textContent = trimmed;
   captionEl.dataset.kind = kind;
   captionEl.dataset.visible = "true";
+  if (captionTopEl.textContent !== trimmed) captionTopEl.textContent = trimmed;
+  captionTopEl.dataset.kind = kind;
+  captionTopEl.dataset.visible = "true";
   publishHitRegion();
   if (holdMs > 0) {
     captionLockUntil = performance.now() + holdMs;
@@ -631,18 +636,38 @@ function hitRegion(): OrbHitRegion {
   const center = orbCenter();
   const captionVisible = captionEl.dataset.visible === "true";
   const rect = captionVisible ? captionEl.getBoundingClientRect() : null;
+  const captionTopVisible = captionTopEl.dataset.visible === "true";
+  const rectTop = captionTopVisible ? captionTopEl.getBoundingClientRect() : null;
+  
+  // Union of both caption rects if both are visible
+  let captionRect: { left: number; top: number; right: number; bottom: number } | null = rect
+    ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
+    : null;
+  if (rectTop !== null) {
+    if (captionRect === null) {
+      captionRect = { left: rectTop.left, top: rectTop.top, right: rectTop.right, bottom: rectTop.bottom };
+    } else {
+      captionRect = {
+        left: Math.min(captionRect.left, rectTop.left),
+        top: Math.min(captionRect.top, rectTop.top),
+        right: Math.max(captionRect.right, rectTop.right),
+        bottom: Math.max(captionRect.bottom, rectTop.bottom),
+      };
+    }
+  }
+  
   return {
     x: center.x,
     y: center.y,
     radius: HIT_RADIUS,
     caption:
-      rect === null
+      captionRect === null
         ? null
         : {
-            left: rect.left - 10,
-            top: rect.top - 6,
-            right: rect.right + 10,
-            bottom: rect.bottom + 6,
+            left: captionRect.left - 10,
+            top: captionRect.top - 6,
+            right: captionRect.right + 10,
+            bottom: captionRect.bottom + 6,
           },
   };
 }
