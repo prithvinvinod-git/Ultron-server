@@ -552,6 +552,7 @@ const WATCHED = [
   "ORB_HIDE",
   "TRANSCRIPT_PARTIAL",
   "TRANSCRIPT_FINAL",
+  "MODEL_RESPONSE",
   "WAKE_DETECTED",
 ] as const;
 
@@ -611,6 +612,12 @@ function connectStream(): void {
         handleTranscript(envelope, true);
       } else if (type === "TRANSCRIPT_FINAL") {
         handleTranscript(envelope, false);
+      } else if (type === "MODEL_RESPONSE") {
+        const payload = envelope.payload ?? {};
+        const text = typeof payload.text === "string" ? payload.text : "";
+        if (text.length > 0) {
+          setResponseText(text, "final", 7000);
+        }
       }
     });
   }
