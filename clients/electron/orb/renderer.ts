@@ -352,18 +352,17 @@ function draw(now: number): void {
 // ------------------------------------------------------------------------- //
 function hideCaption(): void {
   captionEl.dataset.visible = "false";
-  captionTopEl.dataset.visible = "false";
   publishHitRegion();
 }
 
 /**
- * Sets the caption text for both the bottom orb caption and the top caption.
- * When called from transcript events, both captions show the same STT text.
- * @param text - The text to display
+ * Sets the bottom caption text from STT recognized text.
+ * The top caption is NOT affected - it keeps its own text.
+ * @param text - The STT recognized text
  * @param kind - The caption kind (partial/final/error/notice/disconnected)
  * @param holdMs - How long to keep the caption visible (ms), 0 = until next caption
  */
-function setCaption(text: string, kind: string, holdMs = 0): void {
+function setSTTCaption(text: string, kind: string, holdMs = 0): void {
   const trimmed = text.trim();
   if (trimmed.length === 0) return;
   if (captionTimer !== null) {
@@ -373,10 +372,6 @@ function setCaption(text: string, kind: string, holdMs = 0): void {
   if (captionEl.textContent !== trimmed) captionEl.textContent = trimmed;
   captionEl.dataset.kind = kind;
   captionEl.dataset.visible = "true";
-  // Mirror to top caption so both show the same text (STT or AI response)
-  if (captionTopEl.textContent !== trimmed) captionTopEl.textContent = trimmed;
-  captionTopEl.dataset.kind = kind;
-  captionTopEl.dataset.visible = "true";
   publishHitRegion();
   if (holdMs > 0) {
     captionLockUntil = performance.now() + holdMs;
@@ -388,9 +383,9 @@ function setCaption(text: string, kind: string, holdMs = 0): void {
 }
 
 /**
- * Sets only the top caption text. Use this for AI response text while the
- * bottom caption continues showing STT recognized text.
- * @param text - The response text to display
+ * Sets the top caption text from AI response text.
+ * The bottom caption is NOT affected - it keeps its own STT text.
+ * @param text - The AI response text
  * @param kind - The caption kind (partial/final/error/notice/disconnected)
  * @param holdMs - How long to keep the caption visible (ms), 0 = until next caption
  */
@@ -400,7 +395,6 @@ function setResponseText(text: string, kind: string, holdMs = 0): void {
   if (captionTopEl.textContent !== trimmed) captionTopEl.textContent = trimmed;
   captionTopEl.dataset.kind = kind;
   captionTopEl.dataset.visible = "true";
-  // Do NOT update the bottom caption - it keeps its own text
   publishHitRegion();
   if (holdMs > 0) {
     captionLockUntil = performance.now() + holdMs;
@@ -418,39 +412,40 @@ function stateCaption(payload: OrbStatePayload): void {
   const now = performance.now();
   const error = payload.error;
   if (error && typeof error.message === "string" && error.message.length > 0) {
-    setCaption(error.message.replace(/_/g, " ").toLowerCase(), "error");
+    setSTTCaption(error.message.replace(/_/g, " ").toLowerCase(), "error");
     return;
   }
   const notification = payload.notification;
   if (notification && typeof notification.message === "string" && notification.message.length > 0) {
-    setCaption(notification.message, "notice", 6500);
+    setSTTCaption(notification.message, "notice", 6500);
     return;
   }
   if (now < captionLockUntil) return;
   switch (state) {
     case "listening":
-      setCaption(
+      setSTTCaption(
         payload.pending === true ? "Listening…" : "Listening…",
         "notice",
       );
       break;
     case "thinking":
-      setCaption("Thinking…", "notice");
+      setSTTCaption("Thinking…", "notice");
       break;
     case "executing":
-      setCaption("Working on it…", "notice");
+      setSTTCaption("Working on it…", "notice");
       break;
     case "responding":
-      setCaption("Composing a reply…", "notice");
+      // AI response goes to top caption, not STT bottom caption
       break;
     case "disconnected":
-      setCaption("Reconnecting to ULTRON…", "disconnected");
+      setSTTCaption("Reconnecting to ULTRON…", "disconnected");
       break;
     case "idle":
     case "hidden":
     case "speaking":
     case "notification":
     case "error":
+      // No caption change needed
       break;
   }
 }
@@ -532,14 +527,14 @@ function handleTranscript(envelope: OrbEnvelope, partial: boolean): void {
   const payload = envelope.payload ?? {};
   const text = typeof payload.text === "string" ? payload.text : "";
   if (text.length === 0) return;
-  setCaption(text, partial ? "partial" : "final", partial ? 3200 : 7000);
+  setSTTCaption(text, partial ? "partial" : "final", partial ? 3200 : 7000);
 }
 
 function setDisconnected(): void {
   if (!connected) return;
   connected = false;
   applyStateName("disconnected");
-  setCaption("Reconnecting to ULTRON…", "disconnected");
+  setSTTCaption("Reconnecting to ULTRON…", "disconnected");
   root.dataset.connection = "down";
 }
 
