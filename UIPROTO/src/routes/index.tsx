@@ -21,6 +21,7 @@ import { useLiveSession } from '@/components/ultron/chat/use-live-session';
 import { useAgents, useHealth, useLiveInvalidation, useTasks } from '@/lib/queries';
 import { useWorkspace } from '@/lib/workspace';
 import type { TabId } from '@/lib/workspace';
+import { MemoryPanel } from '@/components/ultron/memory-panel';
 
 export const Route = createFileRoute('/')({
   head: () => ({ meta: [
@@ -154,6 +155,7 @@ function Index() {
     models: <PanelGrid tab="models" />,
     system: <PanelGrid tab="system" />,
     settings: <SettingsPanel />,
+    memory: <MemoryPanel />,
   };
 
   return <AppShell>{views[tab]}{!live.active && <CommandConsole onChat={openChat} />}<ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} onStartLive={() => { setChatOpen(false); void toggleVoice(); }} /></AppShell>;

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.loop import ToolCallingLoop, definitions_from_registry
 from app.core.permissions import PermissionManager
 from app.database.models.enums import MessageRole, PermissionLevel
+from app.observability.logging import get_memory_manager, memory_context
 from app.models.base import ModelMessage
 from app.security.audit import AuditLogger
 from app.tools.executor import ToolExecutor
@@ -75,6 +76,47 @@ def build_agent_responder(
         history: Any = (),
     ) -> str:
         async with session_scope() as session:
+            # Bind the per-request memory manager so that memory.tools
+            # (memory.store / memory.recall) work inside the agent loop.
+            manager = get_memory_manager()
+            if manager is None:
+                # No memory context is globally bound; attempt to obtain it
+                # from the session's container. The session_scope yields an
+                # AsyncSession; we cannot reach the container here, so we
+                # surface a best-effort failure rather than silently skipping
+                # memory tools.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "memory_context not bound for voice turn; memory tools will be unavailable"
+                )
+            else:
+                # Memory manager is already bound by get_memory_manager();
+                # wrap the loop in it so memory tools can access it.
+                async with memory_context(manager):
+                    executor = ToolExecutor(
+                        registry=tools,
+                        permissions=PermissionManager(
+                            audit=AuditLogger(get_audit_log_repository(session)),
+                            default_level=default_permission_level,
+                        ),
+                        events=events,
+                    )
+                    loop = ToolCallingLoop(
+                        router=model_router,
+                        executor=executor,
+                        tools=definitions_from_registry(tools),
+                        capability=capability,
+                        system_prompt=system_prompt,
+                    )
+                    result = await loop.run(
+                        _to_messages(history, text),
+                        principal=principal,
+                        client="voice",
+                    )
+                    return str(result.content)
+
+            # Fallback: run the loop without memory context (memory tools will
+            # raise RuntimeError if called, which the model can handle/retry).
             executor = ToolExecutor(
                 registry=tools,
                 permissions=PermissionManager(
@@ -95,6 +137,6 @@ def build_agent_responder(
                 principal=principal,
                 client="voice",
             )
-        return str(result.content)
+            return str(result.content)
 
     return responder

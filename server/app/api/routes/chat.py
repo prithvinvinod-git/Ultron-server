@@ -24,7 +24,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from time import perf_counter
-from typing import Annotated, Any
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import StreamingResponse
@@ -42,6 +42,7 @@ from app.core.permissions import PermissionManager
 from app.database.models.enums import MessageRole, PermissionLevel
 from app.models.base import ModelMessage
 from app.observability.logging import memory_context
+from app.schemas.genui import GenUiResponse
 from app.security.audit import AuditLogger
 from app.tools.executor import ToolExecutor
 
@@ -87,6 +88,10 @@ class ChatResponse(BaseModel):
     named one can start tracking it from the first answer."""
     selection_reason: str = ""
     """Why this model was chosen: ``"capability"`` or ``"fallback"`` (T224, §59.9)."""
+    genui: Optional[GenUiResponse] = None
+    """Optional validated GenUI response. Clients that understand this key will
+    render the visualization; others will ignore it and display the plain-text
+    answer. Only included when the AI provides a valid structured response."""
 
 
 async def _system_with_memory(
@@ -235,6 +240,9 @@ async def chat(
 
     When ``conversation_id`` is given (or the caller is a known user), the turn
     is appended to that thread's transcript before the response is written.
+
+    The AI may include a GenUI specification in the response. When provided,
+    it is validated server-side and included in the response for client-side rendering.
     """
     started = perf_counter()
     conversation_id = await _resolve_conversation(
@@ -264,6 +272,21 @@ async def chat(
             result=result,
         )
 
+    # Extract GenUI from the model response if present
+    genui: Optional[GenUiResponse] = None
+    if hasattr(result.response, "genui") and result.response.genui:
+        try:
+            from app.schemas.genui import validate_genui_response
+            validated = validate_genui_response(result.response.genui.model_dump())
+            if validated is not None:
+                genui = validated
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "GenUI validation failed in chat endpoint",
+                extra={"event": "genui_validation_error"},
+            )
+
     return ChatResponse(
         answer=result.content,
         model=result.response.model,
@@ -273,6 +296,7 @@ async def chat(
         took_ms=int((perf_counter() - started) * 1000),
         conversation_id=conversation_id,
         selection_reason=result.selection_reason,
+        genui=genui,
     )
 
 
@@ -291,7 +315,7 @@ def _sse(event: str, data: dict[str, Any]) -> bytes:
 @router.post(
     "/stream",
     summary="Ask one question, streamed (Server-Sent Events)",
-    response_description="A text/event-stream of token, tool and done frames.",
+    response_description="A text/event-stream of token, tool, done and optional genui frames.",
     responses={
         status.HTTP_401_UNAUTHORIZED: {"description": "No usable credential."},
     },
@@ -313,13 +337,19 @@ async def chat_stream(
     - ``done`` — the terminal frame: ``{"answer", "model", "finish_reason",
       "tool_calls", "iterations", "took_ms", "conversation_id"}``, the same
       fields ``POST /chat`` returns. A client that ignores every other frame
-      still ends up with the full answer.
+      still ends up with the full answer. May also contain a ``genui`` key
+      with a structured visualization specification.
     - ``error`` — ``{"code", "message"}`` if the turn fails mid-stream. The
       pipeline's typed errors are surfaced here rather than as a broken socket.
 
     When ``conversation_id`` is given (or the caller is a known user), the
     completed turn is appended to that thread's transcript before the terminal
     frame is emitted — the answer the client just read is the answer stored.
+
+    The AI may include a GenUI specification in the ``done`` frame under the
+    ``genui`` key. Clients that understand this key will render the
+    corresponding visualization; others will simply ignore it and display the
+    plain-text answer as before.
     """
     started = perf_counter()
     conversation_id = await _resolve_conversation(
@@ -373,9 +403,12 @@ async def chat_stream(
                                 model=result.response.model,
                                 result=result,
                             )
+                        # Build the done payload; genui is embedded if the AI
+                        # provided a valid structured response.
                         yield _sse(
                             "done",
-                            _done_payload(result, answer_parts, started, conversation_id),
+                            _done_payload(result, answer_parts, started, conversation_id,
+                                          genui=getattr(chunk, "genui", None)),
                         )
         except Exception as exc:
             if isinstance(exc, UltronError):
@@ -400,11 +433,17 @@ def _done_payload(
     answer_parts: list[str],
     started: float,
     conversation_id: uuid.UUID | None = None,
+    *,
+    genui: Optional[GenUiResponse] = None,
 ) -> dict[str, Any]:
-    """The terminal ``done`` frame, matching ``ChatResponse``'s fields."""
-    answer = result.content if result.content else "".join(answer_parts)
-    return {
-        "answer": answer,
+    """The terminal ``done`` frame, matching ``ChatResponse``'s fields.
+
+    An optional validated ``GenUiResponse`` may be included under the key
+    ``genui``. Clients that understand the ``genui`` key will render the
+    visualization; others will ignore it and display the plain-text answer.
+    """
+    payload = {
+        "answer": result.content if result.content else "".join(answer_parts),
         "model": result.response.model,
         "finish_reason": result.response.finish_reason.value,
         "tool_calls": result.tool_calls,
@@ -413,6 +452,18 @@ def _done_payload(
         "conversation_id": str(conversation_id) if conversation_id is not None else None,
         "selection_reason": result.selection_reason,
     }
+    if genui is not None:
+        # Validate before embedding; silently drop if invalid
+        from app.schemas.genui import validate_genui_response
+        if validate_genui_response(genui.model_dump()) is not None:
+            payload["genui"] = genui.model_dump()
+        else:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Invalid GenUI dropped from done frame",
+                extra={"event": "genui_dropped_from_done"},
+            )
+    return payload
 
 
 __all__ = [

@@ -191,6 +191,7 @@ def _include_routers(app: FastAPI) -> None:
         devices,
         events,
         health,
+        memory,
         models,
         nodes,
         notifications,

@@ -1,10 +1,10 @@
 import { createContext, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Activity, Bell, Bot, CalendarClock, Database, Grid2X2, ListChecks, MessageSquare, Radio, Settings } from "lucide-react";
+import { Activity, Bell, Bot, Brain, CalendarClock, Database, Grid2X2, ListChecks, MessageSquare, Radio, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 /** Top-level workspace tabs rendered in the left rail. */
-export type TabId = "command" | "chat" | "agents" | "tasks" | "fleet" | "schedules" | "notifications" | "conversations" | "models" | "system" | "settings";
+export type TabId = "command" | "chat" | "agents" | "tasks" | "fleet" | "schedules" | "notifications" | "conversations" | "models" | "system" | "settings" | "memory";
 
 /** What the inspector sidebar can describe. */
 export type SelectionKind = "agent" | "task" | "tool" | "node" | "device" | "schedule";
@@ -32,6 +32,7 @@ export const TABS: TabDef[] = [
   { id: "models", label: "Models", icon: Database },
   { id: "system", label: "System", icon: Activity },
   { id: "settings", label: "Settings", icon: Settings },
+  { id: "memory", label: "Memory", icon: Brain },
 ];
 
 interface WorkspaceValue {

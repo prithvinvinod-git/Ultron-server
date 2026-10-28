@@ -35,11 +35,20 @@ The rules the loop keeps:
   and it propagates.
 
 - **Bounded by construction** (§59.6: nothing runs unbounded). ``max_iterations``
-  caps model turns and ``max_tool_calls`` caps executions; hitting either stops
-  the loop and says so in :class:`StopReason`, so a model that would loop
+  caps model turns and ``max_tool_calls`` caps executions per turn; hitting either
+  stops the loop and says so in :class:`StopReason`, so a model that would loop
   forever ends with a recorded reason rather than a hung request. A stopped
   loop still returns the transcript and the last response — the caller decides
   what a half-finished run means.
+
+- **Tool result caching** (§16's efficiency). Identical tool calls (same name +
+  arguments) within a single turn are deduplicated: the cached result is
+  replayed to the model so it does not re-research the same thing. This mirrors
+  the reference implementation's behaviour.
+
+- **Tools-free final answer** (§16's completion guarantee). When the per-turn
+  tool budget is spent, the loop makes one final tools-free call so the user
+  always gets a real answer instead of an empty bubble.
 
 - **The transcript is the record.** :class:`ToolLoopResult` carries the full
   ``messages`` list (system, user, assistant turns with their ``tool_calls``,
@@ -203,17 +212,16 @@ class ToolCallingLoop:
         tools: Sequence[ToolDefinition] = (),
         capability: str = "default",
         max_iterations: int = 10,
-        max_tool_calls: int = 32,
+        max_tool_calls: int = 4,
         system_prompt: str | None = None,
         model: str = "",
     ) -> None:
         """Bind the loop to its router, executor and advertised tools.
 
         ``capability`` is the §49 selection input the router resolves to a
-        configured model. ``max_iterations``/``max_tool_calls`` are the §59.6
-        ceilings: a model turn may request several calls, so the two limits are
-        independent — five iterations of ten calls each is still bounded by
-        ``max_tool_calls``. ``system_prompt`` is prepended once, when the
+        configured model. ``max_iterations`` caps model turns; ``max_tool_calls``
+        caps tool executions **per turn** (matching the reference implementation's
+        per-turn budget). ``system_prompt`` is prepended once, when the
         incoming transcript has no system turn of its own. ``model`` is an
         optional operator-chosen ``provider:model`` that the router tries first.
         """
@@ -252,17 +260,21 @@ class ToolCallingLoop:
         ):
             transcript.insert(0, ModelMessage(role=MessageRole.SYSTEM, content=self._system_prompt))
 
-        executed = 0
+        total_executed = 0
         response: ModelResponse | None = None
         iteration = 0
         for iteration in range(1, self._max_iterations + 1):
+            # Per-turn tool budget and cache (reset each turn, like the reference)
+            turn_executed = 0
+            tool_results: dict[str, str] = {}
+
             response = await self._complete(transcript)
             if not response.has_tool_calls:
                 return ToolLoopResult(
                     response=response,
                     messages=tuple(transcript),
                     iterations=iteration,
-                    tool_calls=executed,
+                    tool_calls=total_executed,
                     stop_reason=StopReason.COMPLETED,
                 )
 
@@ -274,23 +286,54 @@ class ToolCallingLoop:
                 )
             )
             for call in response.tool_calls:
-                executed += 1
+                # Build signature for caching: tool name + normalized arguments
+                signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
+                cached = tool_results.get(signature)
+                tool_call_id = call.id
+
+                if cached is not None:
+                    # Replay cached result to the model
+                    transcript.append(
+                        ModelMessage(
+                            role=MessageRole.TOOL,
+                            content=f"You already ran this exact call this turn. Same result:\n{cached[:1500]}",
+                            name=call.name,
+                            tool_call_id=tool_call_id,
+                        )
+                    )
+                    continue
+
+                if turn_executed >= self._max_tool_calls:
+                    # Budget spent for this turn: tell the model to answer with what it has
+                    transcript.append(
+                        ModelMessage(
+                            role=MessageRole.TOOL,
+                            content=(
+                                f"Tool budget for this turn is spent ({self._max_tool_calls} calls). "
+                                "Answer the user now using the results you already have. Do not call more tools."
+                            ),
+                            name=call.name,
+                            tool_call_id=tool_call_id,
+                        )
+                    )
+                    continue
+
+                turn_executed += 1
+                total_executed += 1
+                result_text = await self._dispatch(call, caller)
+                tool_results[signature] = result_text
                 transcript.append(
                     ModelMessage(
                         role=MessageRole.TOOL,
-                        content=await self._dispatch(call, caller),
+                        content=result_text,
                         name=call.name,
-                        tool_call_id=call.id,
+                        tool_call_id=tool_call_id,
                     )
                 )
-                if executed >= self._max_tool_calls:
-                    return ToolLoopResult(
-                        response=response,
-                        messages=tuple(transcript),
-                        iterations=iteration,
-                        tool_calls=executed,
-                        stop_reason=StopReason.MAX_TOOL_CALLS,
-                    )
+
+            # If we hit the per-turn budget, make one tools-free wrap-up call
+            if turn_executed >= self._max_tool_calls:
+                return await self._wrap_up(transcript, total_executed, iteration, caller)
 
         # Only reachable when every iteration requested tools: the ceilings hold.
         if response is None:  # pragma: no cover - max_iterations >= 1 guarantees a turn
@@ -299,9 +342,53 @@ class ToolCallingLoop:
             response=response,
             messages=tuple(transcript),
             iterations=iteration,
-            tool_calls=executed,
+            tool_calls=total_executed,
             stop_reason=StopReason.MAX_ITERATIONS,
         )
+
+    async def _wrap_up(
+        self,
+        transcript: list[ModelMessage],
+        total_executed: int,
+        iteration: int,
+        caller: _Caller,
+    ) -> ToolLoopResult:
+        """Make one final tools-free call so the user gets an answer."""
+        wrap_up_messages = list(transcript)
+        wrap_up_messages.append(
+            ModelMessage(
+                role=MessageRole.USER,
+                content=(
+                    "Answer the original question now, using the information you already gathered. "
+                    "Do not call any tools."
+                ),
+            )
+        )
+        try:
+            final_response = await self._complete(wrap_up_messages)
+            wrap_up_messages.append(
+                ModelMessage(
+                    role=MessageRole.ASSISTANT,
+                    content=final_response.content,
+                    tool_calls=final_response.tool_calls,
+                )
+            )
+            return ToolLoopResult(
+                response=final_response,
+                messages=tuple(wrap_up_messages),
+                iterations=iteration + 1,
+                tool_calls=total_executed,
+                stop_reason=StopReason.MAX_TOOL_CALLS,
+            )
+        except Exception:
+            # If wrap-up fails, return the last response we had
+            return ToolLoopResult(
+                response=transcript[-1] if transcript else ModelResponse(model="", content=""),
+                messages=tuple(transcript),
+                iterations=iteration,
+                tool_calls=total_executed,
+                stop_reason=StopReason.MAX_TOOL_CALLS,
+            )
 
     async def stream(
         self,
@@ -342,10 +429,14 @@ class ToolCallingLoop:
         ):
             transcript.insert(0, ModelMessage(role=MessageRole.SYSTEM, content=self._system_prompt))
 
-        executed = 0
+        total_executed = 0
         response: ModelResponse | None = None
         iteration = 0
         for iteration in range(1, self._max_iterations + 1):
+            # Per-turn tool budget and cache (reset each turn, like the reference)
+            turn_executed = 0
+            tool_results: dict[str, str] = {}
+
             response = None
             async for chunk in self._stream_turn(transcript):
                 if isinstance(chunk, LoopChunk):
@@ -361,7 +452,7 @@ class ToolCallingLoop:
                         response=response,
                         messages=tuple(transcript),
                         iterations=iteration,
-                        tool_calls=executed,
+                        tool_calls=total_executed,
                         stop_reason=StopReason.COMPLETED,
                     ),
                 )
@@ -375,7 +466,52 @@ class ToolCallingLoop:
                 )
             )
             for call in response.tool_calls:
-                executed += 1
+                # Build signature for caching: tool name + normalized arguments
+                signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
+                cached = tool_results.get(signature)
+                tool_call_id = call.id
+
+                if cached is not None:
+                    # Replay cached result to the model
+                    transcript.append(
+                        ModelMessage(
+                            role=MessageRole.TOOL,
+                            content=f"You already ran this exact call this turn. Same result:\n{cached[:1500]}",
+                            name=call.name,
+                            tool_call_id=tool_call_id,
+                        )
+                    )
+                    yield LoopChunk(
+                        kind=LoopChunkKind.TOOL_COMPLETED,
+                        tool=call.name,
+                        ok=True,
+                        output=cached,
+                    )
+                    continue
+
+                if turn_executed >= self._max_tool_calls:
+                    # Budget spent for this turn: tell the model to answer with what it has
+                    transcript.append(
+                        ModelMessage(
+                            role=MessageRole.TOOL,
+                            content=(
+                                f"Tool budget for this turn is spent ({self._max_tool_calls} calls). "
+                                "Answer the user now using the results you already have. Do not call more tools."
+                            ),
+                            name=call.name,
+                            tool_call_id=tool_call_id,
+                        )
+                    )
+                    yield LoopChunk(
+                        kind=LoopChunkKind.TOOL_COMPLETED,
+                        tool=call.name,
+                        ok=True,
+                        output="Budget exhausted; answer with what you have.",
+                    )
+                    continue
+
+                turn_executed += 1
+                total_executed += 1
                 yield LoopChunk(
                     kind=LoopChunkKind.TOOL_STARTED,
                     tool=call.name,
@@ -383,12 +519,13 @@ class ToolCallingLoop:
                 )
                 payload = await self._dispatch_payload(call, caller)
                 output = _dump(payload)
+                tool_results[signature] = output
                 transcript.append(
                     ModelMessage(
                         role=MessageRole.TOOL,
                         content=output,
                         name=call.name,
-                        tool_call_id=call.id,
+                        tool_call_id=tool_call_id,
                     )
                 )
                 yield LoopChunk(
@@ -397,18 +534,15 @@ class ToolCallingLoop:
                     ok=bool(payload.get("ok")),
                     output=payload.get("output"),
                 )
-                if executed >= self._max_tool_calls:
-                    yield LoopChunk(
-                        kind=LoopChunkKind.COMPLETED,
-                        result=ToolLoopResult(
-                            response=response,
-                            messages=tuple(transcript),
-                            iterations=iteration,
-                            tool_calls=executed,
-                            stop_reason=StopReason.MAX_TOOL_CALLS,
-                        ),
-                    )
-                    return
+
+            # If we hit the per-turn budget, make one tools-free wrap-up call
+            if turn_executed >= self._max_tool_calls:
+                result = await self._wrap_up(transcript, total_executed, iteration, caller)
+                yield LoopChunk(
+                    kind=LoopChunkKind.COMPLETED,
+                    result=result,
+                )
+                return
 
         if response is None:  # pragma: no cover - max_iterations >= 1 guarantees a turn
             raise RuntimeError("tool-calling loop ran no iterations")
@@ -418,7 +552,7 @@ class ToolCallingLoop:
                 response=response,
                 messages=tuple(transcript),
                 iterations=iteration,
-                tool_calls=executed,
+                tool_calls=total_executed,
                 stop_reason=StopReason.MAX_ITERATIONS,
             ),
         )

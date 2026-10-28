@@ -490,6 +490,27 @@ export const toolsApi = {
         }),
 };
 
+export interface MemoryRecord {
+    id: string;
+    namespace: string;
+    kind: string;
+    slug: string;
+    layer: string;
+    content: string;
+    importance: number;
+    score?: number | null;
+    created_at: string;
+}
+
+export interface RetrievalQuery {
+    namespace: string;
+    text?: string;
+    top_k?: number;
+    layers?: MemoryLayer[];
+}
+
+export type MemoryLayer = "long_term" | "episodic" | "short_term" | "semantic" | "project";
+
 export const nodesApi = {
     list: () => api.get<Node[]>("/nodes"),
     get: (id: string) => api.get<Node>(`/nodes/${id}`),
@@ -584,6 +605,32 @@ export const conversationsApi = {
         return request<Conversation>(`/conversations/${id}`, init);
     },
     remove: (id: string) => api.del<void>(`/conversations/${id}`),
+};
+
+export interface MemoryCreate {
+    summary: string;
+    detail?: string;
+    kind?: "fact" | "preference" | "decision";
+    tags?: string[];
+    importance?: number; // 1-5
+    scope?: "global" | "session";
+    sessionId?: string;
+}
+
+export interface MemoryResponse {
+    ok: boolean;
+    memory?: MemoryRecord & { detail?: string; tags?: string[] };
+}
+
+export const memoryApi = {
+    recall: (namespace?: string, query?: string, top_k?: number, layers?: string[]) =>
+        api.get<MemoryRecord[]>(`/memory?namespace=${namespace ?? ""}&query=${query ?? ""}&top_k=${top_k ?? 8}&layers=${layers?.join(",") ?? ""}`),
+
+    store: (memory: MemoryCreate) =>
+        api.post<MemoryResponse>("/memory", memory),
+
+    delete: (id: string) =>
+        api.del<void>(`/memory?id=${encodeURIComponent(id)}`),
 };
 
 export const healthApi = {

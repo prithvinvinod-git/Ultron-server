@@ -7931,3 +7931,101 @@ line.
 > live-backend auth/restart paths, PWA install/offline behaviour, mobile visual
 > rendering, and all ESP32 hardware behaviour including compilation. This
 > footnote is the honest state, not a claim that the firmware runs.
+
+## GenUI — Generative UI Engine
+
+### Overview
+ULTRON implements a Generative UI (GenUI) system that allows the AI to return structured visualization specifications alongside plain text responses. When a user asks a question that benefits from a visual explanation (e.g., "Explain binary tree traversal with animation"), ULTRON renders an interactive, task-specific UI directly inside the conversation.
+
+### Architecture
+
+**Backend:**
+- `server/app/schemas/genui.py` — Pydantic v2 schemas with discriminated union of 10 visualization types
+- Top-level `GenUiResponse` envelope with `type: "genui"`, `version`, `title`, `explanation`, `visualization`, and optional `follow_up_suggestion`
+- Per-type data schemas: `BinaryTreeData`, `ChartData`, `FlowchartData`, `TimelineData`, `EquationData`, `VectorData`, `MatrixData`, `PhysicsSimulationData`, `InteractiveTableData`, `ImagePanelData`
+- `VisualizationControls` shared control schema: `traversal_method`, `speed`, `isPlaying`, `reset`
+- Validation helpers: `validate_genui_response()`, `build_done_frame_with_genui()`
+- Payload size limits: MAX_TREE_NODES=50, MAX_ARRAY_LENGTH=1000, MAX_PAYLOAD_BYTES=100_000
+- Chat route integration: `/chat/stream` SSE endpoint emits `genui` key in `done` frame; non-streaming `/chat` includes optional validated `genui` in `ChatResponse`
+
+**Frontend:**
+- `UIPROTO/src/components/ultron/chat/types.ts` — Extended `ChatMessage` with optional `genui?` field; GenUI type definitions matching backend schemas exactly
+- `UIPROTO/src/components/ultron/chat/genui-renderer.tsx` — Dispatcher component receiving `GenUiResponse` and routing to correct visualization renderer based on `visualization.type`; fallback for unknown types
+- `UIPROTO/src/components/ultron/chat/genui-types.ts` — Frontend type definitions: `BinaryTreeData`, `BinaryTreeNode`, `BinaryTreeEdge`, `BinaryTreeControls`, `TraversalAlgorithm`, `GenUiVisualizationType`, `GenUiStateModel`, `VisualizationData` (union of all 10 types), `ChartVisualizationProps`, etc.
+- 10 visualization components, one per type:
+  1. **binary_tree** (`binary-tree-visualization.tsx`) — SVG tree with automatic layout, 4 traversal algorithms (preorder/inorder/postorder/level-order), play/pause/step controls, speed selector, node highlighting (unvisited/current/visited), progress indicator, step explanations, responsive layout
+  2. **chart** (`chart-visualization.tsx`) — Recharts-based: bar, line, pie, area, scatter
+  3. **flowchart** (`flowchart-visualization.tsx`) — Directed graph with nodes and edges
+  4. **timeline** (`timeline-visualization.tsx`) — Chronological events with dates
+  5. **equation** (`equation-visualization.tsx`) — LaTeX source rendering
+  6. **vector** (`vector-visualization.tsx`) — Magnitude/direction arrow with labels
+  7. **matrix** (`matrix-visualization.tsx`) — Color-coded numeric grid
+  8. **physics_simulation** (`physics-simulation-visualization.tsx`) — Particles with positions/velocities
+  9. **interactive_table** (`interactive-table-visualization.tsx`) — Sortable/filterable table
+  10. **image_panel** (`image-panel-visualization.tsx`) — Image with optional caption
+- `UIPROTO/src/components/ultron/chat/message-bubble.tsx` — Detects `genui` in incoming `done` SSE frames; renders `GenUiRenderer` alongside/after text; preserves existing text/markdown/tool timeline rendering
+- All components use deterministic, local computation — no LLM calls per frame or per interaction
+- Reduced-motion support respecting user preferences
+- Responsive layout for mobile PWA and desktop Electron
+
+### GenUI Response Format
+```json
+{
+  "type": "genui",
+  "version": "1",
+  "title": "Binary Tree Traversal",
+  "explanation": "Different traversal algorithms visit tree nodes in different orders.",
+  "visualization": {
+    "type": "binary_tree",
+    "data": {
+      "nodes": [{"id": "1", "value": 10, "left": "2", "right": "3"}],
+      "edges": [{"source": "1", "target": "2"}, {"source": "1", "target": "3"}],
+      "root": "1"
+    },
+    "controls": {
+      "traversal_method": "preorder",
+      "speed": 1,
+      "isPlaying": false
+    },
+    "state": {
+      "algorithm": "preorder",
+      "stepIndex": 0,
+      "isPlaying": false,
+      "speed": 1,
+      "visitedNodeIds": [],
+      "currentNodeId": null
+    }
+  },
+  "follow_up_suggestion": "Now show level-order traversal."
+}
+```
+
+### Integration Flow
+```
+User message → AI intent detection → Structured visualization specification
+  → Schema validation (server) → Embed in SSE done frame (if streaming)
+  → Frontend GenUIRenderer dispatches to correct component
+  → Local interaction and animation (no LLM calls for frames/clicks)
+  → Follow-up requests update visualization using validated data
+```
+
+### Supported Visualization Types
+1. `binary_tree` — Binary tree traversal with all 4 algorithms
+2. `chart` — Bar, line, pie, area, scatter charts
+3. `flowchart` — Directed graph/flowchart renderer
+4. `timeline` — Event timeline visualizer
+5. `equation` — LaTeX equation renderer
+6. `vector` — Vector diagram visualizer
+7. `matrix` — Matrix display
+8. `physics_simulation` — Physics simulation visualizer
+9. `interactive_table` — Interactive table
+10. `image_panel` — Image panel with caption
+
+### Definition of Done (T274)
+- Schema parity: frontend types match backend Pydantic schemas exactly
+- Binary tree traversal algorithms verified: empty tree, single node, unbalanced tree, invalid references
+- All 10 visualization components render without errors
+- GenUI validation drops invalid payloads silently; backward compatibility confirmed
+- Reduced-motion behavior tested
+- Responsive layout verified at mobile and desktop widths
+- Chat route integration: /chat includes optional validated genui; /chat/stream emits genui in done frame

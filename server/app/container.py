@@ -446,6 +446,19 @@ class Container:
         return self._events
 
     @property
+    def memory_manager(self) -> MemoryManager:
+        """Return the memory facade (T126) bound to the session's unit of work.
+
+        See container.get_memory_manager() for the session-bound variant.
+        This is the app-wide instance used by API endpoints.
+        """
+        if self._memory_manager is None:
+            self._memory_manager = self.get_memory_manager(
+                self._session_factory.__next__() if self._session_factory else None
+            )
+        return self._memory_manager
+
+    @property
     def model_router(self) -> ModelRouter:
         """Return the model router, building it with configured providers on first access.
 

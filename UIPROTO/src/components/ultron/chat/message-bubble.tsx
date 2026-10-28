@@ -2,7 +2,7 @@
  * Message bubble (ported from the Ultron reference repo, adapted to ULTRON
  * tokens and the `/chat/stream` event set). Renders the user turn, the
  * streaming assistant turn (thinking orb, reasoning block, tool timeline,
- * markdown) and the done meta row.
+ * markdown) and the done meta row. Also handles GenUI visualizations.
  */
 "use client";
 
@@ -12,6 +12,9 @@ import { cn } from "@/lib/utils";
 import { ThinkingState, type TraceNode } from "./agent-response";
 import { ThinkingOrb } from "./thinking-orbs";
 import type { ChatMessage } from "./types";
+import { BinaryTreeVisualization } from "./binary-tree-visualization";
+import { GenUiRenderer } from "./genui-renderer";
+import { useReducedMotion } from "@/hooks/use-mobile";
 
 export function MessageBubble({
   message,
@@ -28,6 +31,10 @@ export function MessageBubble({
   const timeline = buildTimeline(message);
   const showOrbBox = message.streaming && hasThinking && !hasTools;
   const showTimeline = !!timeline && (!message.streaming || hasTools);
+
+  /** Check if this message has a GenUI visualization */
+  const hasGenui = !!message.genui;
+  const genuiType = message.genui?.visualization?.type;
 
   return (
     <div className="chat-message animate-rise flex w-full gap-3 text-[13px]">
@@ -57,6 +64,11 @@ export function MessageBubble({
               </div>
             ) : null}
 
+            {hasGenui && !showTimeline ? (
+              /** Render GenUI visualization for non-streaming messages or when no timeline */
+              <GenUiRenderer genui={message.genui!} />
+            ) : null}
+
             {showTimeline && timeline ? (
               <div className="max-w-[85%]">
                 <ThinkingState nodes={timeline} live={message.streaming} defaultExpanded={message.streaming} workingLabel="Working..." />
@@ -76,6 +88,11 @@ export function MessageBubble({
               ) : (
                 <span className="text-sm text-muted-foreground">No response.</span>
               )}
+
+              {/* Render GenUI after text when streaming and no timeline */}
+              {message.streaming && hasGenui && !showTimeline && showOrbBox ? (
+                <GenUiRenderer genui={message.genui!} />
+              ) : null}
             </div>
 
             {(message.provider || message.streaming) && (
@@ -157,7 +174,7 @@ function buildTimeline(message: ChatMessage): TraceNode[] | null {
         secondary: state === "running" ? "Searching the web…" : result ? truncate(result, 64) : "Search completed",
         details:
           state === "done" && result
-            ? result.split("\n").filter((l) => l.trim()).slice(0, 6).map((l) => ({ text: truncate(l, 160), tone: "ctx" as const }))
+            ? result.split("\n").filter((l) => l.trim()).slice(0, 6).map((l) => ({ text: truncate(l, 140), tone: "ctx" as const }))
             : undefined,
       });
       continue;
