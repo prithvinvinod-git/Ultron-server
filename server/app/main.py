@@ -220,6 +220,7 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(schedules.router)
     app.include_router(notifications.router)
     app.include_router(orb.router)
+    app.include_router(memory.router)
 
 
 def _error_body(exc: UltronError) -> dict[str, Any]:
@@ -343,6 +344,8 @@ async def container_lifespan(app: FastAPI) -> AsyncIterator[None]:
     container = app.state.container
     _LOGGER.info("Starting ULTRON server", extra={"event": "app.startup"})
     await container.startup()
+    # Set up global memory manager for API endpoints that need it
+    app.state.memory_manager = container.memory_manager
     _LOGGER.info("Startup complete", extra={"event": "app.startup_complete"})
     try:
         yield

@@ -174,6 +174,7 @@ class Container:
         self._orb: OrbPresenter | None = None
         self._resource_monitor: ResourceMonitor | None = None
         self._load_shedder: LoadShedder | None = None
+        self._memory_manager: MemoryManager | None = None
         self._register_default_checks()
 
     # --------------------------------------------------------------------- #
@@ -549,6 +550,7 @@ class Container:
                 default_permission_level=PermissionLevel(
                     str(self.settings.agent_default_permission_level)
                 ),
+                get_memory_manager=self.get_memory_manager,
             )
             self._voice = build_voice_manager(
                 settings,

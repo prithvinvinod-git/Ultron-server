@@ -9,17 +9,15 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { toast } from "sonner";
 import { Search, Shield, Clock, Text, Folder, Brain, Eye } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
-import { memoryApi, MemoryRecord, MemoryLayer, RetrievalQuery } from "@/lib/api";
-import { useWorkspace } from "@/lib/workspace";
-import { queryKeys } from "@/lib/queries";
+import { memoryApi, MemoryRecord, MemoryLayer } from "@/lib/api";
 
 interface MemoryRecordUI {
     id: string;
@@ -29,23 +27,20 @@ interface MemoryRecordUI {
     layer: string;
     content: string;
     importance: number;
-    score?: number | null;
+    score: number | null;
     created_at: string;
 }
 
-function formatLayer(layer: string): string {
-    const map: Record<string, string> = {
-        long_term: "Long-term",
-        episodic: "Episodic",
-        short_term: "Short-term",
-        semantic: "Semantic",
-        project: "Project",
-    };
-    return map[layer] || layer;
-}
+const DEFAULT_NAMESPACE = "user";
+const LAYER_OPTIONS: Array<{ value: MemoryLayer; label: string }> = [
+    { value: "long_term", label: "Long-term" },
+    { value: "episodic", label: "Episodic" },
+    { value: "short_term", label: "Short-term" },
+    { value: "semantic", label: "Semantic" },
+    { value: "project", label: "Project" },
+];
 
-function MemoryPanel() {
-    const { namespace } = useWorkspace();
+export function MemoryPanel() {
     const [query, setQuery] = useState("");
     const [selectedLayer, setSelectedLayer] = useState<MemoryLayer | undefined>("long_term");
     const [topK, setTopK] = useState(8);
@@ -53,10 +48,10 @@ function MemoryPanel() {
     const [records, setRecords] = useState<MemoryRecordUI[]>([]);
     const [error, setError] = useState<string | null>(null);
 
-    const { data, isLoading, error: queryError } = useQuery<MemoryRecord[], Error>({
-        queryKey: ["memory", namespace, query, selectedLayer, topK],
-        queryFn: () => memoryApi.recall(namespace, query, topK, [selectedLayer]),
-        enabled: Boolean(namespace),
+    const { data, isLoading } = useQuery<MemoryRecord[], Error>({
+        queryKey: ["memory", DEFAULT_NAMESPACE, query, selectedLayer, topK],
+        queryFn: () => memoryApi.recall(DEFAULT_NAMESPACE, query, topK, selectedLayer ? [selectedLayer] : undefined),
+        enabled: true,
         refetchInterval: 10000,
     });
 
@@ -69,15 +64,21 @@ function MemoryPanel() {
         setLoading(true);
         setError(null);
         try {
-            const result = await memoryApi.recall(namespace, query, topK, [selectedLayer]);
-            setRecords(result);
+            const result = await memoryApi.recall(DEFAULT_NAMESPACE, query, topK, selectedLayer ? [selectedLayer] : undefined);
+            setRecords(result.map((record) => ({
+                id: record.id,
+                namespace: record.namespace,
+                kind: record.kind,
+                slug: record.slug || "",
+                layer: record.layer || "long_term",
+                content: record.content || "",
+                importance: record.importance ?? 0,
+                score: record.score ?? null,
+                created_at: record.created_at || new Date().toISOString(),
+            })));
         } catch (err: any) {
             setError(err.message ?? "Memory recall failed");
-            useToast({
-                variant: "destructive",
-                title: "Memory Recall Error",
-                description: err.message ?? "Failed to recall memories",
-            });
+            toast.error(err.message ?? "Failed to recall memories");
         } finally {
             setLoading(false);
         }
@@ -94,30 +95,16 @@ function MemoryPanel() {
                 layer: record.layer || "long_term",
                 content: record.content || "",
                 importance: record.importance ?? 0,
-                score: record.score ?? undefined,
+                score: record.score ?? null,
                 created_at: record.created_at || new Date().toISOString(),
             }))
-        );
-    }
-
-    if (!namespace) {
-        return (
-            <section className="hud-panel">
-                <div className="panel-heading">
-                    <h2>MEMORY</h2>
-                    <Shield size={13} />
-                </div>
-                <div className="panel-empty">
-                    <p>Select a namespace to view memories</p>
-                </div>
-            </section>
         );
     }
 
     return (
         <section className="hud-panel">
             <div className="panel-heading">
-                <h2>MEMORY · {namespace}</h2>
+                <h2>MEMORY · {DEFAULT_NAMESPACE}</h2>
                 <Eye size={13} />
                 <MemorySearchBar
                     query={query}
@@ -125,6 +112,9 @@ function MemoryPanel() {
                     onRecall={handleRecall}
                     topK={topK}
                     setTopK={setTopK}
+                    selectedLayer={selectedLayer}
+                    setSelectedLayer={setSelectedLayer}
+                    loading={loading}
                 />
             </div>
 
@@ -154,12 +144,18 @@ function MemorySearchBar({
     onRecall,
     topK,
     setTopK,
+    selectedLayer,
+    setSelectedLayer,
+    loading,
 }: {
     query: string;
     onQueryChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onRecall: () => void;
     topK: number;
     setTopK: (value: number) => void;
+    selectedLayer: MemoryLayer | undefined;
+    setSelectedLayer: (layer: MemoryLayer | undefined) => void;
+    loading: boolean;
 }) {
     return (
         <div className="memory-search mb-4">
@@ -172,32 +168,23 @@ function MemorySearchBar({
             />
             <div className="flex gap-2 mt-2">
                 <Select
-                    defaultValue={formatLayer(selectedLayer)}
-                    onValueChange={(value) => {
-                        const layerMap: Record<string, MemoryLayer> = {
-                            long_term: "long_term",
-                            episodic: "episodic",
-                            short_term: "short_term",
-                            semantic: "semantic",
-                            project: "project",
-                        };
-                        setSelectedLayer(layerMap[value] || undefined);
-                    }}
+                    value={selectedLayer}
+                    onValueChange={(value) => setSelectedLayer(value as MemoryLayer)}
                 >
                     <SelectTrigger>
                         <SelectValue placeholder="Select layer" />
                         <SelectContent>
-                            <SelectItem value="long_term">Long-term</SelectItem>
-                            <SelectItem value="episodic">Episodic</SelectItem>
-                            <SelectItem value="short_term">Short-term</SelectItem>
-                            <SelectItem value="semantic">Semantic</SelectItem>
-                            <SelectItem value="project">Project</SelectItem>
+                            {LAYER_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                </SelectItem>
+                            ))}
                         </SelectContent>
                     </SelectTrigger>
                 </Select>
 
                 <Select
-                    defaultValue={topK.toString()}
+                    value={topK.toString()}
                     onValueChange={(value) => setTopK(Number(value))}
                 >
                     <SelectTrigger>
@@ -233,7 +220,7 @@ function MemoryRecordList({ records }: { records: MemoryRecordUI[] }) {
                     key={record.id}
                     className={cn(
                         "memory-row p-3 rounded-md border border-sidebar-border hover:border-sidebar-accent transition-colors",
-                        record.score !== undefined && record.score > 0.7 && "border-sidebar-accent"
+                        record.score !== null && record.score > 0.7 && "border-sidebar-accent"
                     )}
                 >
                     <div className="flex items-start gap-3">
@@ -268,15 +255,13 @@ function MemoryRecordList({ records }: { records: MemoryRecordUI[] }) {
     );
 }
 
-export function MemoryPanelButton() {
-    return (
-        <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Memory"
-            className="memory-sidebar-trigger"
-        >
-            <Brain size={14} />
-        </Button>
-    );
+function formatLayer(layer: string): string {
+    const map: Record<string, string> = {
+        long_term: "Long-term",
+        episodic: "Episodic",
+        short_term: "Short-term",
+        semantic: "Semantic",
+        project: "Project",
+    };
+    return map[layer] || layer;
 }

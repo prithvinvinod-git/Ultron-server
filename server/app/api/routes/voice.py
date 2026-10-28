@@ -522,7 +522,7 @@ async def _run_session(
     )
 
     try:
-        await _pump(websocket, manager, session_id, queue, send_json, send_audio)
+        await _pipeline(manager, session_id, queue, send_audio, send_json)
     except WebSocketDisconnect:
         pass
     except Exception as exc:
